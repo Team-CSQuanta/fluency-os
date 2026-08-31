@@ -1,0 +1,29 @@
+node_modules/
+dist/
+dist-electron/
+release/
+*.log
+npm-debug.log*
+
+# Python / backend
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.pytest_cache/
+*.pyc
+
+# runtime data
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.local
+
+# editor / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+
+# mockups and specs
+claude-ui-mockup-files/
+fluencyos_spec.md
