@@ -7,6 +7,10 @@ import { OnboardingWizard } from '@/features/onboarding/OnboardingWizard';
 import { Dashboard } from '@/features/dashboard/Dashboard';
 import { Library } from '@/features/library/Library';
 import { Player } from '@/features/player/Player';
+import { Bookshelf } from '@/features/bookshelf/Bookshelf';
+import { Reader } from '@/features/reader/Reader';
+import { VocabularyList } from '@/features/vocabulary/VocabularyList';
+import { VocabularyEntry } from '@/features/vocabulary/VocabularyEntry';
 import { useAppStore } from '@/store/appStore';
 import { useShellStore } from '@/store/shellStore';
 
@@ -19,6 +23,14 @@ function ScreenContent() {
       return <Library />;
     case 'player':
       return <Player />;
+    case 'bookshelf':
+      return <Bookshelf />;
+    case 'reader':
+      return <Reader />;
+    case 'vocab':
+      return <VocabularyList />;
+    case 'word':
+      return <VocabularyEntry />;
     default:
       return <ComingSoon />;
   }
@@ -26,8 +38,9 @@ function ScreenContent() {
 
 function MainApp() {
   const screen = useShellStore((s) => s.screen);
-  // Player wants the full content area with no scroll container of its own.
-  const contentClass = screen === 'player' ? 'flex min-h-0 flex-1' : 'min-h-0 flex-1 overflow-auto';
+  // Player/Reader want the full content area with no scroll container of their own.
+  const immersive = screen === 'player' || screen === 'reader';
+  const contentClass = immersive ? 'flex min-h-0 flex-1' : 'min-h-0 flex-1 overflow-auto';
 
   return (
     <div className="flex min-h-0 flex-1">
