@@ -87,7 +87,11 @@ export function AppNav() {
             )}
             <div className="flex flex-col gap-[1px]">
               {g.items.map((item) => {
-                const on = screen === item.key;
+                const on =
+                  screen === item.key ||
+                  (item.key === 'library' && screen === 'player') ||
+                  (item.key === 'bookshelf' && screen === 'reader') ||
+                  (item.key === 'vocab' && screen === 'word');
                 return (
                   <button
                     key={item.key}
