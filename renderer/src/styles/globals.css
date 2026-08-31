@@ -1,0 +1,78 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design tokens ported verbatim from claude-ui-mockup-files/FluencyOS.html */
+:root {
+  --sans: 'Public Sans', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  --acc: #3e7c5a;
+  --accSoft: rgba(62, 124, 90, 0.11);
+  --accLine: rgba(62, 124, 90, 0.35);
+  --pad: 24px;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+body[data-theme='dark'] {
+  --bg: #131514;
+  --bg2: #191c1b;
+  --panel: #1e2120;
+  --panel2: #242827;
+  --line: rgba(255, 255, 255, 0.1);
+  --line2: rgba(255, 255, 255, 0.055);
+  --tx: #e9ebe9;
+  --tx2: rgba(233, 235, 233, 0.6);
+  --tx3: rgba(233, 235, 233, 0.36);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.28);
+  --tile: rgba(255, 255, 255, 0.05);
+  --tileB: rgba(255, 255, 255, 0.03);
+}
+
+body[data-theme='light'] {
+  --bg: #f2f2f0;
+  --bg2: #f8f8f6;
+  --panel: #ffffff;
+  --panel2: #f6f6f4;
+  --line: rgba(20, 24, 22, 0.13);
+  --line2: rgba(20, 24, 22, 0.07);
+  --tx: #171a19;
+  --tx2: rgba(23, 26, 25, 0.62);
+  --tx3: rgba(23, 26, 25, 0.4);
+  --shadow: 0 1px 2px rgba(20, 24, 22, 0.06), 0 6px 20px rgba(20, 24, 22, 0.06);
+  --tile: rgba(20, 24, 22, 0.045);
+  --tileB: rgba(20, 24, 22, 0.02);
+}
+
+body {
+  background: var(--bg);
+  color: var(--tx);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 9px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
