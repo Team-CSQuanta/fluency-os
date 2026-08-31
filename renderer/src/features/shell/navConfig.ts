@@ -2,6 +2,7 @@
 export type ScreenKey =
   | 'dashboard'
   | 'library'
+  | 'player'
   | 'bookshelf'
   | 'vocab'
   | 'review'
@@ -55,6 +56,7 @@ export const NAV_GROUPS: NavGroup[] = [
 export const SCREEN_TITLES: Record<ScreenKey, [string, string]> = {
   dashboard: ['Dashboard', 'What is due, how you are trending, what to do next'],
   library: ['Learn by watching', 'Your content library · nothing is uploaded, everything stays on this machine'],
+  player: ['Learn by watching', 'dual subtitles · clip context engine armed'],
   bookshelf: ['Learn by reading', 'Your bookshelf · adaptive text leveling · reading counts toward your daily goal'],
   vocab: ['Vocabulary', 'Every word you have captured, with its contexts and cards'],
   review: ['Review', 'FSRS v4 · target retention 0.90 · interleaved queue'],
