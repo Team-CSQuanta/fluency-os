@@ -59,13 +59,13 @@ export interface ResumeItem {
   title: string;
   meta: string;
   pct: number;
-  screen: 'library' | 'bookshelf';
+  target: 'player' | 'bookshelf';
 }
 
 export const RESUME: ResumeItem[] = [
-  { kind: 'video 480p', title: 'Arrival (2016)', meta: '01:14:22 / 02:01:38 · 34 saves', pct: 61, screen: 'library' },
-  { kind: 'epub', title: 'The Overstory — R. Powers', meta: 'page 118 / 342 · 51 saves', pct: 34, screen: 'bookshelf' },
-  { kind: 'video url', title: 'Kurzgesagt — Immune System', meta: '04:02 / 09:41 · 7 saves', pct: 42, screen: 'library' },
+  { kind: 'video 480p', title: 'Arrival (2016)', meta: '01:14:22 / 02:01:38 · 34 saves', pct: 61, target: 'player' },
+  { kind: 'epub', title: 'The Overstory — R. Powers', meta: 'page 118 / 342 · 51 saves', pct: 34, target: 'bookshelf' },
+  { kind: 'video url', title: 'Kurzgesagt — Immune System', meta: '04:02 / 09:41 · 7 saves', pct: 42, target: 'player' },
 ];
 
 export interface RecentWord {
