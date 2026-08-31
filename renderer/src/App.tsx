@@ -5,18 +5,38 @@ import { ScreenHeader } from '@/features/shell/ScreenHeader';
 import { ComingSoon } from '@/features/shell/ComingSoon';
 import { OnboardingWizard } from '@/features/onboarding/OnboardingWizard';
 import { Dashboard } from '@/features/dashboard/Dashboard';
+import { Library } from '@/features/library/Library';
+import { Player } from '@/features/player/Player';
 import { useAppStore } from '@/store/appStore';
 import { useShellStore } from '@/store/shellStore';
 
+function ScreenContent() {
+  const screen = useShellStore((s) => s.screen);
+  switch (screen) {
+    case 'dashboard':
+      return <Dashboard />;
+    case 'library':
+      return <Library />;
+    case 'player':
+      return <Player />;
+    default:
+      return <ComingSoon />;
+  }
+}
+
 function MainApp() {
   const screen = useShellStore((s) => s.screen);
+  // Player wants the full content area with no scroll container of its own.
+  const contentClass = screen === 'player' ? 'flex min-h-0 flex-1' : 'min-h-0 flex-1 overflow-auto';
 
   return (
     <div className="flex min-h-0 flex-1">
       <AppNav />
       <div className="flex min-w-0 flex-1 flex-col">
         <ScreenHeader />
-        <div className="min-h-0 flex-1 overflow-auto">{screen === 'dashboard' ? <Dashboard /> : <ComingSoon />}</div>
+        <div className={contentClass}>
+          <ScreenContent />
+        </div>
       </div>
     </div>
   );
