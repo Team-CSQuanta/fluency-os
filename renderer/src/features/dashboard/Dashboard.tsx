@@ -33,6 +33,7 @@ function CardLabel({ children }: { children: ReactNode }) {
 
 export function Dashboard() {
   const goScreen = useShellStore((s) => s.goScreen);
+  const goPlayer = useShellStore((s) => s.goPlayer);
   const heatTip = useShellStore((s) => s.heatTip);
   const setHeatTip = useShellStore((s) => s.setHeatTip);
 
@@ -149,7 +150,7 @@ export function Dashboard() {
             {RESUME.map((r) => (
               <button
                 key={r.title}
-                onClick={() => goScreen(r.screen)}
+                onClick={() => (r.target === 'player' ? goPlayer(r.title) : goScreen(r.target))}
                 className="flex items-center gap-3 rounded-panel border border-line2 p-2 text-left hover:border-acc"
               >
                 <div
