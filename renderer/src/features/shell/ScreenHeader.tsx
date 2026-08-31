@@ -5,9 +5,18 @@ export function ScreenHeader() {
   const screen = useShellStore((s) => s.screen);
   const theme = useShellStore((s) => s.theme);
   const nowPlaying = useShellStore((s) => s.nowPlaying);
+  const nowReading = useShellStore((s) => s.nowReading);
+  const selectedWord = useShellStore((s) => s.selectedWord);
   const toggleTheme = useShellStore((s) => s.toggleTheme);
   const [title, staticSub] = SCREEN_TITLES[screen];
-  const sub = screen === 'player' ? `${nowPlaying} · ${staticSub}` : staticSub;
+  const sub =
+    screen === 'player'
+      ? `${nowPlaying} · ${staticSub}`
+      : screen === 'reader'
+        ? `${nowReading} · ${staticSub}`
+        : screen === 'word'
+          ? `${selectedWord} · ${staticSub}`
+          : staticSub;
 
   return (
     <header className="flex h-[52px] flex-none items-center justify-between gap-4 border-b border-line2 bg-bg px-5">

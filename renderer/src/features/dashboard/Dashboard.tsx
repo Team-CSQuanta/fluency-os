@@ -34,6 +34,8 @@ function CardLabel({ children }: { children: ReactNode }) {
 export function Dashboard() {
   const goScreen = useShellStore((s) => s.goScreen);
   const goPlayer = useShellStore((s) => s.goPlayer);
+  const goReader = useShellStore((s) => s.goReader);
+  const goWord = useShellStore((s) => s.goWord);
   const heatTip = useShellStore((s) => s.heatTip);
   const setHeatTip = useShellStore((s) => s.setHeatTip);
 
@@ -150,7 +152,11 @@ export function Dashboard() {
             {RESUME.map((r) => (
               <button
                 key={r.title}
-                onClick={() => (r.target === 'player' ? goPlayer(r.title) : goScreen(r.target))}
+                onClick={() =>
+                  r.target === 'player'
+                    ? goPlayer(r.title)
+                    : goReader(r.title, 'Chapter 4 · The Weight of Small Words', '118 / 342')
+                }
                 className="flex items-center gap-3 rounded-panel border border-line2 p-2 text-left hover:border-acc"
               >
                 <div
@@ -221,7 +227,7 @@ export function Dashboard() {
           {RECENT.map((w) => (
             <button
               key={w.word}
-              onClick={() => goScreen('vocab')}
+              onClick={() => goWord(w.word)}
               className="w-[150px] overflow-hidden rounded-panel border border-line2 text-left hover:border-acc"
             >
               <div
