@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AddBookModal } from '@/features/bookshelf/AddBookModal';
-import { GOAL_WEEK, READING_GOAL, READING_NOW } from '@/features/bookshelf/bookshelfMockData';
+import { GOAL_WEEK, READING_GOAL } from '@/features/bookshelf/bookshelfMockData';
 import { useAppStore } from '@/store/appStore';
 import { matchesBookFilter, useBookshelfStore } from '@/store/bookshelfStore';
 import { useShellStore } from '@/store/shellStore';
@@ -48,6 +48,9 @@ export function Bookshelf() {
     { n: 'Finished', c: String(counts?.finished ?? 0) },
   ];
   const books = allBooks.filter((b) => matchesBookFilter(b, filter));
+  // allBooks is already ordered most-recently-imported-first by the API;
+  // a real "last opened" ordering needs per-book position data (Phase 7).
+  const continueReading = allBooks.filter((b) => b.ingest_status === 'ready' && !b.finished_at).slice(0, 2);
   const goalDeg = Math.round(Math.min(1, READING_GOAL.done / goalTarget) * 360);
 
   return (
@@ -117,10 +120,13 @@ export function Bookshelf() {
             Continue reading
           </div>
           <div className="flex flex-col gap-[10px]">
-            {READING_NOW.map((b) => (
+            {continueReading.length === 0 && (
+              <div className="font-mono text-[10.5px] text-tx3">Nothing in progress yet — open a book to start.</div>
+            )}
+            {continueReading.map((b) => (
               <button
-                key={b.title}
-                onClick={() => goReader(`${b.title} — ${b.author}`, b.chapter, b.pos)}
+                key={b.id}
+                onClick={() => goReader(b.id, b.title)}
                 className="flex items-center gap-[13px] rounded-panel border border-line2 p-[9px] text-left hover:border-acc"
               >
                 <div
@@ -131,9 +137,8 @@ export function Bookshelf() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-sans text-[12.5px] font-semibold text-tx">{b.title}</div>
-                  <div className="my-1 font-mono text-[9.5px] text-tx3">{b.meta}</div>
-                  <div className="h-[3px] rounded-field bg-line2">
-                    <div className="h-[3px] rounded-field bg-acc" style={{ width: `${b.pct}%` }} />
+                  <div className="my-1 font-mono text-[9.5px] text-tx3">
+                    ~{b.page_estimate} pages · {b.total_words.toLocaleString()} words
                   </div>
                 </div>
               </button>
@@ -211,7 +216,7 @@ export function Bookshelf() {
                       return;
                     }
                     if (busy) return;
-                    goReader(`${b.title}${b.author ? ` — ${b.author}` : ''}`, 'Chapter 1', `1 / ${b.page_estimate || 1}`);
+                    goReader(b.id, b.title);
                   }}
                   className="text-left hover:-translate-y-[2px]"
                   style={{ opacity: busy ? 0.6 : 1 }}
