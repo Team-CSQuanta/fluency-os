@@ -16,6 +16,8 @@ import { ConversationList } from '@/features/conversation/ConversationList';
 import { ConversationLive } from '@/features/conversation/ConversationLive';
 import { Report } from '@/features/conversation/Report';
 import { Challenge } from '@/features/challenge/Challenge';
+import { Forest } from '@/features/forest/Forest';
+import { Settings } from '@/features/settings/Settings';
 import { useAppStore } from '@/store/appStore';
 import { useShellStore } from '@/store/shellStore';
 
@@ -46,6 +48,10 @@ function ScreenContent() {
       return <Report />;
     case 'challenge':
       return <Challenge />;
+    case 'forest':
+      return <Forest />;
+    case 'settings':
+      return <Settings />;
     default:
       return <ComingSoon />;
   }

@@ -8,7 +8,6 @@ export type ScreenKey =
   | 'vocab'
   | 'word'
   | 'review'
-  | 'graph'
   | 'conv'
   | 'convlive'
   | 'report'
@@ -41,7 +40,6 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { key: 'vocab', label: 'Vocabulary' },
       { key: 'review', label: 'Review', badge: '47' },
-      { key: 'graph', label: 'Knowledge Graph' },
     ],
   },
   {
@@ -64,7 +62,6 @@ export const SCREEN_TITLES: Record<ScreenKey, [string, string]> = {
   vocab: ['Vocabulary', 'Every word you have captured, with its contexts and cards'],
   word: ['Vocabulary entry', 'notes, contexts, pronunciation and tags'],
   review: ['Review', 'FSRS v4 · target retention 0.90 · interleaved queue'],
-  graph: ['Knowledge Graph', 'Same layout as the forest · semantic clustering'],
   conv: ['Conversation', 'Guided AI practice with target words injected'],
   convlive: ['Conversation', 'Guided AI practice with target words injected'],
   report: ['Session Report', 'Contextual accuracy, fluency proxies, and a focus for next time'],
