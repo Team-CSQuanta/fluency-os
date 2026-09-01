@@ -25,6 +25,10 @@ class BookOut(BaseModel):
     heat_overlay: bool
     imported_at: str
     finished_at: str | None
+    # Populated by the list endpoint's join on reading_positions: null means
+    # the book has never been opened, which is what "Not started" means.
+    last_read_at: str | None = None
+    percent: float = 0.0
 
 
 class BookCountsOut(BaseModel):
@@ -40,6 +44,10 @@ class BookUpdate(BaseModel):
     language: str | None = None
     count_toward_goal: bool | None = None
     heat_overlay: bool | None = None
+    # A bool rather than the timestamp itself: the client says "I finished
+    # this", the server decides when that was. Setting it false reopens the
+    # book, which is what the Finished filter's counterpart needs.
+    finished: bool | None = None
 
 
 class ChapterOut(BaseModel):

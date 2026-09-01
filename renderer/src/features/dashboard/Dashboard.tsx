@@ -13,9 +13,9 @@ import { useShellStore } from '@/store/shellStore';
 
 const HEAT_LEVEL_BG = [
   'var(--line2)',
-  'rgba(62,124,90,.22)',
-  'rgba(62,124,90,.42)',
-  'rgba(62,124,90,.68)',
+  'rgba(var(--accRGB),.22)',
+  'rgba(var(--accRGB),.42)',
+  'rgba(var(--accRGB),.68)',
   'var(--acc)',
 ];
 
@@ -54,7 +54,7 @@ export function Dashboard() {
           <div className="flex gap-2">
             <button
               onClick={() => goScreen('review')}
-              className="flex-1 rounded-field bg-acc py-[10px] font-sans text-[12.5px] font-semibold text-white hover:brightness-110"
+              className="flex-1 rounded-field bg-accSolid py-[10px] font-sans text-[12.5px] font-semibold text-white hover:brightness-110"
             >
               Start review session
             </button>
@@ -209,7 +209,7 @@ export function Dashboard() {
                 <div className="flex h-[26px] items-end overflow-hidden rounded-[4px] bg-line2">
                   <div
                     className="w-full"
-                    style={{ height: `${d.h}%`, background: d.h >= 100 ? 'var(--acc)' : d.h === 0 ? 'var(--line2)' : 'rgba(62,124,90,.4)' }}
+                    style={{ height: `${d.h}%`, background: d.h >= 100 ? 'var(--acc)' : d.h === 0 ? 'var(--line2)' : 'rgba(var(--accRGB),.4)' }}
                   />
                 </div>
                 <div className="mt-[3px] text-center font-mono text-[8.5px] text-tx3">{d.n}</div>
