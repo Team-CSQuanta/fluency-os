@@ -17,21 +17,29 @@ from app.utils.time import iso8601_utc_now
 
 WORDS_PER_PAGE = 275
 
-# PDF/MOBI/AZW3 are accepted by the file picker (forward-compatible with a
-# later phase) but have no parser yet, so they fail with a clear message
-# instead of the picker silently rejecting them.
 _PARSERS: dict[str, BookParser] = {"txt": txt_parser}
 
+# The heavy format parsers pull in native libraries (pymupdf) or unpack to
+# temp dirs, so they're imported on first use rather than at startup — a user
+# who only ever imports EPUBs never pays for them.
+def _load_parser(module_name: str) -> BookParser:
+    from importlib import import_module
 
-def _load_epub_parser() -> BookParser:
-    from app.services.ingest import epub_parser
+    return import_module(f"app.services.ingest.{module_name}")
 
-    return epub_parser
+
+_LAZY_PARSERS = {
+    "epub": "epub_parser",
+    "pdf": "pdf_parser",
+    "mobi": "mobi_parser",
+    "azw3": "mobi_parser",
+}
 
 
 def get_parser(fmt: str) -> BookParser:
-    if fmt == "epub":
-        return _load_epub_parser()
+    module_name = _LAZY_PARSERS.get(fmt)
+    if module_name is not None:
+        return _load_parser(module_name)
     parser = _PARSERS.get(fmt)
     if parser is None:
         raise UnsupportedFormatError(f"{fmt.upper()} import isn't supported yet — coming in a later phase.")
@@ -108,6 +116,12 @@ def ingest_book(conn: sqlite3.Connection, book_id: str) -> None:
 
         total_words = sum(b.word_count for b in parsed.blocks)
         page_estimate = math.ceil(total_words / WORDS_PER_PAGE) if total_words else 0
+        # A format with real pages reports its true page count on the shelf
+        # tile, rather than a word-count estimate that would contradict the
+        # page numbers printed in the document.
+        native_pages = (
+            max((b.page_number or 0) for b in parsed.blocks) if parsed.uses_native_pages else 0
+        )
 
         cover_path: str | None = None
         if parsed.cover_bytes:
@@ -140,10 +154,19 @@ def ingest_book(conn: sqlite3.Connection, book_id: str) -> None:
                 text_hash = normalise_text_hash(block.text)
                 conn.execute(
                     """
-                    INSERT INTO book_blocks (book_id, block_index, chapter_id, kind, text, word_count, text_hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO book_blocks (book_id, block_index, chapter_id, kind, text, word_count, text_hash, page_number)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (book_id, block_index, chapter_for_block(block_index), block.kind, block.text, block.word_count, text_hash),
+                    (
+                        book_id,
+                        block_index,
+                        chapter_for_block(block_index),
+                        block.kind,
+                        block.text,
+                        block.word_count,
+                        text_hash,
+                        block.page_number,
+                    ),
                 )
 
             conn.execute(
@@ -156,7 +179,8 @@ def ingest_book(conn: sqlite3.Connection, book_id: str) -> None:
                 """
                 UPDATE books SET
                   title = ?, author = ?, language = ?, cover_path = ?,
-                  total_blocks = ?, total_words = ?, page_estimate = ?, ingest_status = 'ready'
+                  total_blocks = ?, total_words = ?, page_estimate = ?,
+                  uses_native_pages = ?, ingest_status = 'ready'
                 WHERE id = ?
                 """,
                 (
@@ -166,7 +190,8 @@ def ingest_book(conn: sqlite3.Connection, book_id: str) -> None:
                     cover_path,
                     len(parsed.blocks),
                     total_words,
-                    page_estimate,
+                    native_pages or page_estimate,
+                    int(parsed.uses_native_pages),
                     book_id,
                 ),
             )
