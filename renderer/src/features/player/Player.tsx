@@ -78,7 +78,7 @@ export function Player() {
                     }}
                     className="cursor-pointer rounded-[3px] px-[2px] hover:bg-white/20"
                     style={{
-                      background: on ? 'rgba(62,124,90,.85)' : 'transparent',
+                      background: on ? 'rgba(var(--accRGB),.85)' : 'transparent',
                       borderBottom: on ? 'none' : '1px dotted rgba(255,255,255,.28)',
                     }}
                   >

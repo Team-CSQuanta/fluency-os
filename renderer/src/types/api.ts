@@ -148,6 +148,17 @@ export interface ReadingStatsOut {
 
 export type LevelMode = 'inline' | 'lexical' | 'contextual' | 'semantic';
 
+export type PageTheme = 'auto' | 'light' | 'sepia' | 'dark';
+export type PanelTab = 'toc' | 'search' | 'marks' | 'text' | 'ai' | 'level';
+
+export interface ReaderPrefsOut {
+  font_size: number;
+  page_theme: PageTheme;
+  heat_on: boolean;
+  panel_open: boolean;
+  panel_tab: PanelTab;
+}
+
 export interface LeveledSegmentOut {
   text: string;
   /** Null for untouched prose; the replaced wording otherwise. */

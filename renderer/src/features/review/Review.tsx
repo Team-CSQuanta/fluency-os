@@ -59,7 +59,7 @@ export function Review() {
             </button>
             <button
               onClick={() => goScreen('dashboard')}
-              className="rounded-field bg-acc px-4 py-[9px] font-sans text-[12px] font-semibold text-white hover:brightness-110"
+              className="rounded-field bg-accSolid px-4 py-[9px] font-sans text-[12px] font-semibold text-white hover:brightness-110"
             >
               back to dashboard
             </button>
@@ -143,7 +143,7 @@ export function Review() {
           {!revealed ? (
             <button
               onClick={() => setRevealed(true)}
-              className="w-full rounded-field bg-acc py-[13px] font-sans text-[13px] font-semibold text-white hover:brightness-110"
+              className="w-full rounded-field bg-accSolid py-[13px] font-sans text-[13px] font-semibold text-white hover:brightness-110"
             >
               Show answer <span className="font-mono text-[11px] font-normal opacity-75">space</span>
             </button>
