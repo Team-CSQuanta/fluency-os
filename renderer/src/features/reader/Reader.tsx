@@ -1,18 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { BlockText } from '@/features/reader/BlockText';
 import {
-  BOOKMARKS,
-  EXISTING_HIGHLIGHTS,
   HIGHLIGHT_COLORS,
   LEVEL_MODES,
   MODE_HEADLINES,
   PARAGRAPH_AI,
   PARAGRAPH_LEVELS,
-  PARAGRAPHS,
-  SEARCH_HITS,
-  TOC,
   type LevelMode,
 } from '@/features/reader/readerMockData';
+import { getBlockSelectionRange } from '@/features/reader/useSelectionRange';
+import { useReaderStore } from '@/store/readerStore';
 import { useShellStore } from '@/store/shellStore';
+import type { ChapterOut, HighlightColour } from '@/types/api';
 
 type Tab = 'toc' | 'search' | 'marks' | 'text' | 'ai' | 'level';
 
@@ -27,15 +26,26 @@ const TAB_ICONS: Record<Tab, string> = {
 
 const TAB_META: Record<Tab, { label: string; title: string; hint: string }> = {
   toc: { label: 'Contents', title: 'Table of contents', hint: 'Jump to any chapter. Current chapter is marked.' },
-  search: { label: 'Search', title: 'Search in book', hint: 'Full-text search across all 342 pages.' },
+  search: { label: 'Search', title: 'Search in book', hint: 'Full-text search across the whole book.' },
   marks: { label: 'Bookmarks', title: 'Highlights & bookmarks', hint: 'Colour, note, and every highlight in this book.' },
   text: { label: 'Text', title: 'Text size & display', hint: 'Size, theme, difficulty tint and read-aloud.' },
   ai: { label: 'AI', title: 'AI explanation', hint: 'Meaning, pronunciation and sense in context.' },
   level: { label: 'Level', title: 'Adaptive text label', hint: 'Rewrites of the selection at your target level.' },
 };
 
-const READER_BG: Record<string, string> = { light: '#fbfbf9', sepia: '#f4ecdd', dark: '#111312' };
-const READER_TX: Record<string, string> = { light: 'var(--tx)', sepia: '#3a3227', dark: '#e6e8e6' };
+type PageTheme = 'auto' | 'light' | 'sepia' | 'dark';
+
+// "auto" reads var(--bg)/var(--tx) directly, so it always matches the rest
+// of the app's current theme — live, not just at the moment the book was
+// opened — which is why it's the default rather than a fixed theme.
+const PAGE_THEMES: Array<{ key: PageTheme; label: string; sub: string; bg: string; fg: string }> = [
+  { key: 'auto', label: 'Auto', sub: 'matches app theme', bg: 'var(--bg)', fg: 'var(--tx)' },
+  { key: 'light', label: 'Light', sub: 'bright paper', bg: '#fbfbf9', fg: '#171a19' },
+  { key: 'sepia', label: 'Sepia', sub: 'warm, low glare', bg: '#f4ecdd', fg: '#3a3227' },
+  { key: 'dark', label: 'Dark', sub: 'dim-room reading', bg: '#111312', fg: '#e6e8e6' },
+];
+const READER_BG: Record<PageTheme, string> = Object.fromEntries(PAGE_THEMES.map((t) => [t.key, t.bg])) as Record<PageTheme, string>;
+const READER_TX: Record<PageTheme, string> = Object.fromEntries(PAGE_THEMES.map((t) => [t.key, t.fg])) as Record<PageTheme, string>;
 
 function TabIcon({ tab, color }: { tab: Tab; color: string }) {
   return (
@@ -46,55 +56,181 @@ function TabIcon({ tab, color }: { tab: Tab; color: string }) {
 }
 
 export function Reader() {
-  const initialChapter = useShellStore((s) => s.readerChapter);
-  const initialPos = useShellStore((s) => s.readerPos);
+  const bookId = useShellStore((s) => s.readerBookId);
   const goScreen = useShellStore((s) => s.goScreen);
 
-  const [chapter, setChapter] = useState(initialChapter);
-  const [pos, setPos] = useState(initialPos);
+  const openBook = useReaderStore((s) => s.openBook);
+  const close = useReaderStore((s) => s.close);
+  const book = useReaderStore((s) => s.book);
+  const toc = useReaderStore((s) => s.toc);
+  const blocks = useReaderStore((s) => s.blocks);
+  const page = useReaderStore((s) => s.page);
+  const totalPages = useReaderStore((s) => s.totalPages);
+  const hasPrev = useReaderStore((s) => s.hasPrev);
+  const hasNext = useReaderStore((s) => s.hasNext);
+  const percent = useReaderStore((s) => s.percent);
+  const readerStatus = useReaderStore((s) => s.status);
+  const readerError = useReaderStore((s) => s.error);
+  const jumpToChapter = useReaderStore((s) => s.jumpToChapter);
+  const nextPage = useReaderStore((s) => s.nextPage);
+  const prevPage = useReaderStore((s) => s.prevPage);
+  const highlights = useReaderStore((s) => s.highlights);
+  const bookmarks = useReaderStore((s) => s.bookmarks);
+  const createHighlight = useReaderStore((s) => s.createHighlight);
+  const updateHighlight = useReaderStore((s) => s.updateHighlight);
+  const deleteHighlight = useReaderStore((s) => s.deleteHighlight);
+  const createBookmark = useReaderStore((s) => s.createBookmark);
+  const deleteBookmark = useReaderStore((s) => s.deleteBookmark);
+  const searchQuery = useReaderStore((s) => s.searchQuery);
+  const searchHits = useReaderStore((s) => s.searchHits);
+  const searchStatus = useReaderStore((s) => s.searchStatus);
+  const setSearchQuery = useReaderStore((s) => s.setSearchQuery);
+
   const [tab, setTab] = useState<Tab>('toc');
   const [panelOpen, setPanelOpen] = useState(true);
-  const [selectedPara, setSelectedPara] = useState(2);
+  const [selectedPara, setSelectedPara] = useState(0);
   const [fontSize, setFontSize] = useState(15.5);
-  const [pageTheme, setPageTheme] = useState<'light' | 'sepia' | 'dark'>('sepia');
+  const [pageTheme, setPageTheme] = useState<PageTheme>('auto');
   const [heatOn, setHeatOn] = useState(true);
   const [levelMode, setLevelMode] = useState<LevelMode>('contextual');
   const [showOriginal, setShowOriginal] = useState(false);
-  const [highlights, setHighlights] = useState<Record<number, string>>({ 1: 'green' });
-  const [highlighterColor, setHighlighterColor] = useState<string | null>(null);
+  const [highlighterColor, setHighlighterColor] = useState<HighlightColour | null>(null);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const justDraggedRef = useRef(false);
+
+  // Open the requested book once, and reset the store's reading state on
+  // the way out — every page turn already writes position immediately, so
+  // there's nothing left to flush on close.
+  useEffect(() => {
+    if (bookId) void openBook(bookId);
+    return () => close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookId]);
+
+  // A fresh page always starts at its first block; keep the selection (used
+  // by the mock AI/Level panels) pinned to the top of whatever page is shown.
+  useEffect(() => {
+    if (blocks.length > 0) setSelectedPara(blocks[0].block_index);
+    // Scroll to the top of the new page instead of wherever the previous
+    // page had left the scroll position.
+    scrollRef.current?.scrollTo({ top: 0 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
+
+  // Left/Right arrow keys turn pages, like an e-reader.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === 'ArrowRight') void nextPage();
+      else if (e.key === 'ArrowLeft') void prevPage();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [nextPage, prevPage]);
 
   const ai = PARAGRAPH_AI[selectedPara] ?? PARAGRAPH_AI[2];
   const level = PARAGRAPH_LEVELS[selectedPara]?.[levelMode] ?? PARAGRAPH_LEVELS[2][levelMode];
   const fsPct = Math.round(((fontSize - 12) / 10) * 100);
+  const selectedBlock = blocks.find((b) => b.block_index === selectedPara);
+  const selectedText = selectedBlock?.text ?? '';
 
+  const currentChapter = [...toc].reverse().find((c) => c.start_block <= (blocks[0]?.block_index ?? 0));
+  const breadcrumb = currentChapter?.label ?? book?.title ?? '';
+
+  // A drag-selection is handled on mouseUp (below); the click that follows
+  // it would otherwise also fire and mark the whole block a second time, so
+  // that click is swallowed once via this flag.
   const handleParaClick = (i: number) => {
+    if (justDraggedRef.current) {
+      justDraggedRef.current = false;
+      return;
+    }
     if (highlighterColor) {
-      setHighlights((h) => ({ ...h, [i]: highlighterColor }));
+      const block = blocks.find((b) => b.block_index === i);
+      if (block) {
+        void createHighlight({
+          blockIndex: i,
+          startChar: 0,
+          endChar: block.text.length,
+          colour: highlighterColor,
+          quotedText: block.text,
+        });
+      }
     } else {
       setSelectedPara(i);
     }
   };
 
+  // Drag-select part of a line while a colour is armed to highlight just
+  // that substring (spec §7.2) — the whole-block click above is the v1
+  // fallback for when there's no drag, only a plain click.
+  const handleBlocksMouseUp = () => {
+    if (!highlighterColor) return;
+    const range = getBlockSelectionRange();
+    if (!range) return;
+    justDraggedRef.current = true;
+    void createHighlight({
+      blockIndex: range.blockIndex,
+      startChar: range.startChar,
+      endChar: range.endChar,
+      colour: highlighterColor,
+      quotedText: range.quotedText,
+    });
+    window.getSelection()?.removeAllRanges();
+  };
+
+  const handleJumpToChapter = (chapter: ChapterOut) => {
+    void jumpToChapter(chapter);
+  };
+
+  const handleJumpToPage = (targetPage: number) => {
+    void useReaderStore.getState().goToPage(targetPage);
+  };
+
+  const handleBookmarkPage = () => {
+    if (blocks.length === 0) return;
+    const label = breadcrumb || `Page ${page}`;
+    void createBookmark(blocks[0].block_index, label);
+  };
+
+  const handleCloseBook = () => {
+    close();
+    goScreen('bookshelf');
+  };
+
   const tabs: Tab[] = ['toc', 'search', 'marks', 'text', 'ai', 'level'];
+  const isTurning = readerStatus === 'loading' && blocks.length > 0;
 
   return (
     <div className="flex h-full min-h-0 w-full">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col items-center overflow-y-auto px-6 pb-9" style={{ background: READER_BG[pageTheme] }}>
-        <div className="sticky top-0 z-[12] mb-[30px] flex w-full justify-center border-b border-line2 py-[10px]" style={{ background: READER_BG[pageTheme] }}>
+      <div
+        ref={scrollRef}
+        className="flex min-h-0 min-w-0 flex-1 flex-col items-center overflow-y-auto px-6 pb-9 transition-colors duration-200"
+        style={{ background: READER_BG[pageTheme] }}
+      >
+        <div
+          className="sticky top-0 z-[12] mb-[30px] flex w-full justify-center border-b border-line2 py-[10px] transition-colors duration-200"
+          style={{ background: READER_BG[pageTheme] }}
+        >
           <div className="flex w-full max-w-[760px] flex-wrap items-center gap-[6px]">
             <button
-              onClick={() => goScreen('bookshelf')}
-              className="flex-none rounded-[5px] border border-line2 px-[9px] py-1 font-mono text-[10.5px] font-medium text-tx2 hover:border-acc hover:text-acc"
+              onClick={handleCloseBook}
+              title="Return to the bookshelf — your place is already saved"
+              className="flex flex-none items-center gap-[6px] rounded-[5px] border border-line2 px-[9px] py-1 font-mono text-[10.5px] font-medium text-tx2 transition-colors hover:border-acc hover:text-acc"
             >
-              ‹ bookshelf
+              <svg viewBox="0 0 16 16" className="h-[10px] w-[10px] flex-none" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9.5 3.5L5 8l4.5 4.5" />
+              </svg>
+              close book
             </button>
-            <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-tx3">{chapter}</span>
+            <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-tx3">{breadcrumb}</span>
             {highlighterColor && (
               <div className="flex items-center gap-[5px] rounded-full border border-accLine bg-accSoft px-2 py-1">
                 {Object.entries(HIGHLIGHT_COLORS).map(([name, hex]) => (
                   <button
                     key={name}
-                    onClick={() => setHighlighterColor(name)}
+                    onClick={() => setHighlighterColor(name as HighlightColour)}
                     title={name}
                     className="h-4 w-4 rounded-full"
                     style={{ background: `${hex}8c`, border: `2px solid ${highlighterColor === name ? 'var(--tx)' : 'transparent'}` }}
@@ -106,42 +242,79 @@ export function Reader() {
           </div>
         </div>
 
-        <div className="w-full max-w-[640px]">
+        <div className="flex w-full max-w-[640px] flex-1 flex-col">
           <div className="mb-[26px] flex items-center justify-between gap-3 font-mono text-[10.5px] text-tx3">
-            <span className="flex-1 truncate">page {pos}</span>
-            <span>14 of 20 pages today</span>
+            <span className="flex-1 truncate">page {page} / {totalPages || '—'}</span>
+            <span>{Math.round(percent)}% read</span>
           </div>
-          <h2 className="mb-5 font-sans text-[26px] font-semibold leading-[1.25] tracking-[-0.02em]" style={{ color: READER_TX[pageTheme] }}>
-            {chapter.split(' · ')[1] ?? chapter}
-          </h2>
-          {PARAGRAPHS.map((body, i) => {
-            const on = selectedPara === i;
-            const mark = highlights[i];
-            const hard = heatOn && (i === 2 || i === 3);
-            return (
-              <div
-                key={i}
-                onClick={() => handleParaClick(i)}
-                className="relative mb-[18px] cursor-pointer rounded-[6px] px-3 py-2"
-                style={{
-                  fontSize: `${fontSize}px`,
-                  lineHeight: 1.85,
-                  color: hard ? '#8a6a2e' : READER_TX[pageTheme],
-                  background: mark ? `${HIGHLIGHT_COLORS[mark]}4d` : on ? 'var(--accSoft)' : 'transparent',
-                  borderLeft: `2px solid ${on ? 'var(--acc)' : 'transparent'}`,
-                  boxShadow: mark ? `inset 0 0 0 1px ${HIGHLIGHT_COLORS[mark]}8c` : 'none',
-                }}
+
+          {readerStatus === 'loading' && blocks.length === 0 && (
+            <div className="py-16 text-center font-mono text-[11px] text-tx3">opening book…</div>
+          )}
+          {readerStatus === 'error' && (
+            <div className="py-16 text-center font-mono text-[11px] text-tx3">
+              couldn't open this book{readerError ? ` — ${readerError}` : ''}
+            </div>
+          )}
+
+          <div
+            onMouseUp={handleBlocksMouseUp}
+            style={{ opacity: isTurning ? 0.5 : 1, transition: 'opacity 120ms ease' }}
+          >
+            {blocks.map((b) => (
+              <BlockText
+                key={b.block_index}
+                block={b}
+                highlights={highlights.filter((h) => h.block_index === b.block_index)}
+                selected={selectedPara === b.block_index}
+                fontSize={fontSize}
+                textColor={READER_TX[pageTheme]}
+                onClick={handleParaClick}
+              />
+            ))}
+          </div>
+
+          {blocks.length > 0 && (
+            <div className="mt-auto flex items-center justify-between gap-3 border-t border-line2 pt-4">
+              <button
+                onClick={() => void prevPage()}
+                disabled={!hasPrev || isTurning}
+                className="flex items-center gap-[6px] rounded-field border border-line px-[14px] py-2 font-mono text-[11px] font-medium text-tx2 transition-colors hover:border-acc hover:text-acc disabled:cursor-default disabled:opacity-30 disabled:hover:border-line disabled:hover:text-tx2"
               >
-                <span>{body}</span>
-                {mark && (
-                  <span
-                    className="absolute right-[-16px] top-2 h-2 w-2 rounded-full"
-                    style={{ background: HIGHLIGHT_COLORS[mark] }}
-                  />
-                )}
+                <svg viewBox="0 0 16 16" className="h-[11px] w-[11px]" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9.5 3.5L5 8l4.5 4.5" />
+                </svg>
+                previous
+              </button>
+              <div className="flex items-center gap-[6px]">
+                {Array.from({ length: Math.min(totalPages, 7) }, (_, idx) => {
+                  // A compact dot strip centred on the current page, rather
+                  // than one dot per page on a 300-page book.
+                  const span = Math.min(totalPages, 7);
+                  const start = Math.max(1, Math.min(page - Math.floor(span / 2), totalPages - span + 1));
+                  const p = start + idx;
+                  const on = p === page;
+                  return (
+                    <span
+                      key={p}
+                      className="h-[6px] w-[6px] rounded-full transition-colors"
+                      style={{ background: on ? 'var(--acc)' : 'var(--line2)' }}
+                    />
+                  );
+                })}
               </div>
-            );
-          })}
+              <button
+                onClick={() => void nextPage()}
+                disabled={!hasNext || isTurning}
+                className="flex items-center gap-[6px] rounded-field border border-line px-[14px] py-2 font-mono text-[11px] font-medium text-tx2 transition-colors hover:border-acc hover:text-acc disabled:cursor-default disabled:opacity-30 disabled:hover:border-line disabled:hover:text-tx2"
+              >
+                next
+                <svg viewBox="0 0 16 16" className="h-[11px] w-[11px]" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M6.5 3.5L11 8l-4.5 4.5" />
+                </svg>
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -217,19 +390,24 @@ export function Reader() {
           <div className="min-h-0 flex-1 overflow-y-auto px-[13px] pb-5 pt-[13px]">
             {tab === 'toc' && (
               <div className="flex flex-col gap-[1px]">
-                {TOC.map((c) => {
-                  const on = chapter.includes(c.label.split(' · ')[1] ?? '');
+                {toc.length === 0 && (
+                  <div className="font-mono text-[10.5px] text-tx3">
+                    {book ? 'This book has no chapter markers.' : 'Loading…'}
+                  </div>
+                )}
+                {toc.map((c) => {
+                  const on = currentChapter?.id === c.id;
                   return (
                     <button
-                      key={c.label}
-                      onClick={() => {
-                        setChapter('Chapter ' + c.label);
-                        setPos(c.page + ' / 342');
-                      }}
+                      key={c.id}
+                      onClick={() => handleJumpToChapter(c)}
                       className="flex items-baseline justify-between gap-[10px] rounded-field px-[9px] py-2 text-left hover:bg-line2"
                       style={{ background: on ? 'var(--accSoft)' : 'transparent', borderLeft: `2px solid ${on ? 'var(--acc)' : 'transparent'}` }}
                     >
-                      <span className="min-w-0 font-sans text-[11.5px] leading-[1.5]" style={{ color: on ? 'var(--acc)' : 'var(--tx2)', fontWeight: on ? 600 : 400 }}>
+                      <span
+                        className="min-w-0 font-sans text-[11.5px] leading-[1.5]"
+                        style={{ color: on ? 'var(--acc)' : 'var(--tx2)', fontWeight: on ? 600 : 400, paddingLeft: c.depth * 10 }}
+                      >
                         {c.label}
                       </span>
                       <span className="flex-none font-mono text-[9.5px] text-tx3">{c.page}</span>
@@ -241,19 +419,44 @@ export function Reader() {
 
             {tab === 'search' && (
               <div>
-                <div className="flex items-center gap-[7px] rounded-field border border-accLine bg-accSoft px-[10px] py-2 font-mono text-[11.5px] text-tx">
-                  reticent<span className="animate-pulse">▌</span>
+                <input
+                  autoFocus
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="search this book…"
+                  className="w-full rounded-field border border-line2 bg-transparent px-[10px] py-2 font-mono text-[11.5px] text-tx outline-none focus:border-accLine focus:bg-accSoft"
+                />
+                <div className="my-2 font-mono text-[9.5px] text-tx3">
+                  {searchQuery.trim() === ''
+                    ? 'type to search'
+                    : searchStatus === 'loading'
+                      ? 'searching…'
+                      : searchStatus === 'error'
+                        ? 'search failed'
+                        : `${searchHits.length} match${searchHits.length === 1 ? '' : 'es'} in this book`}
                 </div>
-                <div className="my-2 font-mono text-[9.5px] text-tx3">{SEARCH_HITS.length} matches in this book</div>
                 <div className="flex flex-col gap-[7px]">
-                  {SEARCH_HITS.map((h) => (
+                  {searchHits.map((h, i) => (
                     <button
-                      key={h.snippet}
-                      onClick={() => setTab('toc')}
+                      key={`${h.block_index}-${i}`}
+                      onClick={() => handleJumpToPage(h.page)}
                       className="rounded-field border border-line2 px-[10px] py-[9px] text-left hover:border-acc"
                     >
-                      <div className="font-sans text-[11px] leading-[1.6] text-tx2">{h.snippet}</div>
-                      <div className="mt-1 font-mono text-[9px] text-tx3">{h.loc}</div>
+                      <div className="font-sans text-[11px] leading-[1.6] text-tx2">
+                        {h.snippet.map((seg, j) =>
+                          seg.matched ? (
+                            <mark key={j} className="rounded-[2px] bg-accSoft px-[1px] text-acc">
+                              {seg.text}
+                            </mark>
+                          ) : (
+                            <span key={j}>{seg.text}</span>
+                          ),
+                        )}
+                      </div>
+                      <div className="mt-1 font-mono text-[9px] text-tx3">
+                        page {h.page}
+                        {h.chapter_label ? ` · ${h.chapter_label}` : ''}
+                      </div>
                     </button>
                   ))}
                 </div>
@@ -268,7 +471,7 @@ export function Reader() {
                     {Object.entries(HIGHLIGHT_COLORS).map(([name, hex]) => (
                       <button
                         key={name}
-                        onClick={() => setHighlighterColor(highlighterColor === name ? null : name)}
+                        onClick={() => setHighlighterColor(highlighterColor === name ? null : (name as HighlightColour))}
                         title={name}
                         className="h-[30px] flex-1 rounded-field"
                         style={{ background: `${hex}8c`, border: `2px solid ${highlighterColor === name ? 'var(--tx)' : 'transparent'}` }}
@@ -276,40 +479,80 @@ export function Reader() {
                     ))}
                   </div>
                   <div className="mt-[7px] font-mono text-[10px] text-tx3">
-                    {highlighterColor ? `highlighter on · click a paragraph to mark it ${highlighterColor}` : 'pick a colour, then click a paragraph'}
+                    {highlighterColor ? `highlighter on · drag over text, or click a paragraph to mark it whole` : 'pick a colour, then drag over text (or click a paragraph)'}
                   </div>
                 </div>
                 <div className="border-t border-line2 pt-3">
-                  <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
-                    Bookmarks
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
+                      Bookmarks · {bookmarks.length}
+                    </span>
+                    <button
+                      onClick={handleBookmarkPage}
+                      className="font-mono text-[9.5px] font-medium text-acc hover:underline"
+                    >
+                      ＋ bookmark this page
+                    </button>
                   </div>
                   <div className="flex flex-col gap-[7px]">
-                    {BOOKMARKS.map((b) => (
-                      <button
-                        key={b.label}
-                        onClick={() => setTab('toc')}
-                        className="flex gap-[9px] rounded-field border border-line2 px-[10px] py-[9px] text-left hover:border-acc"
+                    {bookmarks.length === 0 && (
+                      <div className="font-mono text-[10px] text-tx3">No bookmarks yet.</div>
+                    )}
+                    {bookmarks.map((b) => (
+                      <div
+                        key={b.id}
+                        className="flex items-center gap-[9px] rounded-field border border-line2 px-[10px] py-[9px] hover:border-acc"
                       >
-                        <span className="min-w-0">
-                          <span className="block font-sans text-[11.5px] font-medium text-tx">{b.label}</span>
-                          <span className="mt-[3px] block font-mono text-[9px] text-tx3">{b.loc}</span>
-                        </span>
-                      </button>
+                        <button onClick={() => handleJumpToPage(b.page)} className="min-w-0 flex-1 text-left">
+                          <span className="block truncate font-sans text-[11.5px] font-medium text-tx">{b.label}</span>
+                          <span className="mt-[3px] block font-mono text-[9px] text-tx3">page {b.page}</span>
+                        </button>
+                        <button
+                          onClick={() => void deleteBookmark(b.id)}
+                          title="Remove bookmark"
+                          className="flex-none font-mono text-[10px] text-tx3 hover:text-acc"
+                        >
+                          ✕
+                        </button>
+                      </div>
                     ))}
                   </div>
                 </div>
                 <div className="border-t border-line2 pt-3">
                   <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
-                    All highlights · {EXISTING_HIGHLIGHTS.length}
+                    All highlights · {highlights.length}
                   </div>
                   <div className="flex flex-col gap-2">
-                    {EXISTING_HIGHLIGHTS.map((n) => (
-                      <div key={n.text} className="rounded-field border border-line2 px-[10px] py-[10px]" style={{ borderLeft: `3px solid ${n.color}` }}>
-                        <div className="font-sans text-[11px] leading-[1.6] text-tx2">"{n.text}"</div>
-                        {n.note && (
-                          <div className="mt-[6px] border-t border-line2 pt-[6px] font-sans text-[10.5px] leading-[1.6] text-tx3">{n.note}</div>
-                        )}
-                        <div className="mt-[6px] font-mono text-[9px] text-tx3">{n.loc}</div>
+                    {highlights.length === 0 && (
+                      <div className="font-mono text-[10px] text-tx3">No highlights yet.</div>
+                    )}
+                    {highlights.map((h) => (
+                      <div
+                        key={h.id}
+                        className="rounded-field border border-line2 px-[10px] py-[10px]"
+                        style={{ borderLeft: `3px solid ${HIGHLIGHT_COLORS[h.colour]}` }}
+                      >
+                        <button onClick={() => handleJumpToPage(h.page)} className="block w-full text-left">
+                          <span className="font-sans text-[11px] leading-[1.6] text-tx2">"{h.quoted_text}"</span>
+                        </button>
+                        <input
+                          defaultValue={h.note ?? ''}
+                          placeholder="add a note…"
+                          onBlur={(e) => {
+                            const note = e.target.value.trim();
+                            if (note !== (h.note ?? '')) void updateHighlight(h.id, { note: note || null });
+                          }}
+                          className="mt-[6px] w-full border-t border-line2 bg-transparent pt-[6px] font-sans text-[10.5px] leading-[1.6] text-tx3 outline-none focus:text-tx"
+                        />
+                        <div className="mt-[6px] flex items-center justify-between gap-2">
+                          <span className="font-mono text-[9px] text-tx3">page {h.page}</span>
+                          <button
+                            onClick={() => void deleteHighlight(h.id)}
+                            className="font-mono text-[9px] text-tx3 hover:text-acc"
+                          >
+                            remove
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -333,7 +576,7 @@ export function Reader() {
                   </div>
                 </div>
                 <div className="rounded-field border border-accLine bg-accSoft px-[10px] py-[9px] font-sans text-[11px] leading-[1.6] text-tx2">
-                  selection · "{PARAGRAPHS[selectedPara].slice(0, 58)}…"
+                  selection · "{selectedText.slice(0, 58)}…"
                 </div>
                 <div className="border-t border-line2 pt-3">
                   <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">Dictionary</div>
@@ -378,7 +621,7 @@ export function Reader() {
                   <div className="mb-[6px] font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
                     Selection · B1 target
                   </div>
-                  <div className="font-sans text-[11.5px] leading-[1.7] text-tx3">"{PARAGRAPHS[selectedPara]}"</div>
+                  <div className="font-sans text-[11.5px] leading-[1.7] text-tx3">"{selectedText}"</div>
                 </div>
                 <div className="flex flex-col gap-[5px]">
                   {LEVEL_MODES.map((m) => {
@@ -402,7 +645,7 @@ export function Reader() {
                   </div>
                   <div className="font-sans text-[12.5px] leading-[1.8] text-tx">
                     {showOriginal ? (
-                      <span>{PARAGRAPHS[selectedPara]}</span>
+                      <span>{selectedText}</span>
                     ) : (
                       <>
                         <span>{level.before}</span>
@@ -472,21 +715,33 @@ export function Reader() {
                 </div>
                 <div>
                   <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">Page theme</div>
-                  <div className="flex gap-[6px]">
-                    {(['light', 'sepia', 'dark'] as const).map((t) => (
-                      <button
-                        key={t}
-                        onClick={() => setPageTheme(t)}
-                        className="flex-1 rounded-field border py-[9px] font-mono text-[10px] font-medium"
-                        style={{
-                          borderColor: pageTheme === t ? 'var(--accLine)' : 'var(--line2)',
-                          background: READER_BG[t],
-                          color: t === 'dark' ? '#e6e8e6' : '#3a3227',
-                        }}
-                      >
-                        {t}
-                      </button>
-                    ))}
+                  <div className="grid grid-cols-2 gap-[6px]">
+                    {PAGE_THEMES.map((t) => {
+                      const on = pageTheme === t.key;
+                      return (
+                        <button
+                          key={t.key}
+                          onClick={() => setPageTheme(t.key)}
+                          className="flex items-center gap-[8px] rounded-field border px-[10px] py-[8px] text-left transition-colors"
+                          style={{ borderColor: on ? 'var(--acc)' : 'var(--line2)', background: on ? 'var(--accSoft)' : 'transparent' }}
+                        >
+                          <span
+                            className="h-[22px] w-[22px] flex-none rounded-full border"
+                            style={{ background: t.bg, borderColor: on ? 'var(--acc)' : 'var(--line2)', color: t.fg }}
+                          >
+                            <span className="grid h-full w-full place-items-center font-mono text-[10px] leading-none" style={{ color: t.fg }}>
+                              {on ? '✓' : ''}
+                            </span>
+                          </span>
+                          <span className="min-w-0">
+                            <span className="block font-sans text-[11px] font-medium" style={{ color: on ? 'var(--acc)' : 'var(--tx)' }}>
+                              {t.label}
+                            </span>
+                            <span className="block truncate font-mono text-[9px] text-tx3">{t.sub}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
                 <div>
@@ -501,7 +756,7 @@ export function Reader() {
                       {heatOn ? 'on' : 'off'}
                     </span>
                   </button>
-                  <div className="mt-[7px] font-mono text-[10px] leading-[1.6] text-tx3">14 words above B2 on this page</div>
+                  <div className="mt-[7px] font-mono text-[10px] leading-[1.6] text-tx3">not wired yet — lands in a later phase</div>
                 </div>
                 <div>
                   <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">Read aloud</div>
