@@ -4,7 +4,7 @@ import { HISTORY, LIB_FILTERS, LIB_ITEMS, matchesFilter } from '@/features/libra
 import { useShellStore } from '@/store/shellStore';
 
 const KIND_STYLE: Record<'local' | 'link', { label: string; bg: string; fg: string; bd: string }> = {
-  local: { label: 'local file', bg: 'rgba(62,124,90,.2)', fg: 'var(--acc)', bd: 'var(--accLine)' },
+  local: { label: 'local file', bg: 'rgba(var(--accRGB),.2)', fg: 'var(--acc)', bd: 'var(--accLine)' },
   link: { label: 'link', bg: 'rgba(0,0,0,.5)', fg: 'rgba(255,255,255,.75)', bd: 'rgba(255,255,255,.2)' },
 };
 
@@ -88,7 +88,7 @@ export function Library() {
           </div>
           <button
             onClick={() => setAddOpen(true)}
-            className="rounded-field bg-acc px-[14px] py-2 font-sans text-[11.5px] font-semibold text-white hover:brightness-110"
+            className="rounded-field bg-accSolid px-[14px] py-2 font-sans text-[11.5px] font-semibold text-white hover:brightness-110"
           >
             + Add content
           </button>

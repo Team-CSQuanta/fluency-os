@@ -121,7 +121,7 @@ function QuizCard() {
           <button
             onClick={submitPlacementQuiz}
             disabled={selected === undefined}
-            className="rounded-field bg-acc px-4 py-[6px] font-mono text-[11px] font-semibold text-white disabled:opacity-40"
+            className="rounded-field bg-accSolid px-4 py-[6px] font-mono text-[11px] font-semibold text-white disabled:opacity-40"
           >
             finish
           </button>
