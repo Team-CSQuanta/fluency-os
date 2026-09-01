@@ -12,6 +12,10 @@ import { Reader } from '@/features/reader/Reader';
 import { VocabularyList } from '@/features/vocabulary/VocabularyList';
 import { VocabularyEntry } from '@/features/vocabulary/VocabularyEntry';
 import { Review } from '@/features/review/Review';
+import { ConversationList } from '@/features/conversation/ConversationList';
+import { ConversationLive } from '@/features/conversation/ConversationLive';
+import { Report } from '@/features/conversation/Report';
+import { Challenge } from '@/features/challenge/Challenge';
 import { useAppStore } from '@/store/appStore';
 import { useShellStore } from '@/store/shellStore';
 
@@ -34,6 +38,14 @@ function ScreenContent() {
       return <VocabularyEntry />;
     case 'review':
       return <Review />;
+    case 'conv':
+      return <ConversationList />;
+    case 'convlive':
+      return <ConversationLive />;
+    case 'report':
+      return <Report />;
+    case 'challenge':
+      return <Challenge />;
     default:
       return <ComingSoon />;
   }
@@ -42,7 +54,7 @@ function ScreenContent() {
 function MainApp() {
   const screen = useShellStore((s) => s.screen);
   // Player/Reader want the full content area with no scroll container of their own.
-  const immersive = screen === 'player' || screen === 'reader';
+  const immersive = screen === 'player' || screen === 'reader' || screen === 'convlive';
   const contentClass = immersive ? 'flex min-h-0 flex-1' : 'min-h-0 flex-1 overflow-auto';
 
   return (
