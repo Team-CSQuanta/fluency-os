@@ -573,8 +573,23 @@ def search_book(
 
 @router.patch("/{book_id}", response_model=BookOut)
 def update_book(book_id: str, payload: BookUpdate, conn: sqlite3.Connection = Depends(get_db)) -> BookOut:
-    _get_book_row(conn, book_id)
+    row = _get_book_row(conn, book_id)
     fields = payload.model_dump(exclude_unset=True)
+
+    # `finished` is a bool on the wire but a timestamp in the column, so it
+    # can't go through the generic SET below.
+    finished = fields.pop("finished", None)
+    if finished is not None:
+        if not finished:
+            conn.execute("UPDATE books SET finished_at = NULL WHERE id = ?", (book_id,))
+        elif row["finished_at"] is None:
+            # Re-marking an already-finished book keeps the original date —
+            # when you finished it is a fact, not something a stray click
+            # should move.
+            conn.execute(
+                "UPDATE books SET finished_at = ? WHERE id = ?", (iso8601_utc_now(), book_id)
+            )
+
     if fields:
         set_clause = ", ".join(f"{k} = ?" for k in fields)
         values = [int(v) if isinstance(v, bool) else v for v in fields.values()]

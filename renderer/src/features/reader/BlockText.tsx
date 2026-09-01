@@ -99,7 +99,7 @@ export function BlockText({
           const heatStyle = seg.heat
             ? {
                 borderBottom: '1.5px solid var(--acc)',
-                background: 'rgba(62,124,90,.09)',
+                background: 'rgba(var(--accRGB),.09)',
                 cursor: 'help' as const,
               }
             : undefined;

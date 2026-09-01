@@ -75,7 +75,7 @@ export function VocabularyEntry() {
                   setEditing(false);
                   flashToast(`"${row.word}" updated`);
                 }}
-                className="rounded-field bg-acc px-[14px] py-[7px] font-sans text-[11px] font-semibold text-white"
+                className="rounded-field bg-accSolid px-[14px] py-[7px] font-sans text-[11px] font-semibold text-white"
               >
                 Save changes
               </button>

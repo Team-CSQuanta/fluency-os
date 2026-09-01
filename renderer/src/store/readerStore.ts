@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { api } from '@/lib/apiClient';
 import { useAppStore } from '@/store/appStore';
+import { useBookshelfStore } from '@/store/bookshelfStore';
 import { useShellStore } from '@/store/shellStore';
 import type {
   BlockHeatOut,
@@ -15,12 +16,14 @@ import type {
   LevelMode,
   PageOut,
   PositionOut,
+  ReaderPrefsOut,
   SearchHitOut,
   SessionOut,
   WordLookupOut,
 } from '@/types/api';
 
 const SEARCH_DEBOUNCE_MS = 200;
+const PREFS_SAVE_DEBOUNCE_MS = 400;
 
 function requireUserId(): string {
   const id = useAppStore.getState().currentUserId;
@@ -54,6 +57,11 @@ interface ReaderState {
   levelStatus: 'idle' | 'loading' | 'error';
   levelBlockIndex: number | null;
   session: SessionOut | null;
+  prefs: ReaderPrefsOut;
+  // The block a jump (search hit, bookmark, highlight) is aiming at. The
+  // reader clears it once it has scrolled there — a page load has to land
+  // first, so the target can't be acted on at click time.
+  focusBlock: number | null;
   status: 'idle' | 'loading' | 'error' | 'ready';
   error: string | null;
 
@@ -80,6 +88,11 @@ interface ReaderState {
   levelBlock: (blockIndex: number, mode?: LevelMode) => Promise<void>;
   openSession: () => Promise<void>;
   heartbeat: (seconds: number) => Promise<void>;
+  loadPrefs: () => Promise<void>;
+  setPrefs: (patch: Partial<ReaderPrefsOut>) => void;
+  jumpToBlock: (page: number, blockIndex: number) => Promise<void>;
+  clearFocusBlock: () => void;
+  setFinished: (finished: boolean) => Promise<void>;
   close: () => void;
 }
 
@@ -110,6 +123,7 @@ const INITIAL: Pick<
   | 'levelStatus'
   | 'levelBlockIndex'
   | 'session'
+  | 'focusBlock'
   | 'status'
   | 'error'
 > = {
@@ -140,6 +154,7 @@ const INITIAL: Pick<
   levelStatus: 'idle',
   levelBlockIndex: null,
   session: null,
+  focusBlock: null,
   status: 'idle',
   error: null,
 };
@@ -159,8 +174,24 @@ function cancelPendingSearch(): void {
   searchAbortController = null;
 }
 
+const DEFAULT_PREFS: ReaderPrefsOut = {
+  font_size: 15.5,
+  page_theme: 'auto',
+  heat_on: true,
+  panel_open: true,
+  panel_tab: 'toc',
+};
+
+let prefsSaveTimer: ReturnType<typeof setTimeout> | null = null;
+// Set the moment the reader touches a control. loadPrefs resolving after that
+// must not overwrite the change with the value it was already fetching.
+let prefsTouched = false;
+
 export const useReaderStore = create<ReaderState>((set, get) => ({
   ...INITIAL,
+  // Deliberately outside INITIAL — these belong to the reader, not to the
+  // book that happens to be open, so closing a book must not reset them.
+  prefs: DEFAULT_PREFS,
 
   openBook: async (bookId) => {
     cancelPendingSearch();
@@ -304,6 +335,59 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   },
 
   clearLookup: () => set({ lookup: null, lookupStatus: 'idle' }),
+
+  loadPrefs: async () => {
+    try {
+      const userId = requireUserId();
+      const prefs = await api.get<ReaderPrefsOut>(
+        `/reading/prefs?user_id=${encodeURIComponent(userId)}`,
+      );
+      if (prefsTouched) return;
+      set({ prefs });
+    } catch {
+      // Defaults are already in place; a failed load must not block reading.
+    }
+  },
+
+  setPrefs: (patch) => {
+    // Optimistic, then debounced: dragging the font size past four steps
+    // should be one write, not four.
+    prefsTouched = true;
+    const prefs = { ...get().prefs, ...patch };
+    set({ prefs });
+
+    if (prefsSaveTimer) clearTimeout(prefsSaveTimer);
+    prefsSaveTimer = setTimeout(() => {
+      prefsSaveTimer = null;
+      const userId = useAppStore.getState().currentUserId;
+      if (!userId) return;
+      void api.put<ReaderPrefsOut>('/reading/prefs', { user_id: userId, ...get().prefs }).catch(() => {
+        // Losing a preference write is survivable; losing the reader is not.
+      });
+    }, PREFS_SAVE_DEBOUNCE_MS);
+  },
+
+  jumpToBlock: async (targetPage, blockIndex) => {
+    // Arm the target before the page loads: the block only exists in the DOM
+    // once its page has rendered, so the reader scrolls to it from an effect.
+    set({ focusBlock: blockIndex });
+    if (targetPage !== get().page) {
+      await get().goToPage(targetPage);
+    }
+  },
+
+  clearFocusBlock: () => set({ focusBlock: null }),
+
+  setFinished: async (finished) => {
+    const { bookId } = get();
+    if (!bookId) return;
+    const updated = await api.patch<BookOut>(`/books/${bookId}`, { finished });
+    if (get().bookId !== bookId) return;
+    set({ book: updated });
+    // The shelf is behind the reader and re-reads on mount, but its counts
+    // are fetched separately — keep them honest without a round trip.
+    void useBookshelfStore.getState().fetchCounts();
+  },
 
   setLevelMode: (mode) => {
     set({ levelMode: mode });
