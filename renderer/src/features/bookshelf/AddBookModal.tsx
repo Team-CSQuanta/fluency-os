@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BOOK_FORMATS } from '@/features/bookshelf/bookshelfMockData';
+import { BOOK_FORMATS } from '@/features/bookshelf/bookshelfConstants';
 import { useBookshelfStore } from '@/store/bookshelfStore';
 
 export function AddBookModal({ onClose }: { onClose: () => void }) {
