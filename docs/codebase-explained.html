@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FluencyOS — The Codebase Explained</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 16mm 16mm; }
+
+  :root {
+    --acc: #3E7C5A;
+    --accSoft: #eef4f0;
+    --accLine: #b9d2c4;
+    --ink: #1a1d1b;
+    --ink2: #4a5350;
+    --ink3: #7b8481;
+    --line: #dfe3e1;
+    --panel: #f7f8f7;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: 'DejaVu Sans', 'Liberation Sans', system-ui, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.65;
+    color: var(--ink);
+  }
+
+  code, .mono { font-family: 'DejaVu Sans Mono', 'Liberation Mono', monospace; }
+
+  h1 {
+    font-size: 26pt; line-height: 1.15; letter-spacing: -0.02em;
+    margin: 0 0 6px; font-weight: 700;
+  }
+  h2 {
+    font-size: 15pt; margin: 26px 0 10px; padding-top: 10px;
+    border-top: 2px solid var(--acc); font-weight: 700; letter-spacing: -0.01em;
+    break-after: avoid; page-break-after: avoid;
+  }
+  h3 {
+    font-size: 11.5pt; margin: 16px 0 6px; font-weight: 700; color: var(--ink);
+    break-after: avoid; page-break-after: avoid;
+  }
+  p { margin: 0 0 9px; }
+  ul, ol { margin: 0 0 9px; padding-left: 20px; }
+  li { margin-bottom: 4px; }
+
+  code {
+    font-size: 9pt; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 3px; padding: 0.5px 4px; color: #2b4b3a;
+  }
+
+  .cover {
+    border-bottom: 3px solid var(--acc);
+    padding-bottom: 16px; margin-bottom: 4px;
+  }
+  .sub { font-size: 12pt; color: var(--ink2); margin: 0 0 10px; }
+  .meta { font-size: 8.5pt; color: var(--ink3); font-family: 'DejaVu Sans Mono', monospace; }
+
+  .lead {
+    background: var(--accSoft); border-left: 3px solid var(--acc);
+    padding: 11px 14px; margin: 14px 0; font-size: 10.5pt;
+  }
+  .note {
+    background: #fdfaf3; border-left: 3px solid #c8a44a;
+    padding: 10px 13px; margin: 12px 0; font-size: 9.5pt; color: #4a4335;
+  }
+
+  table { width: 100%; border-collapse: collapse; margin: 10px 0 14px; font-size: 9.5pt; }
+  th {
+    text-align: left; background: var(--panel); border: 1px solid var(--line);
+    padding: 6px 9px; font-weight: 700; font-size: 8.5pt;
+    text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink2);
+  }
+  td { border: 1px solid var(--line); padding: 6px 9px; vertical-align: top; }
+  td.mono, th.mono { font-family: 'DejaVu Sans Mono', monospace; font-size: 8.5pt; }
+
+  pre {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 5px;
+    padding: 11px 13px; font-size: 8.5pt; line-height: 1.5; overflow: hidden;
+    font-family: 'DejaVu Sans Mono', monospace; margin: 10px 0 14px;
+    white-space: pre-wrap; color: #2f3733;
+  }
+
+  .flow { margin: 12px 0 16px; }
+  .flow .step {
+    display: flex; gap: 11px; margin-bottom: 9px; break-inside: avoid;
+  }
+  .flow .n {
+    flex: none; width: 21px; height: 21px; border-radius: 50%;
+    background: var(--acc); color: #fff; font-size: 8.5pt; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'DejaVu Sans Mono', monospace;
+  }
+  .flow .body { flex: 1; font-size: 10pt; }
+  .flow .body b { font-weight: 700; }
+
+  .cards { display: flex; gap: 10px; margin: 12px 0 16px; }
+  .card {
+    flex: 1; border: 1px solid var(--line); border-radius: 6px;
+    padding: 11px 12px; background: #fff; break-inside: avoid;
+  }
+  .card .k {
+    font-size: 8pt; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--acc); font-weight: 700; margin-bottom: 5px;
+    font-family: 'DejaVu Sans Mono', monospace;
+  }
+  .card .v { font-size: 9.5pt; color: var(--ink2); line-height: 1.55; }
+
+  .pagebreak { page-break-before: always; break-before: page; }
+  section { break-inside: auto; }
+  h2, h3 { break-inside: avoid; }
+  table, pre, .lead, .note { break-inside: avoid; }
+
+  .footer-note {
+    margin-top: 22px; padding-top: 10px; border-top: 1px solid var(--line);
+    font-size: 8.5pt; color: var(--ink3);
+  }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <h1>FluencyOS</h1>
+  <p class="sub">The codebase, explained in plain English</p>
+  <p class="meta">Software Engineering Project &middot; Jubair &middot; Rafsan &middot; Foyez</p>
+</div>
+
+<div class="lead">
+  <b>In one sentence:</b> FluencyOS is a desktop app that helps you learn English from the films and books
+  you already enjoy — you look up a word where you met it, it gets saved with that exact moment, and later
+  you have to actually <i>use</i> it in conversation before the app considers it learned.
+</div>
+
+<p>
+  This document explains how the code is put together. It is written for someone who knows a little
+  programming but has not seen this project before — a teammate joining, or a reviewer trying to
+  understand what was built.
+</p>
+
+<h2>1. The big picture</h2>
+
+<p>
+  The app is made of <b>three programs that run at the same time</b> on your computer and talk to each other.
+  Think of it like a restaurant:
+</p>
+
+<div class="cards">
+  <div class="card">
+    <div class="k">The building</div>
+    <div class="v"><b>Electron</b> — the desktop window itself. It opens the app window, owns the
+    file system, and starts the other two pieces. Written in TypeScript.</div>
+  </div>
+  <div class="card">
+    <div class="k">The dining room</div>
+    <div class="v"><b>React UI</b> — everything you see and click. It is a website, but running inside
+    the desktop window instead of a browser. TypeScript + React + Tailwind.</div>
+  </div>
+  <div class="card">
+    <div class="k">The kitchen</div>
+    <div class="v"><b>Python backend</b> — a small web server running privately on your own machine.
+    It does the thinking and owns the database. FastAPI + SQLite.</div>
+  </div>
+</div>
+
+<h3>Why is there a Python server inside a desktop app?</h3>
+<p>
+  Because the interesting parts of this project — running a local AI language model, converting speech to
+  text, generating speech — are all Python libraries. Rather than fight that, the app just runs a tiny
+  Python web server in the background. It is <b>not</b> on the internet: it listens only on
+  <code>127.0.0.1</code>, which means "this computer only". Nothing leaves the machine.
+</p>
+
+<h3>How the three pieces talk</h3>
+<pre>   ┌──────────────────────────────────────────────┐
+   │  Electron main process  (the desktop window)  │
+   │  • picks a free port                          │
+   │  • generates a secret token                   │
+   │  • starts the Python server                   │
+   └───────┬──────────────────────────┬────────────┘
+           │ preload bridge           │ starts as a child process
+           ▼                          ▼
+   ┌───────────────────┐      ┌──────────────────────┐
+   │   React UI        │─────▶│  Python backend      │
+   │  (what you see)   │ HTTP │  + SQLite database   │
+   └───────────────────┘      └──────────────────────┘</pre>
+
+<h2>2. What happens when you launch the app</h2>
+
+<div class="flow">
+  <div class="step"><div class="n">1</div><div class="body">
+    You run <code>npm run dev</code>. A small script (<code>scripts/dev.mjs</code>) starts the UI build
+    tool and then launches the Electron window.
+  </div></div>
+  <div class="step"><div class="n">2</div><div class="body">
+    Electron picks a <b>random free port number</b> and generates a <b>random secret token</b>
+    (64 random characters, new every launch).
+  </div></div>
+  <div class="step"><div class="n">3</div><div class="body">
+    Electron starts the Python server as a background process, handing it the port, the token, and
+    where to put the database file.
+  </div></div>
+  <div class="step"><div class="n">4</div><div class="body">
+    The Python server creates the database if it does not exist, then reports it is healthy.
+    Electron keeps checking until it answers.
+  </div></div>
+  <div class="step"><div class="n">5</div><div class="body">
+    Only then does Electron open the window and load the React UI.
+  </div></div>
+  <div class="step"><div class="n">6</div><div class="body">
+    The UI asks Electron "where is the backend and what is the password?", then talks to it directly
+    for everything after that.
+  </div></div>
+  <div class="step"><div class="n">7</div><div class="body">
+    When you close the window, Electron shuts the Python server down too, so nothing is left running.
+  </div></div>
+</div>
+
+<h3>The secret token — why it exists</h3>
+<p>
+  A web server running on your computer could, in principle, be called by <i>any</i> other program on
+  that computer. To prevent that, every single request must include the secret token that was generated
+  at launch. Anything without it is rejected immediately. The token lives only in memory — it is never
+  written to a file, never logged, and it changes every time you start the app.
+</p>
+
+
+
+<h2>3. A tour of the folders</h2>
+
+<pre>fluency-os/
+├── electron/       the desktop window and the bridge to the operating system
+├── renderer/       everything you see — the React user interface
+├── backend/        the Python server, the database, and the "thinking" code
+├── scripts/        helper scripts that build and launch everything
+├── build/          the app icon
+└── docs/           this document</pre>
+
+<h3>electron/ — the desktop shell</h3>
+<table>
+  <tr><th class="mono" style="width:34%">File</th><th>What it does</th></tr>
+  <tr><td class="mono">main/index.ts</td><td>Creates the app window and controls the app's life cycle (start up, shut down).</td></tr>
+  <tr><td class="mono">main/backend-process.ts</td><td>Starts, health-checks, and stops the Python server.</td></tr>
+  <tr><td class="mono">main/handshake.ts</td><td>Generates the secret token.</td></tr>
+  <tr><td class="mono">main/system-info.ts</td><td>Reads the real CPU core count and RAM size from the operating system.</td></tr>
+  <tr><td class="mono">main/ipc-handlers.ts</td><td>The list of things the UI is allowed to ask the operating system for.</td></tr>
+  <tr><td class="mono">preload/index.ts</td><td>The <b>only</b> door between the UI and the operating system (see below).</td></tr>
+</table>
+
+<div class="note">
+  <b>Why the "preload bridge" matters.</b> The UI is essentially a web page, and web pages should never
+  have direct access to your files. So the UI is completely sandboxed. It cannot read a file or run a
+  command. It can only call four specific functions that the preload file exposes: get the backend
+  address, get the hardware info, open a folder picker, and control the window buttons. Everything
+  else is blocked by design.
+</div>
+
+<h3>renderer/ — the user interface</h3>
+<p>The UI is organised by <b>feature</b>, not by file type. Each screen lives in its own folder:</p>
+<table>
+  <tr><th class="mono" style="width:34%">Folder</th><th>Screen</th></tr>
+  <tr><td class="mono">features/onboarding/</td><td>The 5-step first-run wizard.</td></tr>
+  <tr><td class="mono">features/shell/</td><td>The frame around everything: title bar, left sidebar, page header.</td></tr>
+  <tr><td class="mono">features/dashboard/</td><td>The home screen — what's due, streak, progress charts.</td></tr>
+  <tr><td class="mono">features/library/</td><td>"Learn by watching" — your video library and the add-content dialog.</td></tr>
+  <tr><td class="mono">features/player/</td><td>The video player with clickable subtitles and the word-lookup panel.</td></tr>
+  <tr><td class="mono">features/bookshelf/</td><td>"Learn by reading" — your books and reading goal.</td></tr>
+  <tr><td class="mono">features/reader/</td><td>The e-reader with highlights, AI lookups and text simplification.</td></tr>
+  <tr><td class="mono">features/vocabulary/</td><td>Your saved words list and the detail page for each word.</td></tr>
+  <tr><td class="mono">store/</td><td>The app's shared memory (explained below).</td></tr>
+  <tr><td class="mono">lib/apiClient.ts</td><td>One small helper that talks to the backend and attaches the secret token.</td></tr>
+  <tr><td class="mono">types/</td><td>Shared descriptions of the data shapes, so mistakes get caught while coding.</td></tr>
+</table>
+
+<h3>backend/ — the Python server</h3>
+<table>
+  <tr><th class="mono" style="width:34%">File</th><th>What it does</th></tr>
+  <tr><td class="mono">app/main.py</td><td>Starts the server, sets up the database, connects the routes.</td></tr>
+  <tr><td class="mono">app/security.py</td><td>Checks the secret token on every request.</td></tr>
+  <tr><td class="mono">app/db.py</td><td>Opens the database connection with the right safety settings.</td></tr>
+  <tr><td class="mono">app/migrations/</td><td>The database structure, and the code that creates/updates it.</td></tr>
+  <tr><td class="mono">app/routers/</td><td>The web addresses the UI can call (users, placement test, hardware check).</td></tr>
+  <tr><td class="mono">app/services/</td><td>The actual decision-making logic, kept separate so it can be tested.</td></tr>
+  <tr><td class="mono">app/models/</td><td>Descriptions of what each request and response must contain.</td></tr>
+  <tr><td class="mono">tests/</td><td>24 automated tests that check the logic still works.</td></tr>
+</table>
+
+
+
+<h2>4. How the UI remembers things</h2>
+
+<p>
+  React on its own is forgetful — each piece of the screen only knows about itself. So the app uses
+  three small shared "notebooks" (called stores) that any screen can read from:
+</p>
+
+<table>
+  <tr><th class="mono" style="width:26%">Store</th><th>Remembers</th></tr>
+  <tr><td class="mono">appStore</td><td>Who is logged in, whether the backend is ready, and whether onboarding is finished. This is what decides if you see the wizard or the dashboard when you open the app.</td></tr>
+  <tr><td class="mono">onboardingStore</td><td>Everything you type during the 5-step wizard, plus the logic for saving each step to the backend.</td></tr>
+  <tr><td class="mono">shellStore</td><td>Which screen you are looking at, whether the sidebar is collapsed, dark or light theme, and which video/book/word you last opened.</td></tr>
+</table>
+
+<h3>How navigation works</h3>
+<p>
+  There is no browser-style URL routing. The <code>shellStore</code> simply holds the name of the current
+  screen (like <code>"dashboard"</code> or <code>"player"</code>), and <code>App.tsx</code> shows the matching
+  component. Clicking a sidebar item just changes that name.
+</p>
+<p>
+  Some screens are "immersive" — the video player and the e-reader. When you open one, the sidebar
+  automatically shrinks to icons only, so the content gets more room.
+</p>
+
+<h2>5. The design system</h2>
+
+<p>
+  Every colour, font and spacing value in the app comes from a single file:
+  <code>renderer/src/styles/globals.css</code>. It defines the palette twice — once for dark mode, once for
+  light mode — and the whole app switches instantly by changing one attribute on the page.
+</p>
+
+<table>
+  <tr><th style="width:22%">Token</th><th>Meaning</th></tr>
+  <tr><td class="mono">--acc</td><td>The forest green (<code>#3E7C5A</code>) used for anything active or important.</td></tr>
+  <tr><td class="mono">--bg / --panel</td><td>The page background and the card background.</td></tr>
+  <tr><td class="mono">--tx / --tx2 / --tx3</td><td>Text in three strengths: main, secondary, faint.</td></tr>
+  <tr><td class="mono">--line / --line2</td><td>Borders, strong and subtle.</td></tr>
+</table>
+
+<p>
+  These were copied exactly from the visual mock-up that was designed before coding started, so the
+  built app matches the design pixel for pixel. Tailwind is configured to point at these tokens, which
+  is why the code says things like <code>bg-panel</code> and <code>text-tx3</code> instead of raw colour codes.
+</p>
+
+<h2>6. The database</h2>
+
+<p>
+  The app uses <b>SQLite</b> — a database that is just a single file on your disk, with no separate
+  program to install. It lives at <code>~/.config/fluencyos/fluencyos.db</code> on Linux.
+</p>
+
+<table>
+  <tr><th class="mono" style="width:26%">Table</th><th>Holds</th></tr>
+  <tr><td class="mono">users</td><td>Your name, native language, target language, CEFR level, and when you finished onboarding.</td></tr>
+  <tr><td class="mono">user_settings</td><td>Your preferences: which AI model, daily goals, quiet hours, clip quality, and so on.</td></tr>
+  <tr><td class="mono">app_meta</td><td>Housekeeping: database version, install id, and a few temporary values.</td></tr>
+</table>
+
+<p>
+  Two safety settings are switched on for every connection: <b>WAL mode</b> (so reading and writing at the
+  same time is safe) and <b>foreign keys</b> (so the database refuses to store rows that point at things
+  that do not exist).
+</p>
+
+<p>
+  The database structure is created by <code>migrations/0001_init.sql</code>. The runner keeps a record of
+  which migration files have already been applied, so running it twice does no harm — this is how the
+  structure will be safely updated in future versions.
+</p>
+
+<div class="note">
+  <b>A deliberate rule:</b> if you choose to use a cloud AI provider instead of a local model, your API
+  key is <b>never</b> stored in the database. Only a placeholder note is saved. Real key storage will use
+  the operating system's secure keychain when that part is built.
+</div>
+
+
+
+<h2>7. The two pieces of real "thinking" code</h2>
+
+<p>
+  Most of the app is currently interface. But two pieces of genuine logic are built, tested, and running
+  on the backend. Both are written as pure functions — meaning they take some numbers in and give an
+  answer out, with no side effects — which makes them easy to test exhaustively.
+</p>
+
+<h3>A. The placement test — working out your English level</h3>
+<p>
+  There are 20 multiple-choice questions (grammar and vocabulary), arranged from easy to hard and tagged
+  by CEFR level from A1 to C2. The correct answers stay on the server, so the UI never sees them.
+</p>
+<p>
+  Scoring uses a <b>"ceiling" method</b>: start at A1 and walk upwards, keeping your level rising as long
+  as you get at least half of that band's questions right. The moment you drop below half, that is your
+  ceiling — and correct answers <i>above</i> the ceiling do not count. This stops one lucky guess on a
+  hard question from making someone look like an advanced speaker.
+</p>
+<pre>All correct                → C2
+A1 and A2 right, B1 wrong  → A2   (even if C1 answers were right)
+Nothing reaches 50%        → A1   (the floor)</pre>
+
+<h3>B. The hardware check — which AI model can this computer run?</h3>
+<p>
+  Step 3 of onboarding asks you to pick an AI model size. But not every computer can run every size,
+  especially while also running speech recognition and voice synthesis at the same time during a
+  conversation. So the app measures your actual CPU cores and RAM, sends those two numbers to the
+  backend, and gets back a recommendation.
+</p>
+
+<table>
+  <tr><th>Tier</th><th>Model</th><th>Needs</th><th>Notes</th></tr>
+  <tr><td><b>Light</b></td><td class="mono">qwen2.5-1.5b</td><td>6&nbsp;GB RAM, 2 cores</td><td>Runs almost anywhere.</td></tr>
+  <tr><td><b>Balanced</b></td><td class="mono">gemma-3-4b-it</td><td>8&nbsp;GB RAM, 4 cores</td><td>Matches the project's stated target machine.</td></tr>
+  <tr><td><b>Heavy</b></td><td class="mono">qwen2.5-7b</td><td>12&nbsp;GB RAM, 6 cores</td><td>Selectable, but never auto-recommended — too slow for live conversation on a CPU.</td></tr>
+</table>
+
+<p>
+  If your machine cannot manage even the lightest option, the app says so plainly and switches you to
+  API-key mode instead of letting you pick something that would run badly. You can still override it.
+</p>
+
+<div class="note">
+  <b>An honest detail worth knowing.</b> Computers report slightly less RAM than they physically have
+  (some is reserved by the system). A "6&nbsp;GB" machine may report 5.7&nbsp;GB. The check rounds to the
+  nearest whole gigabyte before comparing, so a machine the screen calls "6&nbsp;GB" is not rejected by a
+  rule that asks for 6&nbsp;GB. This was found and fixed by testing on a real 6&nbsp;GB laptop.
+</div>
+
+<h2>8. What the backend can actually do today</h2>
+
+<table>
+  <tr><th class="mono" style="width:42%">Address</th><th>Purpose</th></tr>
+  <tr><td class="mono">GET /health</td><td>"Are you awake?" — used at startup.</td></tr>
+  <tr><td class="mono">POST /users</td><td>Create your profile (step 1 of onboarding).</td></tr>
+  <tr><td class="mono">GET /users/{id}</td><td>Load your profile when the app opens.</td></tr>
+  <tr><td class="mono">PATCH /users/{id}/placement</td><td>Save your CEFR level.</td></tr>
+  <tr><td class="mono">PUT /users/{id}/settings</td><td>Save AI model choice and daily goals.</td></tr>
+  <tr><td class="mono">POST /users/{id}/companion</td><td>Save your companion animal and starting area.</td></tr>
+  <tr><td class="mono">POST /users/{id}/onboarding/complete</td><td>Mark onboarding as finished.</td></tr>
+  <tr><td class="mono">GET /placement/questions</td><td>Fetch the 20 test questions (without answers).</td></tr>
+  <tr><td class="mono">POST /placement/score</td><td>Mark the test and return the estimated level.</td></tr>
+  <tr><td class="mono">POST /engine/assess-hardware</td><td>Recommend an AI model size for this computer.</td></tr>
+</table>
+
+
+
+<h2>9. What is real and what is a mock-up</h2>
+
+<p>
+  This is the most important section for anyone reviewing the project. The app looks complete, but
+  different parts are at very different stages, and the code is honest about which is which.
+</p>
+
+<h3>Fully working, end to end</h3>
+<ul>
+  <li>The desktop window, the secure connection to the backend, and clean shutdown.</li>
+  <li>The whole 5-step onboarding wizard — everything you enter is really saved to the database and
+      really reloaded next time you open the app.</li>
+  <li>The 20-question placement test, marked on the server.</li>
+  <li>The hardware check and model recommendation, using your real CPU and RAM.</li>
+  <li>The folder picker, the window controls, and the dark/light theme.</li>
+</ul>
+
+<h3>Built as interface, using sample data</h3>
+<ul>
+  <li>The dashboard's charts, streak and heat-map.</li>
+  <li>The video library, the video player, and the word-lookup panel.</li>
+  <li>The bookshelf, the e-reader, highlights, and the text-simplification panel.</li>
+  <li>The vocabulary list and word detail pages.</li>
+</ul>
+<p>
+  These screens show realistic sample content so the whole app can be navigated and demonstrated. Every
+  one of these files is clearly commented at the top saying the data is temporary and which backend
+  module will replace it.
+</p>
+
+<h3>Not started yet</h3>
+<ul>
+  <li>The local AI model, speech-to-text, and text-to-speech (no AI library is installed yet).</li>
+  <li>Real video playback and real subtitle files.</li>
+  <li>The spaced-repetition scheduler, the conversation practice, and the forest.</li>
+  <li>Packaging the app into an installer.</li>
+</ul>
+
+<div class="note">
+  Where a screen shows something that would normally come from AI, the interface says so — for example
+  the word-lookup panel is labelled <i>"not yet configured &middot; offline stub"</i> rather than
+  pretending a model produced it. This was a deliberate choice: it is better for a demo to be honest
+  about what is simulated than to quietly imply capability that does not exist.
+</div>
+
+<h2>10. Testing</h2>
+
+<p>
+  There are <b>24 automated tests</b> on the backend, all passing. They cover:
+</p>
+<ul>
+  <li>That requests without the secret token are rejected.</li>
+  <li>The complete onboarding sequence: create user &rarr; set level &rarr; save settings &rarr; finish.</li>
+  <li>That an API key is never written into the database.</li>
+  <li>Every edge case of the placement scoring — all right, all wrong, exactly on the pass line, and the
+      ceiling rule.</li>
+  <li>Every edge case of the hardware check, including the real numbers from the development laptop.</li>
+</ul>
+<p>
+  Run them with <code>cd backend &amp;&amp; uv run pytest -q</code>. On the UI side there is no test runner yet;
+  instead, TypeScript checks the whole interface for mistakes at build time, and the build fails if
+  anything is wrong.
+</p>
+
+<h2>11. How to run it</h2>
+
+<p><b>First time only:</b></p>
+<pre>npm install                  # installs the desktop app and UI pieces
+uv sync --project backend    # sets up Python 3.11 and the server pieces</pre>
+
+<p><b>Every time after that:</b></p>
+<pre>npm run dev</pre>
+
+<p>
+  That one command starts everything. Press <code>Ctrl+C</code> to stop it — the UI, the window, and the
+  Python server all shut down together.
+</p>
+
+<p>
+  Changes to the interface appear instantly without restarting. Changes to the Electron files or the
+  Python files need a restart, because those are separate programs that load their code once at startup.
+</p>
+
+<p>
+  To start over from scratch, delete <code>~/.config/fluencyos/fluencyos.db</code> and the app will show
+  the onboarding wizard again.
+</p>
+
+<h2>12. Where this goes next</h2>
+
+<p>
+  The foundation is deliberately built so that each remaining feature is a matter of replacing sample
+  data with a real source, not restructuring anything:
+</p>
+<ol>
+  <li><b>Media ingestion</b> — read real video files and subtitles, so the library and player show real content.</li>
+  <li><b>The local AI model</b> — plug in llama.cpp so the word-lookup panel gives real explanations.</li>
+  <li><b>The review system</b> — the spaced-repetition scheduler and flashcards.</li>
+  <li><b>Conversation practice</b> — speech in, AI reply, speech out, and feeding the result back into scheduling.</li>
+  <li><b>The forest</b> — the visual progress system where each word you learn is a growing plant.</li>
+</ol>
+
+<p>
+  The database structure, the API pattern, the store pattern and the design system are already in place,
+  so each of these slots into an existing shape rather than inventing a new one.
+</p>
+
+<div class="footer-note">
+  FluencyOS &middot; codebase explanation &middot; generated from the working repository.
+  Source of truth for requirements: <span class="mono">fluencyos_spec.md</span>.
+</div>
+
+</body>
+</html>
