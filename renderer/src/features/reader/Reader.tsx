@@ -4,7 +4,6 @@ import {
   HIGHLIGHT_COLORS,
   LEVEL_MODES,
   MODE_HEADLINES,
-  PARAGRAPH_AI,
   PARAGRAPH_LEVELS,
   type LevelMode,
 } from '@/features/reader/readerMockData';
@@ -85,6 +84,13 @@ export function Reader() {
   const searchHits = useReaderStore((s) => s.searchHits);
   const searchStatus = useReaderStore((s) => s.searchStatus);
   const setSearchQuery = useReaderStore((s) => s.setSearchQuery);
+  const heat = useReaderStore((s) => s.heat);
+  const heatEnabled = useReaderStore((s) => s.heatEnabled);
+  const heatTarget = useReaderStore((s) => s.heatTarget);
+  const heatTotal = useReaderStore((s) => s.heatTotal);
+  const lookup = useReaderStore((s) => s.lookup);
+  const lookupStatus = useReaderStore((s) => s.lookupStatus);
+  const lookupWord = useReaderStore((s) => s.lookupWord);
 
   const [tab, setTab] = useState<Tab>('toc');
   const [panelOpen, setPanelOpen] = useState(true);
@@ -129,7 +135,15 @@ export function Reader() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [nextPage, prevPage]);
 
-  const ai = PARAGRAPH_AI[selectedPara] ?? PARAGRAPH_AI[2];
+  // Heat spans for the blocks on screen, indexed for O(1) lookup per block.
+  // The panel's own switch gates it on top of the per-book heat_overlay flag.
+  const showHeat = heatOn && heatEnabled;
+  const heatByBlock = new Map(heat.map((h) => [h.block_index, h.spans]));
+
+  const handleWordClick = (word: string, sentence: string) => {
+    setTab('ai');
+    void lookupWord(word, sentence);
+  };
   const level = PARAGRAPH_LEVELS[selectedPara]?.[levelMode] ?? PARAGRAPH_LEVELS[2][levelMode];
   const fsPct = Math.round(((fontSize - 12) / 10) * 100);
   const selectedBlock = blocks.find((b) => b.block_index === selectedPara);
@@ -266,6 +280,8 @@ export function Reader() {
                 key={b.block_index}
                 block={b}
                 highlights={highlights.filter((h) => h.block_index === b.block_index)}
+                heatSpans={showHeat ? (heatByBlock.get(b.block_index) ?? []) : []}
+                onWordClick={handleWordClick}
                 selected={selectedPara === b.block_index}
                 fontSize={fontSize}
                 textColor={READER_TX[pageTheme]}
@@ -562,56 +578,131 @@ export function Reader() {
 
             {tab === 'ai' && (
               <div className="flex flex-col gap-[14px]">
-                <div>
-                  <div className="flex flex-wrap items-baseline gap-2">
-                    <span className="font-sans text-[21px] font-semibold leading-[1.2] tracking-[-0.02em] text-tx">{ai.w}</span>
-                    <span className="font-mono text-[11.5px] text-tx3">{ai.ipa}</span>
+                {!lookup && lookupStatus !== 'loading' && (
+                  <div className="font-mono text-[10.5px] leading-[1.7] text-tx3">
+                    {showHeat
+                      ? 'Click a tinted word in the text to look it up.'
+                      : 'Turn on difficulty heat in the Text panel, then click a tinted word to look it up.'}
                   </div>
-                  <div className="mt-[9px] flex items-center gap-[6px]">
-                    <button className="flex items-center gap-[6px] rounded-full border border-line px-[10px] py-[6px] font-mono text-[10.5px] font-medium text-tx2 hover:border-acc hover:text-acc">
-                      hear it
-                    </button>
-                    <span className="rounded-[4px] bg-line2 px-2 py-1 font-mono text-[9.5px] font-medium text-tx3">{ai.pos}</span>
-                    <span className="rounded-[4px] border border-accLine px-2 py-1 font-mono text-[9.5px] font-medium text-acc">{ai.cefr}</span>
-                  </div>
-                </div>
-                <div className="rounded-field border border-accLine bg-accSoft px-[10px] py-[9px] font-sans text-[11px] leading-[1.6] text-tx2">
-                  selection · "{selectedText.slice(0, 58)}…"
-                </div>
-                <div className="border-t border-line2 pt-3">
-                  <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">Dictionary</div>
-                  <div className="flex flex-col gap-[9px]">
-                    {ai.senses.map((s, i) => (
-                      <div key={i} className="flex gap-2">
-                        <span className="mt-[2px] flex-none font-mono text-[10px] font-medium text-acc">{i + 1}.</span>
-                        <span className="min-w-0">
-                          <span className="block font-sans text-[12px] leading-[1.65] text-tx">{s.def}</span>
-                          <span className="mt-[3px] block font-sans text-[11px] leading-[1.6] text-tx3">"{s.ex}"</span>
+                )}
+
+                {lookupStatus === 'loading' && (
+                  <div className="font-mono text-[10.5px] text-tx3">looking up…</div>
+                )}
+
+                {lookupStatus === 'error' && (
+                  <div className="font-mono text-[10.5px] text-tx3">lookup failed</div>
+                )}
+
+                {lookup && lookupStatus !== 'loading' && (
+                  <>
+                    <div>
+                      <div className="flex flex-wrap items-baseline gap-2">
+                        <span className="font-sans text-[21px] font-semibold leading-[1.2] tracking-[-0.02em] text-tx">
+                          {lookup.lemma ?? lookup.word}
                         </span>
+                        {lookup.ipa && <span className="font-mono text-[11.5px] text-tx3">{lookup.ipa}</span>}
                       </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="border-t border-line2 pt-3">
-                  <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">In this sentence</div>
-                  <div className="font-sans text-[12px] leading-[1.7] text-tx2">{ai.ctx}</div>
-                </div>
-                <div className="border-t border-line2 pt-3">
-                  <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">Near synonyms</div>
-                  <div className="flex flex-wrap gap-[5px]">
-                    {ai.syns.map((s) => (
-                      <span key={s} className="rounded-full border border-line2 px-[9px] py-1 font-sans text-[10.5px] text-tx2">
-                        {s}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-                <button className="rounded-field border border-accLine bg-accSoft py-[10px] font-sans text-[11.5px] font-medium text-acc">
-                  ＋ Save to vocabulary with this sentence
-                </button>
-                <div className="font-mono text-[9.5px] leading-[1.7] text-tx3">
-                  offline stub — a local model would generate this in ≈2 s once configured
-                </div>
+                      {lookup.found && (
+                        <div className="mt-[9px] flex flex-wrap items-center gap-[6px]">
+                          {lookup.pos && (
+                            <span className="rounded-[4px] bg-line2 px-2 py-1 font-mono text-[9.5px] font-medium text-tx3">
+                              {lookup.pos}
+                            </span>
+                          )}
+                          {lookup.cefr && (
+                            <span className="rounded-[4px] border border-accLine px-2 py-1 font-mono text-[9.5px] font-medium text-acc">
+                              {lookup.cefr}
+                            </span>
+                          )}
+                          {lookup.simpler && (
+                            <span className="rounded-[4px] border border-line2 px-2 py-1 font-mono text-[9.5px] text-tx2">
+                              simpler: {lookup.simpler}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {!lookup.found ? (
+                      <div className="rounded-field border border-line2 px-[10px] py-[9px] font-sans text-[11px] leading-[1.6] text-tx2">
+                        "{lookup.word}" isn't in the offline dictionary. It may be a name, or a
+                        word the bundled list doesn't cover yet.
+                      </div>
+                    ) : (
+                      <>
+                        <div className="border-t border-line2 pt-3">
+                          <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
+                            Dictionary
+                          </div>
+                          <div className="flex flex-col gap-[9px]">
+                            {lookup.senses.map((sense, i) => (
+                              <div key={i} className="flex gap-2">
+                                <span className="mt-[2px] flex-none font-mono text-[10px] font-medium text-acc">
+                                  {i + 1}.
+                                </span>
+                                <span className="min-w-0">
+                                  <span className="block font-sans text-[12px] leading-[1.65] text-tx">
+                                    {sense.definition}
+                                  </span>
+                                  {sense.example && (
+                                    <span className="mt-[3px] block font-sans text-[11px] leading-[1.6] text-tx3">
+                                      "{sense.example}"
+                                    </span>
+                                  )}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {lookup.synonyms.length > 0 && (
+                          <div className="border-t border-line2 pt-3">
+                            <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
+                              Near synonyms
+                            </div>
+                            <div className="flex flex-wrap gap-[5px]">
+                              {lookup.synonyms.map((syn) => (
+                                <span
+                                  key={syn}
+                                  className="rounded-full border border-line2 px-[9px] py-1 font-sans text-[10.5px] text-tx2"
+                                >
+                                  {syn}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    <div className="border-t border-line2 pt-3">
+                      <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
+                        In this sentence
+                      </div>
+                      {lookup.context_available && lookup.context_note ? (
+                        <div className="font-sans text-[12px] leading-[1.7] text-tx2">{lookup.context_note}</div>
+                      ) : (
+                        <div className="font-mono text-[10px] leading-[1.7] text-tx3">
+                          explaining the word in context needs a local model — not installed yet
+                        </div>
+                      )}
+                    </div>
+
+                    {/* The vocabulary tables belong to the SRS increment. Until
+                        they exist the button is disabled rather than faking a save. */}
+                    <button
+                      disabled
+                      title="Saving to vocabulary arrives with the vocabulary & SRS increment"
+                      className="rounded-field border border-line2 py-[10px] font-sans text-[11.5px] font-medium text-tx3 opacity-60"
+                    >
+                      ＋ Save to vocabulary with this sentence
+                    </button>
+                    <div className="font-mono text-[9.5px] leading-[1.7] text-tx3">
+                      definitions come from the bundled offline wordlist · no model required
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
@@ -756,7 +847,15 @@ export function Reader() {
                       {heatOn ? 'on' : 'off'}
                     </span>
                   </button>
-                  <div className="mt-[7px] font-mono text-[10px] leading-[1.6] text-tx3">not wired yet — lands in a later phase</div>
+                  <div className="mt-[7px] font-mono text-[10px] leading-[1.6] text-tx3">
+                    {!heatEnabled
+                      ? 'turned off for this book in its import settings'
+                      : !heatOn
+                        ? `${heatTotal} word${heatTotal === 1 ? '' : 's'} above ${heatTarget} on this page`
+                        : heatTotal === 0
+                          ? `nothing above ${heatTarget} on this page`
+                          : `${heatTotal} word${heatTotal === 1 ? '' : 's'} above ${heatTarget} on this page · click one for its meaning`}
+                  </div>
                 </div>
                 <div>
                   <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">Read aloud</div>
