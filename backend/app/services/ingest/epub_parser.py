@@ -9,24 +9,9 @@ from pathlib import Path
 
 import ebooklib
 from ebooklib import epub
-from lxml import html as lxml_html
 
 from app.services.ingest.base import ParseError, ParsedBlock, ParsedBook, ParsedBookMeta, ParsedChapter
-
-_BLOCK_TAGS = {
-    "p": "p",
-    "h1": "h1",
-    "h2": "h2",
-    "h3": "h3",
-    "h4": "h3",
-    "h5": "h3",
-    "h6": "h3",
-    "blockquote": "quote",
-    "li": "list",
-    "figcaption": "caption",
-    "pre": "code",
-}
-_HEADING_DEPTH = {"h1": 0, "h2": 1, "h3": 2}
+from app.services.ingest.html_blocks import walk_html
 
 
 def _meta_value(book: epub.EpubBook, name: str) -> str | None:
@@ -56,28 +41,9 @@ def parse(path: Path, *, fallback_title: str) -> ParsedBook:
         item = book.get_item_with_id(idref)
         if item is None:
             continue
-        try:
-            tree = lxml_html.fromstring(item.get_content())
-        except Exception:
-            continue
-
-        for el in tree.iter(*_BLOCK_TAGS.keys()):
-            text = " ".join("".join(el.itertext()).split())
-            if not text:
-                continue
-            tag = el.tag
-            kind = _BLOCK_TAGS[tag]
-            word_count = len(text.split())
-
-            if tag in _HEADING_DEPTH:
-                chapters.append(
-                    ParsedChapter(
-                        label=text, depth=_HEADING_DEPTH[tag], start_block=len(blocks), word_offset=word_offset
-                    )
-                )
-
-            blocks.append(ParsedBlock(kind=kind, text=text, word_count=word_count))
-            word_offset += word_count
+        word_offset = walk_html(
+            item.get_content(), blocks=blocks, chapters=chapters, word_offset=word_offset
+        )
 
     if not blocks:
         raise ParseError("No text content could be extracted from this EPUB.")
