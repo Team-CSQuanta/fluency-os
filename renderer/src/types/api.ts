@@ -183,3 +183,62 @@ export interface PageOut {
   has_next: boolean;
   first_block_index: number;
 }
+
+export type HighlightColour = 'yellow' | 'green' | 'blue' | 'pink';
+
+export interface HighlightCreate {
+  user_id: string;
+  block_index: number;
+  start_char: number;
+  end_char: number;
+  colour: HighlightColour;
+  quoted_text: string;
+  note?: string | null;
+}
+
+export interface HighlightUpdate {
+  colour?: HighlightColour;
+  note?: string | null;
+}
+
+export interface HighlightOut {
+  id: string;
+  book_id: string;
+  user_id: string;
+  block_index: number;
+  start_char: number;
+  end_char: number;
+  colour: HighlightColour;
+  quoted_text: string;
+  note: string | null;
+  created_at: string;
+  page: number;
+}
+
+export interface BookmarkCreate {
+  user_id: string;
+  block_index: number;
+  label: string;
+}
+
+export interface BookmarkOut {
+  id: string;
+  book_id: string;
+  user_id: string;
+  block_index: number;
+  label: string;
+  created_at: string;
+  page: number;
+}
+
+export interface SnippetSegmentOut {
+  text: string;
+  matched: boolean;
+}
+
+export interface SearchHitOut {
+  block_index: number;
+  page: number;
+  chapter_label: string | null;
+  snippet: SnippetSegmentOut[];
+}
