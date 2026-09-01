@@ -27,6 +27,16 @@ export function registerIpcHandlers(
     return result.filePaths[0];
   });
 
+  ipcMain.handle('dialog:pick-book-files', async () => {
+    const win = getWindow();
+    const opts: Electron.OpenDialogOptions = {
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Books', extensions: ['epub', 'pdf', 'mobi', 'azw3', 'txt'] }],
+    };
+    const result = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    return result.canceled ? [] : result.filePaths;
+  });
+
   ipcMain.on('window:minimize', () => getWindow()?.minimize());
   ipcMain.on('window:maximize', () => {
     const win = getWindow();
