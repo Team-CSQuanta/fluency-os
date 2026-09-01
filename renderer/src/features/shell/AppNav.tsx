@@ -91,7 +91,8 @@ export function AppNav() {
                   screen === item.key ||
                   (item.key === 'library' && screen === 'player') ||
                   (item.key === 'bookshelf' && screen === 'reader') ||
-                  (item.key === 'vocab' && screen === 'word');
+                  (item.key === 'vocab' && screen === 'word') ||
+                  (item.key === 'conv' && (screen === 'convlive' || screen === 'report'));
                 return (
                   <button
                     key={item.key}
