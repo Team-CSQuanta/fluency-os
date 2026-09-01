@@ -7,7 +7,7 @@ import { useShellStore } from '@/store/shellStore';
 const GOAL_OPTIONS = [10, 20, 30, 50];
 
 const FMT_STYLE: Record<string, { bg: string; fg: string; bd: string }> = {
-  epub: { bg: 'rgba(62,124,90,.2)', fg: 'var(--acc)', bd: 'var(--accLine)' },
+  epub: { bg: 'rgba(var(--accRGB),.2)', fg: 'var(--acc)', bd: 'var(--accLine)' },
   pdf: { bg: 'var(--line2)', fg: 'var(--tx2)', bd: 'var(--line2)' },
   mobi: { bg: 'var(--line2)', fg: 'var(--tx2)', bd: 'var(--line2)' },
   azw3: { bg: 'var(--line2)', fg: 'var(--tx2)', bd: 'var(--line2)' },
@@ -37,6 +37,7 @@ export function Bookshelf() {
   const coverUrls = useBookshelfStore((s) => s.coverUrls);
   const loadCover = useBookshelfStore((s) => s.loadCover);
   const deleteBook = useBookshelfStore((s) => s.deleteBook);
+  const setFinished = useBookshelfStore((s) => s.setFinished);
 
   // Refetched on every return from the reader, which is where pages actually
   // get read — the goal ring and streak would otherwise show stale numbers.
@@ -134,7 +135,7 @@ export function Bookshelf() {
                     style={{
                       height: `${d.percent}%`,
                       background:
-                        d.percent >= 100 ? 'var(--acc)' : d.percent === 0 ? 'var(--line2)' : 'rgba(62,124,90,.4)',
+                        d.percent >= 100 ? 'var(--acc)' : d.percent === 0 ? 'var(--line2)' : 'rgba(var(--accRGB),.4)',
                     }}
                   />
                 </div>
@@ -234,7 +235,7 @@ export function Bookshelf() {
           </label>
           <button
             onClick={() => setAddOpen(true)}
-            className="rounded-field bg-acc px-[14px] py-2 font-sans text-[11.5px] font-semibold text-white hover:brightness-110"
+            className="rounded-field bg-accSolid px-[14px] py-2 font-sans text-[11.5px] font-semibold text-white hover:brightness-110"
           >
             + Add books
           </button>
@@ -337,6 +338,30 @@ export function Bookshelf() {
                       {failed && <span className="ml-1 text-acc">· tap to retry</span>}
                     </div>
                   </button>
+
+                  {/* Finishing usually happens in the reader, at the end of
+                      the last page; this is the shelf-side way to correct it
+                      or to mark a book you finished elsewhere. */}
+                  {b.ingest_status === 'ready' && (
+                    <button
+                      onClick={() => void setFinished(b.id, !b.finished_at)}
+                      aria-label={b.finished_at ? `Mark ${b.title} unread` : `Mark ${b.title} finished`}
+                      title={b.finished_at ? 'Finished — click to reopen' : 'Mark as finished'}
+                      className="absolute left-[35px] top-[7px] grid h-[22px] w-[22px] place-items-center rounded-[4px] border opacity-0 transition-opacity hover:border-acc hover:text-acc focus-visible:opacity-100 group-hover:opacity-100"
+                      style={{
+                        // A finished book keeps its tick visible; the rest only
+                        // show the control on hover.
+                        opacity: b.finished_at ? 1 : undefined,
+                        borderColor: b.finished_at ? 'var(--accLine)' : 'var(--line2)',
+                        background: b.finished_at ? 'var(--accSoft)' : 'var(--bg2)',
+                        color: b.finished_at ? 'var(--acc)' : 'var(--tx3)',
+                      }}
+                    >
+                      <svg viewBox="0 0 16 16" className="h-[12px] w-[12px]" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3.5 8.5l3 3 6-7" />
+                      </svg>
+                    </button>
+                  )}
 
                   <button
                     onClick={() => setConfirmDeleteId(b.id)}

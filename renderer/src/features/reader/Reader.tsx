@@ -96,13 +96,22 @@ export function Reader() {
   const leveled = useReaderStore((s) => s.leveled);
   const levelStatus = useReaderStore((s) => s.levelStatus);
   const levelBlock = useReaderStore((s) => s.levelBlock);
+  const jumpToBlock = useReaderStore((s) => s.jumpToBlock);
+  const focusBlock = useReaderStore((s) => s.focusBlock);
+  const clearFocusBlock = useReaderStore((s) => s.clearFocusBlock);
+  const setFinished = useReaderStore((s) => s.setFinished);
 
-  const [tab, setTab] = useState<Tab>('toc');
-  const [panelOpen, setPanelOpen] = useState(true);
   const [selectedPara, setSelectedPara] = useState(0);
-  const [fontSize, setFontSize] = useState(15.5);
-  const [pageTheme, setPageTheme] = useState<PageTheme>('auto');
-  const [heatOn, setHeatOn] = useState(true);
+
+  // Display preferences are per-reader and persisted (spec Phase 2 step 5) —
+  // the Text panel used to forget all of this on every book open.
+  const prefs = useReaderStore((s) => s.prefs);
+  const setPrefs = useReaderStore((s) => s.setPrefs);
+  const loadPrefs = useReaderStore((s) => s.loadPrefs);
+  const { font_size: fontSize, page_theme: pageTheme, heat_on: heatOn, panel_open: panelOpen } = prefs;
+  const tab = prefs.panel_tab;
+  const setTab = (next: Tab) => setPrefs({ panel_tab: next });
+  const setPanelOpen = (next: boolean) => setPrefs({ panel_open: next });
   const [showOriginal, setShowOriginal] = useState(false);
   const [highlighterColor, setHighlighterColor] = useState<HighlightColour | null>(null);
 
@@ -120,6 +129,35 @@ export function Reader() {
 
   useReadingSession(bookId);
 
+  useEffect(() => {
+    void loadPrefs();
+  }, [loadPrefs]);
+
+  // ORDER MATTERS: loading a page sets `blocks` and `page` in one store
+  // update, so both this effect and the jump-scroll below fire in the same
+  // commit, in declaration order. The reset has to run *first* and bail out
+  // while a jump is still pending — if it ran second it would read the
+  // already-cleared focusBlock and yank the reader back to the top of the
+  // page it had just scrolled into.
+  useEffect(() => {
+    if (useReaderStore.getState().focusBlock !== null) return;
+    if (blocks.length > 0) setSelectedPara(blocks[0].block_index);
+    scrollRef.current?.scrollTo({ top: 0 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
+
+  // Scroll a jump target into view once its page has actually rendered, and
+  // select it so the AI/Level panels act on the paragraph you jumped to.
+  useEffect(() => {
+    if (focusBlock === null) return;
+    if (!blocks.some((b) => b.block_index === focusBlock)) return;
+
+    setSelectedPara(focusBlock);
+    const el = scrollRef.current?.querySelector(`[data-block-index="${focusBlock}"]`);
+    el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    clearFocusBlock();
+  }, [focusBlock, blocks, clearFocusBlock]);
+
   // Level on demand for the selected block only — never the whole book. At a
   // couple of seconds per generative call, pre-leveling a 800-block book would
   // be half an hour of work for text nobody may open.
@@ -128,16 +166,6 @@ export function Reader() {
     void levelBlock(selectedPara);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, selectedPara, bookId]);
-
-  // A fresh page always starts at its first block; keep the selection pinned
-  // to the top of whatever page is shown.
-  useEffect(() => {
-    if (blocks.length > 0) setSelectedPara(blocks[0].block_index);
-    // Scroll to the top of the new page instead of wherever the previous
-    // page had left the scroll position.
-    scrollRef.current?.scrollTo({ top: 0 });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page]);
 
   // Left/Right arrow keys turn pages, like an e-reader.
   useEffect(() => {
@@ -212,8 +240,11 @@ export function Reader() {
     void jumpToChapter(chapter);
   };
 
-  const handleJumpToPage = (targetPage: number) => {
-    void useReaderStore.getState().goToPage(targetPage);
+  // Search hits, bookmarks and highlights all know their exact block, so a
+  // jump lands on the paragraph rather than merely on the right page — the
+  // scroll itself happens in the effect below, once the page has rendered.
+  const handleJumpTo = (targetPage: number, blockIndex: number) => {
+    void jumpToBlock(targetPage, blockIndex);
   };
 
   const handleBookmarkPage = () => {
@@ -304,8 +335,35 @@ export function Reader() {
             ))}
           </div>
 
+          {/* The end of the last page is where finishing a book actually
+              happens, so the action lives here rather than only on the shelf. */}
+          {blocks.length > 0 && !hasNext && (
+            <div className="mt-auto flex flex-col items-center gap-[7px] border-t border-line2 pt-4">
+              <button
+                onClick={() => void setFinished(!book?.finished_at)}
+                className="w-full rounded-field border py-[10px] font-sans text-[12px] font-semibold transition-colors"
+                style={{
+                  borderColor: book?.finished_at ? 'var(--accLine)' : 'var(--line)',
+                  background: book?.finished_at ? 'var(--accSoft)' : 'transparent',
+                  color: book?.finished_at ? 'var(--acc)' : 'var(--tx2)',
+                }}
+              >
+                {book?.finished_at ? '✓ Finished — mark as unread' : 'Mark as finished'}
+              </button>
+              <span className="font-mono text-[9.5px] text-tx3">
+                {book?.finished_at
+                  ? `finished ${new Date(book.finished_at).toLocaleDateString()}`
+                  : 'that was the last page'}
+              </span>
+            </div>
+          )}
+
           {blocks.length > 0 && (
-            <div className="mt-auto flex items-center justify-between gap-3 border-t border-line2 pt-4">
+            <div
+              className={`flex items-center justify-between gap-3 border-t border-line2 pt-4 ${
+                hasNext ? 'mt-auto' : 'mt-4'
+              }`}
+            >
               <button
                 onClick={() => void prevPage()}
                 disabled={!hasPrev || isTurning}
@@ -469,7 +527,7 @@ export function Reader() {
                   {searchHits.map((h, i) => (
                     <button
                       key={`${h.block_index}-${i}`}
-                      onClick={() => handleJumpToPage(h.page)}
+                      onClick={() => handleJumpTo(h.page, h.block_index)}
                       className="rounded-field border border-line2 px-[10px] py-[9px] text-left hover:border-acc"
                     >
                       <div className="font-sans text-[11px] leading-[1.6] text-tx2">
@@ -533,7 +591,7 @@ export function Reader() {
                         key={b.id}
                         className="flex items-center gap-[9px] rounded-field border border-line2 px-[10px] py-[9px] hover:border-acc"
                       >
-                        <button onClick={() => handleJumpToPage(b.page)} className="min-w-0 flex-1 text-left">
+                        <button onClick={() => handleJumpTo(b.page, b.block_index)} className="min-w-0 flex-1 text-left">
                           <span className="block truncate font-sans text-[11.5px] font-medium text-tx">{b.label}</span>
                           <span className="mt-[3px] block font-mono text-[9px] text-tx3">page {b.page}</span>
                         </button>
@@ -562,7 +620,7 @@ export function Reader() {
                         className="rounded-field border border-line2 px-[10px] py-[10px]"
                         style={{ borderLeft: `3px solid ${HIGHLIGHT_COLORS[h.colour]}` }}
                       >
-                        <button onClick={() => handleJumpToPage(h.page)} className="block w-full text-left">
+                        <button onClick={() => handleJumpTo(h.page, h.block_index)} className="block w-full text-left">
                           <span className="font-sans text-[11px] leading-[1.6] text-tx2">"{h.quoted_text}"</span>
                         </button>
                         <input
@@ -845,7 +903,7 @@ export function Reader() {
                   <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">Text size</div>
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => setFontSize((v) => Math.max(12, v - 1))}
+                      onClick={() => setPrefs({ font_size: Math.max(12, fontSize - 1) })}
                       className="grid h-[34px] w-[34px] place-items-center rounded-field border border-line font-sans text-[13px] text-tx2 hover:border-acc hover:text-acc"
                     >
                       A−
@@ -854,7 +912,7 @@ export function Reader() {
                       <div className="h-[3px] rounded-field bg-acc" style={{ width: `${fsPct}%` }} />
                     </div>
                     <button
-                      onClick={() => setFontSize((v) => Math.min(22, v + 1))}
+                      onClick={() => setPrefs({ font_size: Math.min(22, fontSize + 1) })}
                       className="grid h-[34px] w-[34px] place-items-center rounded-field border border-line font-sans text-[15px] font-semibold text-tx2 hover:border-acc hover:text-acc"
                     >
                       A+
@@ -870,7 +928,7 @@ export function Reader() {
                       return (
                         <button
                           key={t.key}
-                          onClick={() => setPageTheme(t.key)}
+                          onClick={() => setPrefs({ page_theme: t.key })}
                           className="flex items-center gap-[8px] rounded-field border px-[10px] py-[8px] text-left transition-colors"
                           style={{ borderColor: on ? 'var(--acc)' : 'var(--line2)', background: on ? 'var(--accSoft)' : 'transparent' }}
                         >
@@ -896,7 +954,7 @@ export function Reader() {
                 <div>
                   <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">Difficulty heat</div>
                   <button
-                    onClick={() => setHeatOn((v) => !v)}
+                    onClick={() => setPrefs({ heat_on: !heatOn })}
                     className="flex w-full items-center justify-between rounded-field border px-[10px] py-[9px] font-sans text-[11px] font-medium text-tx2"
                     style={{ borderColor: heatOn ? 'var(--accLine)' : 'var(--line)' }}
                   >
@@ -917,8 +975,15 @@ export function Reader() {
                 </div>
                 <div>
                   <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">Read aloud</div>
-                  <button className="w-full rounded-field border border-line py-2 font-mono text-[11px] text-tx2 hover:border-acc hover:text-acc">
-                    ▶ Kokoro TTS · sentence highlighting
+                  {/* Read-aloud is the TTS increment's, not this one's. An
+                      enabled button that silently does nothing is worse than
+                      one that says why it can't. */}
+                  <button
+                    disabled
+                    title="Text-to-speech ships with the TTS increment"
+                    className="w-full cursor-default rounded-field border border-line py-2 font-mono text-[11px] text-tx3 opacity-60"
+                  >
+                    ▶ Kokoro TTS · not installed yet
                   </button>
                 </div>
               </div>
