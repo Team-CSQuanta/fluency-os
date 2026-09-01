@@ -1,4 +1,105 @@
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+
+class GoalDayOut(BaseModel):
+    date: str
+    label: str
+    pages: int
+    # 0-100, clamped — drives the week bar heights so the client never has to
+    # know the goal to draw them.
+    percent: int
+
+
+class ReadingStatsOut(BaseModel):
+    goal_pages: int
+    pages_today: int
+    books_today: int
+    streak_days: int
+    goal_met: bool
+    week: list[GoalDayOut]
+
+
+class GoalUpdate(BaseModel):
+    user_id: str
+    daily_page_goal: int = Field(ge=1, le=500)
+
+
+PAGE_THEMES = ("auto", "light", "sepia", "dark")
+PANEL_TABS = ("toc", "search", "marks", "text", "ai", "level")
+
+
+class ReaderPrefsOut(BaseModel):
+    font_size: float
+    page_theme: str
+    heat_on: bool
+    panel_open: bool
+    panel_tab: str
+
+
+class ReaderPrefsUpdate(BaseModel):
+    user_id: str
+    # Bounds match the A−/A+ buttons; the server is the one that has to hold
+    # the line, since a stored 400px font would make the reader unusable.
+    font_size: float = Field(ge=12, le=22)
+    page_theme: Literal["auto", "light", "sepia", "dark"]
+    heat_on: bool
+    panel_open: bool
+    panel_tab: Literal["toc", "search", "marks", "text", "ai", "level"]
+
+
+class LeveledSegmentOut(BaseModel):
+    text: str
+    # Null for untouched prose; the replaced wording otherwise, which is what
+    # the panel underlines and lists in its substitution ledger.
+    original: str | None
+
+
+class SubstitutionOut(BaseModel):
+    from_text: str
+    to_text: str
+
+
+class LeveledTextOut(BaseModel):
+    mode: str
+    target_cefr: str
+    engine: str
+    original: str
+    segments: list[LeveledSegmentOut]
+    substitutions: list[SubstitutionOut]
+    # False when the mode needs a model and none is configured. Always a 200 —
+    # being offline is the app's normal state, not an error.
+    available: bool
+    note: str | None
+    cached: bool
+    # Set when the requested mode couldn't run and a simpler one was returned
+    # instead, so the panel can say what it actually showed.
+    served_mode: str
+
+
+class LevelRequest(BaseModel):
+    book_id: str
+    block_index: int
+    mode: str
+    target_cefr: str | None = None
+    user_id: str | None = None
+
+
+class SessionOut(BaseModel):
+    id: str
+    book_id: str
+    local_date: str
+    words_read: int
+    seconds: int
+
+
+class SessionOpen(BaseModel):
+    user_id: str
+
+
+class SessionHeartbeat(BaseModel):
+    seconds: int = Field(ge=0, le=3600)
 
 
 class HeatSpanOut(BaseModel):

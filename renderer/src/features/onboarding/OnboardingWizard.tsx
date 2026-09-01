@@ -81,7 +81,7 @@ export function OnboardingWizard() {
           <button
             onClick={goNext}
             disabled={submission.status === 'submitting'}
-            className="rounded-field bg-acc px-5 py-[11px] font-sans text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-60"
+            className="rounded-field bg-accSolid px-5 py-[11px] font-sans text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-60"
           >
             {nextLabel}
           </button>
