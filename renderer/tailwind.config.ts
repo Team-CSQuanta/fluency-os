@@ -13,6 +13,7 @@ export default {
         acc: 'var(--acc)',
         accSoft: 'var(--accSoft)',
         accLine: 'var(--accLine)',
+        accSolid: 'var(--accSolid)',
         bg: 'var(--bg)',
         bg2: 'var(--bg2)',
         panel: 'var(--panel)',

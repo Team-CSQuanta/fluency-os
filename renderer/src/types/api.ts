@@ -124,6 +124,73 @@ export interface BookOut {
   heat_overlay: boolean;
   imported_at: string;
   finished_at: string | null;
+  /** Null until the book has been opened once — that is what "Not started" means. */
+  last_read_at: string | null;
+  percent: number;
+}
+
+export interface GoalDayOut {
+  date: string;
+  label: string;
+  pages: number;
+  /** 0-100, already clamped against the goal — drives the week bar heights. */
+  percent: number;
+}
+
+export interface ReadingStatsOut {
+  goal_pages: number;
+  pages_today: number;
+  books_today: number;
+  streak_days: number;
+  goal_met: boolean;
+  week: GoalDayOut[];
+}
+
+export type LevelMode = 'inline' | 'lexical' | 'contextual' | 'semantic';
+
+export type PageTheme = 'auto' | 'light' | 'sepia' | 'dark';
+export type PanelTab = 'toc' | 'search' | 'marks' | 'text' | 'ai' | 'level';
+
+export interface ReaderPrefsOut {
+  font_size: number;
+  page_theme: PageTheme;
+  heat_on: boolean;
+  panel_open: boolean;
+  panel_tab: PanelTab;
+}
+
+export interface LeveledSegmentOut {
+  text: string;
+  /** Null for untouched prose; the replaced wording otherwise. */
+  original: string | null;
+}
+
+export interface SubstitutionOut {
+  from_text: string;
+  to_text: string;
+}
+
+export interface LeveledTextOut {
+  mode: LevelMode;
+  /** What actually ran — differs from `mode` when a generative mode degraded. */
+  served_mode: LevelMode;
+  target_cefr: string;
+  engine: string;
+  original: string;
+  segments: LeveledSegmentOut[];
+  substitutions: SubstitutionOut[];
+  /** False when the mode needs a model and none is configured. */
+  available: boolean;
+  note: string | null;
+  cached: boolean;
+}
+
+export interface SessionOut {
+  id: string;
+  book_id: string;
+  local_date: string;
+  words_read: number;
+  seconds: number;
 }
 
 export interface BookCountsOut {
