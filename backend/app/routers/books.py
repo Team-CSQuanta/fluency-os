@@ -23,9 +23,10 @@ from app.models.highlights import (
     HighlightOut,
     HighlightUpdate,
 )
+from app.models.reading import SessionHeartbeat, SessionOpen, SessionOut
 from app.models.search import SearchHitOut, SnippetSegmentOut
 from app.security import require_token
-from app.services import book_search, book_storage, pagination
+from app.services import book_search, book_storage, pagination, reading_goal
 from app.services.ingest import pipeline
 from app.utils.ids import uuid7
 from app.utils.time import iso8601_utc_now
@@ -34,7 +35,16 @@ router = APIRouter(prefix="/books", dependencies=[Depends(require_token)])
 
 
 def _row_to_book(row: sqlite3.Row) -> BookOut:
+    # list_books joins the reader's position on; the import/patch paths select
+    # from books alone and leave a book looking untouched, which it is.
+    keys = row.keys()
+    last_read_at = row["last_read_at"] if "last_read_at" in keys else None
+    max_block_seen = row["max_block_seen"] if "max_block_seen" in keys else None
     return BookOut(
+        percent=pagination.percent_complete(max_block_seen or 0, row["total_blocks"])
+        if max_block_seen is not None
+        else 0.0,
+        last_read_at=last_read_at,
         id=row["id"],
         user_id=row["user_id"],
         title=row["title"],
@@ -51,6 +61,16 @@ def _row_to_book(row: sqlite3.Row) -> BookOut:
         heat_overlay=bool(row["heat_overlay"]),
         imported_at=row["imported_at"],
         finished_at=row["finished_at"],
+    )
+
+
+def _row_to_session(row: sqlite3.Row) -> SessionOut:
+    return SessionOut(
+        id=row["id"],
+        book_id=row["book_id"],
+        local_date=row["local_date"],
+        words_read=row["words_read"],
+        seconds=row["seconds"],
     )
 
 
@@ -142,15 +162,18 @@ def import_books(
 def list_books(
     user_id: str, status: str | None = None, conn: sqlite3.Connection = Depends(get_db)
 ) -> list[BookOut]:
+    select = """
+        SELECT b.*, p.updated_at AS last_read_at, p.max_block_seen AS max_block_seen
+        FROM books b
+        LEFT JOIN reading_positions p ON p.book_id = b.id AND p.user_id = b.user_id
+        WHERE b.user_id = ?
+    """
     if status:
         rows = conn.execute(
-            "SELECT * FROM books WHERE user_id = ? AND ingest_status = ? ORDER BY imported_at DESC",
-            (user_id, status),
+            f"{select} AND b.ingest_status = ? ORDER BY b.imported_at DESC", (user_id, status)
         ).fetchall()
     else:
-        rows = conn.execute(
-            "SELECT * FROM books WHERE user_id = ? ORDER BY imported_at DESC", (user_id,)
-        ).fetchall()
+        rows = conn.execute(f"{select} ORDER BY b.imported_at DESC", (user_id,)).fetchall()
     return [_row_to_book(row) for row in rows]
 
 
@@ -349,6 +372,16 @@ def update_position(book_id: str, payload: PositionUpdate, conn: sqlite3.Connect
     # earlier chapter to re-read must not wipe a mostly-read book's progress.
     max_seen = max(payload.block_index, existing["max_block_seen"] if existing else 0)
 
+    # -1 rather than 0 for a first-ever open so block 0 itself gets credited.
+    previous_max = existing["max_block_seen"] if existing else -1
+    reading_goal.record_progress(
+        conn,
+        book_id=book_id,
+        user_id=payload.user_id,
+        previous_max_block=previous_max,
+        new_max_block=max_seen,
+    )
+
     conn.execute(
         """
         INSERT INTO reading_positions (book_id, user_id, block_index, char_offset, max_block_seen, updated_at)
@@ -540,8 +573,23 @@ def search_book(
 
 @router.patch("/{book_id}", response_model=BookOut)
 def update_book(book_id: str, payload: BookUpdate, conn: sqlite3.Connection = Depends(get_db)) -> BookOut:
-    _get_book_row(conn, book_id)
+    row = _get_book_row(conn, book_id)
     fields = payload.model_dump(exclude_unset=True)
+
+    # `finished` is a bool on the wire but a timestamp in the column, so it
+    # can't go through the generic SET below.
+    finished = fields.pop("finished", None)
+    if finished is not None:
+        if not finished:
+            conn.execute("UPDATE books SET finished_at = NULL WHERE id = ?", (book_id,))
+        elif row["finished_at"] is None:
+            # Re-marking an already-finished book keeps the original date —
+            # when you finished it is a fact, not something a stray click
+            # should move.
+            conn.execute(
+                "UPDATE books SET finished_at = ? WHERE id = ?", (iso8601_utc_now(), book_id)
+            )
+
     if fields:
         set_clause = ", ".join(f"{k} = ?" for k in fields)
         values = [int(v) if isinstance(v, bool) else v for v in fields.values()]
@@ -567,3 +615,29 @@ def retry_ingest(
     conn.commit()
     background_tasks.add_task(_run_ingest_in_background, book_id)
     return _row_to_book(_get_book_row(conn, book_id))
+
+
+@router.post("/{book_id}/sessions", response_model=SessionOut, status_code=status.HTTP_201_CREATED)
+def open_session(
+    book_id: str, payload: SessionOpen, conn: sqlite3.Connection = Depends(get_db)
+) -> SessionOut:
+    """Opened when the reader mounts. Idempotent per day, so reopening a book
+    four times in an evening keeps adding to one row instead of fragmenting
+    the day's reading across four."""
+    _get_book_row(conn, book_id)
+    row = reading_goal.open_session(conn, book_id=book_id, user_id=payload.user_id)
+    return _row_to_session(row)
+
+
+@router.patch("/{book_id}/sessions/{session_id}", response_model=SessionOut)
+def heartbeat_session(
+    book_id: str,
+    session_id: str,
+    payload: SessionHeartbeat,
+    conn: sqlite3.Connection = Depends(get_db),
+) -> SessionOut:
+    _get_book_row(conn, book_id)
+    row = reading_goal.add_seconds(conn, session_id=session_id, seconds=payload.seconds)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return _row_to_session(row)
