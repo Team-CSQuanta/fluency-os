@@ -96,3 +96,47 @@ export interface EngineAssessment {
   any_local_capable: boolean;
   tiers: EngineTierCapability[];
 }
+
+export type BookFormat = 'epub' | 'pdf' | 'mobi' | 'azw3' | 'txt';
+export type BookIngestStatus = 'queued' | 'parsing' | 'ready' | 'failed';
+
+export interface BookImportRequest {
+  user_id: string;
+  paths: string[];
+  count_toward_goal: boolean;
+  heat_overlay: boolean;
+}
+
+export interface BookOut {
+  id: string;
+  user_id: string;
+  title: string;
+  author: string | null;
+  language: string;
+  format: BookFormat;
+  cover_path: string | null;
+  total_blocks: number;
+  total_words: number;
+  page_estimate: number;
+  ingest_status: BookIngestStatus;
+  ingest_error: string | null;
+  count_toward_goal: boolean;
+  heat_overlay: boolean;
+  imported_at: string;
+  finished_at: string | null;
+}
+
+export interface BookCountsOut {
+  all: number;
+  reading: number;
+  not_started: number;
+  finished: number;
+}
+
+export interface BookUpdate {
+  title?: string;
+  author?: string;
+  language?: string;
+  count_toward_goal?: boolean;
+  heat_overlay?: boolean;
+}
