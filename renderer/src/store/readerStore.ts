@@ -2,7 +2,19 @@ import { create } from 'zustand';
 import { api } from '@/lib/apiClient';
 import { useAppStore } from '@/store/appStore';
 import { useShellStore } from '@/store/shellStore';
-import type { BlockOut, BookOut, ChapterOut, PageOut, PositionOut } from '@/types/api';
+import type {
+  BlockOut,
+  BookmarkOut,
+  BookOut,
+  ChapterOut,
+  HighlightColour,
+  HighlightOut,
+  PageOut,
+  PositionOut,
+  SearchHitOut,
+} from '@/types/api';
+
+const SEARCH_DEBOUNCE_MS = 200;
 
 function requireUserId(): string {
   const id = useAppStore.getState().currentUserId;
@@ -20,6 +32,11 @@ interface ReaderState {
   hasPrev: boolean;
   hasNext: boolean;
   percent: number;
+  highlights: HighlightOut[];
+  bookmarks: BookmarkOut[];
+  searchQuery: string;
+  searchHits: SearchHitOut[];
+  searchStatus: 'idle' | 'loading' | 'error';
   status: 'idle' | 'loading' | 'error' | 'ready';
   error: string | null;
 
@@ -28,12 +45,39 @@ interface ReaderState {
   nextPage: () => Promise<void>;
   prevPage: () => Promise<void>;
   jumpToChapter: (chapter: ChapterOut) => Promise<void>;
+  createHighlight: (params: {
+    blockIndex: number;
+    startChar: number;
+    endChar: number;
+    colour: HighlightColour;
+    quotedText: string;
+  }) => Promise<void>;
+  updateHighlight: (id: string, patch: { colour?: HighlightColour; note?: string | null }) => Promise<void>;
+  deleteHighlight: (id: string) => Promise<void>;
+  createBookmark: (blockIndex: number, label: string) => Promise<void>;
+  deleteBookmark: (id: string) => Promise<void>;
+  setSearchQuery: (query: string) => void;
   close: () => void;
 }
 
 const INITIAL: Pick<
   ReaderState,
-  'bookId' | 'book' | 'toc' | 'blocks' | 'page' | 'totalPages' | 'hasPrev' | 'hasNext' | 'percent' | 'status' | 'error'
+  | 'bookId'
+  | 'book'
+  | 'toc'
+  | 'blocks'
+  | 'page'
+  | 'totalPages'
+  | 'hasPrev'
+  | 'hasNext'
+  | 'percent'
+  | 'highlights'
+  | 'bookmarks'
+  | 'searchQuery'
+  | 'searchHits'
+  | 'searchStatus'
+  | 'status'
+  | 'error'
 > = {
   bookId: null,
   book: null,
@@ -44,26 +88,46 @@ const INITIAL: Pick<
   hasPrev: false,
   hasNext: false,
   percent: 0,
+  highlights: [],
+  bookmarks: [],
+  searchQuery: '',
+  searchHits: [],
+  searchStatus: 'idle',
   status: 'idle',
   error: null,
 };
+
+let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let searchAbortController: AbortController | null = null;
+
+function cancelPendingSearch(): void {
+  if (searchDebounceTimer) {
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = null;
+  }
+  searchAbortController?.abort();
+  searchAbortController = null;
+}
 
 export const useReaderStore = create<ReaderState>((set, get) => ({
   ...INITIAL,
 
   openBook: async (bookId) => {
+    cancelPendingSearch();
     set({ ...INITIAL, bookId, status: 'loading' });
     try {
       const userId = requireUserId();
-      const [book, toc, position] = await Promise.all([
+      const [book, toc, position, highlights, bookmarks] = await Promise.all([
         api.get<BookOut>(`/books/${bookId}`),
         api.get<ChapterOut[]>(`/books/${bookId}/toc`),
         api.get<PositionOut>(`/books/${bookId}/position?user_id=${encodeURIComponent(userId)}`),
+        api.get<HighlightOut[]>(`/books/${bookId}/highlights?user_id=${encodeURIComponent(userId)}`),
+        api.get<BookmarkOut[]>(`/books/${bookId}/bookmarks?user_id=${encodeURIComponent(userId)}`),
       ]);
       if (get().bookId !== bookId) return; // reader moved on to another book while this was in flight
 
       useShellStore.getState().setNowReading(book.title);
-      set({ book, toc, percent: position.percent });
+      set({ book, toc, percent: position.percent, highlights, bookmarks });
 
       await loadPage(bookId, position.page || 1, { get, set, savePosition: false });
     } catch (err) {
@@ -93,7 +157,92 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     await get().goToPage(chapter.page);
   },
 
-  close: () => set({ ...INITIAL }),
+  createHighlight: async ({ blockIndex, startChar, endChar, colour, quotedText }) => {
+    const { bookId } = get();
+    if (!bookId) return;
+    const userId = requireUserId();
+    const created = await api.post<HighlightOut>(`/books/${bookId}/highlights`, {
+      user_id: userId,
+      block_index: blockIndex,
+      start_char: startChar,
+      end_char: endChar,
+      colour,
+      quoted_text: quotedText,
+    });
+    if (get().bookId !== bookId) return;
+    set((s) => ({ highlights: [...s.highlights, created] }));
+  },
+
+  updateHighlight: async (id, patch) => {
+    const { bookId } = get();
+    if (!bookId) return;
+    const updated = await api.patch<HighlightOut>(`/books/${bookId}/highlights/${id}`, patch);
+    if (get().bookId !== bookId) return;
+    set((s) => ({ highlights: s.highlights.map((h) => (h.id === id ? updated : h)) }));
+  },
+
+  deleteHighlight: async (id) => {
+    const { bookId } = get();
+    if (!bookId) return;
+    await api.delete(`/books/${bookId}/highlights/${id}`);
+    if (get().bookId !== bookId) return;
+    set((s) => ({ highlights: s.highlights.filter((h) => h.id !== id) }));
+  },
+
+  createBookmark: async (blockIndex, label) => {
+    const { bookId } = get();
+    if (!bookId) return;
+    const userId = requireUserId();
+    const created = await api.post<BookmarkOut>(`/books/${bookId}/bookmarks`, {
+      user_id: userId,
+      block_index: blockIndex,
+      label,
+    });
+    if (get().bookId !== bookId) return;
+    set((s) => ({ bookmarks: [...s.bookmarks, created] }));
+  },
+
+  deleteBookmark: async (id) => {
+    const { bookId } = get();
+    if (!bookId) return;
+    await api.delete(`/books/${bookId}/bookmarks/${id}`);
+    if (get().bookId !== bookId) return;
+    set((s) => ({ bookmarks: s.bookmarks.filter((b) => b.id !== id) }));
+  },
+
+  setSearchQuery: (query) => {
+    set({ searchQuery: query });
+    cancelPendingSearch();
+
+    if (query.trim() === '') {
+      set({ searchHits: [], searchStatus: 'idle' });
+      return;
+    }
+
+    searchDebounceTimer = setTimeout(() => {
+      const { bookId } = get();
+      if (!bookId) return;
+      const controller = new AbortController();
+      searchAbortController = controller;
+      set({ searchStatus: 'loading' });
+
+      api
+        .get<SearchHitOut[]>(`/books/${bookId}/search?q=${encodeURIComponent(query)}`, controller.signal)
+        .then((hits) => {
+          if (controller.signal.aborted || get().bookId !== bookId) return;
+          set({ searchHits: hits, searchStatus: 'idle' });
+        })
+        .catch((err: unknown) => {
+          if (err instanceof DOMException && err.name === 'AbortError') return;
+          set({ searchStatus: 'error', searchHits: [] });
+        });
+    }, SEARCH_DEBOUNCE_MS);
+  },
+
+  close: () => {
+    cancelPendingSearch();
+    set({ ...INITIAL });
+  },
 }));
 
 async function loadPage(

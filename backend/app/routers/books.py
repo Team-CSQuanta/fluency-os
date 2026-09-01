@@ -16,8 +16,16 @@ from app.models.books import (
     PositionOut,
     PositionUpdate,
 )
+from app.models.highlights import (
+    BookmarkCreate,
+    BookmarkOut,
+    HighlightCreate,
+    HighlightOut,
+    HighlightUpdate,
+)
+from app.models.search import SearchHitOut, SnippetSegmentOut
 from app.security import require_token
-from app.services import book_storage, pagination
+from app.services import book_search, book_storage, pagination
 from app.services.ingest import pipeline
 from app.utils.ids import uuid7
 from app.utils.time import iso8601_utc_now
@@ -184,10 +192,11 @@ def get_cover(book_id: str, conn: sqlite3.Connection = Depends(get_db)) -> FileR
 
 @router.get("/{book_id}/toc", response_model=list[ChapterOut])
 def get_toc(book_id: str, conn: sqlite3.Connection = Depends(get_db)) -> list[ChapterOut]:
-    _get_book_row(conn, book_id)
+    book = _get_book_row(conn, book_id)
     rows = conn.execute(
         "SELECT * FROM book_chapters WHERE book_id = ? ORDER BY order_index", (book_id,)
     ).fetchall()
+    native = _uses_native_pages(book)
     return [
         ChapterOut(
             id=row["id"],
@@ -195,7 +204,13 @@ def get_toc(book_id: str, conn: sqlite3.Connection = Depends(get_db)) -> list[Ch
             label=row["label"],
             depth=row["depth"],
             start_block=row["start_block"],
-            page=pagination.page_number(row["word_offset"]),
+            # A native-paged book's chapter starts on whatever page its first
+            # block was printed on, not on a word-count estimate.
+            page=(
+                _block_page(conn, book, row["start_block"])
+                if native
+                else pagination.page_number(row["word_offset"])
+            ),
         )
         for row in rows
     ]
@@ -229,24 +244,32 @@ def get_page(book_id: str, page: int = 1, conn: sqlite3.Connection = Depends(get
     starting word offset falls on (spec's 275-words-per-page rule), computed
     with a running-total window function so this stays one query."""
     book = _get_book_row(conn, book_id)
-    total_pages = pagination.total_pages(book["total_words"])
+    total_pages = _total_pages(conn, book)
     page = max(1, page)
     if total_pages:
         page = min(page, total_pages)
 
-    rows = conn.execute(
-        f"""
-        WITH cum AS (
-          SELECT block_index, chapter_id, kind, text, word_count,
-                 COALESCE(SUM(word_count) OVER (
-                   ORDER BY block_index ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-                 ), 0) AS word_offset_before
-          FROM book_blocks WHERE book_id = ?
-        )
-        SELECT * FROM cum WHERE (word_offset_before / {pagination.WORDS_PER_PAGE}) + 1 = ? ORDER BY block_index
-        """,
-        (book_id, page),
-    ).fetchall()
+    if _uses_native_pages(book):
+        # The document already told us which page each block was printed on.
+        rows = conn.execute(
+            "SELECT block_index, chapter_id, kind, text, word_count FROM book_blocks "
+            "WHERE book_id = ? AND page_number = ? ORDER BY block_index",
+            (book_id, page),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            f"""
+            WITH cum AS (
+              SELECT block_index, chapter_id, kind, text, word_count,
+                     COALESCE(SUM(word_count) OVER (
+                       ORDER BY block_index ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                     ), 0) AS word_offset_before
+              FROM book_blocks WHERE book_id = ?
+            )
+            SELECT * FROM cum WHERE (word_offset_before / {pagination.WORDS_PER_PAGE}) + 1 = ? ORDER BY block_index
+            """,
+            (book_id, page),
+        ).fetchall()
 
     blocks = [
         BlockOut(
@@ -276,6 +299,23 @@ def _word_offset_before(conn: sqlite3.Connection, book_id: str, block_index: int
     return row["w"]
 
 
+def _uses_native_pages(book: sqlite3.Row) -> bool:
+    """PDFs page by their own printed boundaries; reflowable formats derive a
+    page from cumulative word counts (spec D3)."""
+    keys = book.keys()
+    return "uses_native_pages" in keys and bool(book["uses_native_pages"])
+
+
+def _total_pages(conn: sqlite3.Connection, book: sqlite3.Row) -> int:
+    if _uses_native_pages(book):
+        row = conn.execute(
+            "SELECT COALESCE(MAX(page_number), 0) AS p FROM book_blocks WHERE book_id = ?",
+            (book["id"],),
+        ).fetchone()
+        return row["p"]
+    return pagination.total_pages(book["total_words"])
+
+
 @router.get("/{book_id}/position", response_model=PositionOut)
 def get_position(book_id: str, user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> PositionOut:
     book = _get_book_row(conn, book_id)
@@ -285,13 +325,12 @@ def get_position(book_id: str, user_id: str, conn: sqlite3.Connection = Depends(
     block_index = row["block_index"] if row else 0
     char_offset = row["char_offset"] if row else 0
     max_seen = row["max_block_seen"] if row else 0
-    word_offset = _word_offset_before(conn, book_id, block_index)
     return PositionOut(
         block_index=block_index,
         char_offset=char_offset,
         max_block_seen=max_seen,
-        page=pagination.page_number(word_offset),
-        total_pages=pagination.total_pages(book["total_words"]),
+        page=_block_page(conn, book, block_index),
+        total_pages=_total_pages(conn, book),
         percent=pagination.percent_complete(max_seen, book["total_blocks"]),
     )
 
@@ -322,6 +361,181 @@ def update_position(book_id: str, payload: PositionUpdate, conn: sqlite3.Connect
         """,
         (book_id, payload.user_id, payload.block_index, payload.char_offset, max_seen, iso8601_utc_now()),
     )
+
+
+def _block_page(conn: sqlite3.Connection, book: sqlite3.Row, block_index: int) -> int:
+    if _uses_native_pages(book):
+        row = conn.execute(
+            "SELECT page_number FROM book_blocks WHERE book_id = ? AND block_index = ?",
+            (book["id"], block_index),
+        ).fetchone()
+        if row is not None and row["page_number"] is not None:
+            return row["page_number"]
+    return pagination.page_number(_word_offset_before(conn, book["id"], block_index))
+
+
+def _row_to_highlight(conn: sqlite3.Connection, book: sqlite3.Row, row: sqlite3.Row) -> HighlightOut:
+    return HighlightOut(
+        id=row["id"],
+        book_id=row["book_id"],
+        user_id=row["user_id"],
+        block_index=row["block_index"],
+        start_char=row["start_char"],
+        end_char=row["end_char"],
+        colour=row["colour"],
+        quoted_text=row["quoted_text"],
+        note=row["note"],
+        created_at=row["created_at"],
+        page=_block_page(conn, book, row["block_index"]),
+    )
+
+
+def _get_highlight_row(conn: sqlite3.Connection, book_id: str, highlight_id: str) -> sqlite3.Row:
+    row = conn.execute(
+        "SELECT * FROM book_highlights WHERE id = ? AND book_id = ?", (highlight_id, book_id)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Highlight not found")
+    return row
+
+
+@router.get("/{book_id}/highlights", response_model=list[HighlightOut])
+def list_highlights(book_id: str, user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> list[HighlightOut]:
+    book = _get_book_row(conn, book_id)
+    rows = conn.execute(
+        "SELECT * FROM book_highlights WHERE book_id = ? AND user_id = ? ORDER BY block_index, start_char",
+        (book_id, user_id),
+    ).fetchall()
+    return [_row_to_highlight(conn, book, row) for row in rows]
+
+
+@router.post("/{book_id}/highlights", response_model=HighlightOut, status_code=status.HTTP_201_CREATED)
+def create_highlight(
+    book_id: str, payload: HighlightCreate, conn: sqlite3.Connection = Depends(get_db)
+) -> HighlightOut:
+    book = _get_book_row(conn, book_id)
+    if payload.end_char <= payload.start_char:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="end_char must be greater than start_char")
+    if payload.block_index < 0 or (book["total_blocks"] and payload.block_index >= book["total_blocks"]):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="block_index out of range")
+
+    highlight_id = uuid7()
+    conn.execute(
+        """
+        INSERT INTO book_highlights (id, book_id, user_id, block_index, start_char, end_char, colour, quoted_text, note, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            highlight_id,
+            book_id,
+            payload.user_id,
+            payload.block_index,
+            payload.start_char,
+            payload.end_char,
+            payload.colour,
+            payload.quoted_text,
+            payload.note,
+            iso8601_utc_now(),
+        ),
+    )
+    return _row_to_highlight(conn, book, _get_highlight_row(conn, book_id, highlight_id))
+
+
+@router.patch("/{book_id}/highlights/{highlight_id}", response_model=HighlightOut)
+def update_highlight(
+    book_id: str, highlight_id: str, payload: HighlightUpdate, conn: sqlite3.Connection = Depends(get_db)
+) -> HighlightOut:
+    book = _get_book_row(conn, book_id)
+    _get_highlight_row(conn, book_id, highlight_id)
+    fields = payload.model_dump(exclude_unset=True)
+    if fields:
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        conn.execute(f"UPDATE book_highlights SET {set_clause} WHERE id = ?", (*fields.values(), highlight_id))
+    return _row_to_highlight(conn, book, _get_highlight_row(conn, book_id, highlight_id))
+
+
+@router.delete("/{book_id}/highlights/{highlight_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_highlight(book_id: str, highlight_id: str, conn: sqlite3.Connection = Depends(get_db)) -> None:
+    _get_highlight_row(conn, book_id, highlight_id)
+    conn.execute("DELETE FROM book_highlights WHERE id = ?", (highlight_id,))
+
+
+def _row_to_bookmark(conn: sqlite3.Connection, book: sqlite3.Row, row: sqlite3.Row) -> BookmarkOut:
+    return BookmarkOut(
+        id=row["id"],
+        book_id=row["book_id"],
+        user_id=row["user_id"],
+        block_index=row["block_index"],
+        label=row["label"],
+        created_at=row["created_at"],
+        page=_block_page(conn, book, row["block_index"]),
+    )
+
+
+def _get_bookmark_row(conn: sqlite3.Connection, book_id: str, bookmark_id: str) -> sqlite3.Row:
+    row = conn.execute(
+        "SELECT * FROM book_bookmarks WHERE id = ? AND book_id = ?", (bookmark_id, book_id)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bookmark not found")
+    return row
+
+
+@router.get("/{book_id}/bookmarks", response_model=list[BookmarkOut])
+def list_bookmarks(book_id: str, user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> list[BookmarkOut]:
+    book = _get_book_row(conn, book_id)
+    rows = conn.execute(
+        "SELECT * FROM book_bookmarks WHERE book_id = ? AND user_id = ? ORDER BY block_index", (book_id, user_id)
+    ).fetchall()
+    return [_row_to_bookmark(conn, book, row) for row in rows]
+
+
+@router.post("/{book_id}/bookmarks", response_model=BookmarkOut, status_code=status.HTTP_201_CREATED)
+def create_bookmark(book_id: str, payload: BookmarkCreate, conn: sqlite3.Connection = Depends(get_db)) -> BookmarkOut:
+    book = _get_book_row(conn, book_id)
+    if payload.block_index < 0 or (book["total_blocks"] and payload.block_index >= book["total_blocks"]):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="block_index out of range")
+
+    bookmark_id = uuid7()
+    conn.execute(
+        "INSERT INTO book_bookmarks (id, book_id, user_id, block_index, label, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (bookmark_id, book_id, payload.user_id, payload.block_index, payload.label, iso8601_utc_now()),
+    )
+    return _row_to_bookmark(conn, book, _get_bookmark_row(conn, book_id, bookmark_id))
+
+
+@router.delete("/{book_id}/bookmarks/{bookmark_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_bookmark(book_id: str, bookmark_id: str, conn: sqlite3.Connection = Depends(get_db)) -> None:
+    _get_bookmark_row(conn, book_id, bookmark_id)
+    conn.execute("DELETE FROM book_bookmarks WHERE id = ?", (bookmark_id,))
+
+
+def _chapter_label_for_block(conn: sqlite3.Connection, book_id: str, block_index: int) -> str | None:
+    row = conn.execute(
+        "SELECT label FROM book_chapters WHERE book_id = ? AND start_block <= ? ORDER BY start_block DESC LIMIT 1",
+        (book_id, block_index),
+    ).fetchone()
+    return row["label"] if row else None
+
+
+@router.get("/{book_id}/search", response_model=list[SearchHitOut])
+def search_book(
+    book_id: str, q: str, limit: int = 20, conn: sqlite3.Connection = Depends(get_db)
+) -> list[SearchHitOut]:
+    book = _get_book_row(conn, book_id)
+    rows = book_search.search_book(conn, book_id, q, limit=limit)
+    return [
+        SearchHitOut(
+            block_index=row["block_index"],
+            page=_block_page(conn, book, row["block_index"]),
+            chapter_label=_chapter_label_for_block(conn, book_id, row["block_index"]),
+            snippet=[
+                SnippetSegmentOut(text=seg.text, matched=seg.matched)
+                for seg in book_search.parse_snippet(row["snippet"])
+            ],
+        )
+        for row in rows
+    ]
 
 
 @router.patch("/{book_id}", response_model=BookOut)

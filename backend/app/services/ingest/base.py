@@ -18,6 +18,9 @@ class ParsedBlock:
     kind: BlockKind
     text: str
     word_count: int
+    # Set only by formats with real pages (PDF). Reflowable formats leave
+    # this None and the reader derives a page from cumulative word counts.
+    page_number: int | None = None
 
 
 @dataclass(frozen=True)
@@ -42,6 +45,9 @@ class ParsedBook:
     blocks: list[ParsedBlock] = field(default_factory=list)
     cover_bytes: bytes | None = None
     cover_ext: str | None = None
+    # True when every block carries a trustworthy page_number, so the reader
+    # should page by the document's own boundaries instead of by word count.
+    uses_native_pages: bool = False
 
 
 class BookParser(Protocol):
