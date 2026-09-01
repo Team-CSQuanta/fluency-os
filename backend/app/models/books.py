@@ -25,6 +25,10 @@ class BookOut(BaseModel):
     heat_overlay: bool
     imported_at: str
     finished_at: str | None
+    # Populated by the list endpoint's join on reading_positions: null means
+    # the book has never been opened, which is what "Not started" means.
+    last_read_at: str | None = None
+    percent: float = 0.0
 
 
 class BookCountsOut(BaseModel):

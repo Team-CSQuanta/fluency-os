@@ -1,0 +1,89 @@
+# Phrase table for the "lexical substitution" leveling mode (spec §7.3).
+#
+# Multi-word verbs and idioms that a word-by-word substitution cannot reach:
+# "put up with" is three A1 words that together mean "tolerate", so the inline
+# engine sees nothing above level and leaves a learner stuck.
+#
+# phrase       the surface form to match, lowercase, matched on word boundaries
+# simpler      the replacement, in the same register
+# cefr         the band the phrase itself sits at, so it is only replaced for
+#              a reader below that level
+phrase,simpler,cefr
+put up with,accept,B2
+come up with,think of,B2
+get rid of,remove,B1
+look forward to,await happily,B1
+run out of,use up all,B1
+take part in,join,A2
+find out,learn,A2
+give up,stop,A2
+carry out,do,B2
+point out,say,B2
+turn out,end up,B2
+bring about,cause,C1
+call off,cancel,B2
+put off,delay,B2
+set up,start,B1
+work out,solve,B1
+look after,care for,A2
+look into,examine,B2
+make up for,repay,C1
+get along with,like,B1
+go through with,finish,C1
+stand up for,defend,B2
+come across,find,B2
+do away with,end,C1
+end up,finish,B1
+figure out,understand,B1
+hold on to,keep,B1
+keep up with,follow,B2
+let down,disappoint,B2
+look up to,admire,B2
+pass away,die,B2
+put forward,suggest,C1
+take on,accept,B2
+turn down,refuse,B2
+bring up,raise,B2
+account for,explain,C1
+adhere to,follow,C1
+allude to,hint at,C2
+by and large,mostly,C1
+for the most part,mostly,B2
+in light of,because of,C1
+in the event that,if,C1
+notwithstanding,despite,C2
+on the grounds that,because,C1
+prior to,before,B2
+subsequent to,after,C2
+with a view to,in order to,C2
+with regard to,about,C1
+in accordance with,following,C1
+a great deal of,much,B1
+at the expense of,by harming,C1
+bear in mind,remember,B2
+draw a distinction,separate,C1
+give rise to,cause,C1
+in conjunction with,together with,C1
+lay the groundwork,prepare,C1
+take into account,consider,B2
+to a large extent,mostly,C1
+under no circumstances,never,C1
+be that as it may,even so,C2
+in consequence,so,B2
+as a consequence,so,B2
+as a result of,because of,B1
+by virtue of,because of,C2
+for the purpose of,to,C1
+in order to,to,B1
+so as to,to,B2
+in terms of,about,B2
+on the contrary,instead,B2
+for instance,for example,B1
+in addition to,as well as,B1
+a number of,several,B1
+the majority of,most,B2
+in the absence of,without,C1
+at the outset,at the start,C1
+in due course,eventually,C2
+to no avail,without success,C2
+in the wake of,after,C1

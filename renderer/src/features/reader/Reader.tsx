@@ -3,11 +3,11 @@ import { BlockText } from '@/features/reader/BlockText';
 import {
   HIGHLIGHT_COLORS,
   LEVEL_MODES,
-  MODE_HEADLINES,
-  PARAGRAPH_LEVELS,
-  type LevelMode,
-} from '@/features/reader/readerMockData';
+  MODE_LABELS,
+  OFFLINE_MODES,
+} from '@/features/reader/readerConstants';
 import { getBlockSelectionRange } from '@/features/reader/useSelectionRange';
+import { useReadingSession } from '@/features/reader/useReadingSession';
 import { useReaderStore } from '@/store/readerStore';
 import { useShellStore } from '@/store/shellStore';
 import type { ChapterOut, HighlightColour } from '@/types/api';
@@ -91,6 +91,11 @@ export function Reader() {
   const lookup = useReaderStore((s) => s.lookup);
   const lookupStatus = useReaderStore((s) => s.lookupStatus);
   const lookupWord = useReaderStore((s) => s.lookupWord);
+  const levelMode = useReaderStore((s) => s.levelMode);
+  const setLevelMode = useReaderStore((s) => s.setLevelMode);
+  const leveled = useReaderStore((s) => s.leveled);
+  const levelStatus = useReaderStore((s) => s.levelStatus);
+  const levelBlock = useReaderStore((s) => s.levelBlock);
 
   const [tab, setTab] = useState<Tab>('toc');
   const [panelOpen, setPanelOpen] = useState(true);
@@ -98,7 +103,6 @@ export function Reader() {
   const [fontSize, setFontSize] = useState(15.5);
   const [pageTheme, setPageTheme] = useState<PageTheme>('auto');
   const [heatOn, setHeatOn] = useState(true);
-  const [levelMode, setLevelMode] = useState<LevelMode>('contextual');
   const [showOriginal, setShowOriginal] = useState(false);
   const [highlighterColor, setHighlighterColor] = useState<HighlightColour | null>(null);
 
@@ -114,8 +118,19 @@ export function Reader() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookId]);
 
-  // A fresh page always starts at its first block; keep the selection (used
-  // by the mock AI/Level panels) pinned to the top of whatever page is shown.
+  useReadingSession(bookId);
+
+  // Level on demand for the selected block only — never the whole book. At a
+  // couple of seconds per generative call, pre-leveling a 800-block book would
+  // be half an hour of work for text nobody may open.
+  useEffect(() => {
+    if (tab !== 'level' || selectedPara === null) return;
+    void levelBlock(selectedPara);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, selectedPara, bookId]);
+
+  // A fresh page always starts at its first block; keep the selection pinned
+  // to the top of whatever page is shown.
   useEffect(() => {
     if (blocks.length > 0) setSelectedPara(blocks[0].block_index);
     // Scroll to the top of the new page instead of wherever the previous
@@ -144,7 +159,6 @@ export function Reader() {
     setTab('ai');
     void lookupWord(word, sentence);
   };
-  const level = PARAGRAPH_LEVELS[selectedPara]?.[levelMode] ?? PARAGRAPH_LEVELS[2][levelMode];
   const fsPct = Math.round(((fontSize - 12) / 10) * 100);
   const selectedBlock = blocks.find((b) => b.block_index === selectedPara);
   const selectedText = selectedBlock?.text ?? '';
@@ -710,13 +724,14 @@ export function Reader() {
               <div className="flex flex-col gap-[13px]">
                 <div className="rounded-field border border-line2 p-[11px]">
                   <div className="mb-[6px] font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
-                    Selection · B1 target
+                    Selection · {leveled?.target_cefr ?? heatTarget} target
                   </div>
                   <div className="font-sans text-[11.5px] leading-[1.7] text-tx3">"{selectedText}"</div>
                 </div>
                 <div className="flex flex-col gap-[5px]">
                   {LEVEL_MODES.map((m) => {
                     const on = levelMode === m.key;
+                    const offline = OFFLINE_MODES.includes(m.key);
                     return (
                       <button
                         key={m.key}
@@ -725,53 +740,96 @@ export function Reader() {
                         style={{ borderColor: on ? 'var(--accLine)' : 'var(--line)', background: on ? 'var(--accSoft)' : 'transparent', color: on ? 'var(--acc)' : 'var(--tx2)' }}
                       >
                         <span>{m.label}</span>
-                        <span className="font-mono text-[9px] text-tx3">{m.tag}</span>
+                        <span
+                          className="font-mono text-[9px]"
+                          style={{ color: offline ? 'var(--tx3)' : 'var(--tx3)', opacity: offline ? 1 : 0.7 }}
+                        >
+                          {m.tag}
+                        </span>
                       </button>
                     );
                   })}
                 </div>
                 <div className="border-t border-line2 pt-3">
-                  <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.1em] text-acc">
-                    {MODE_HEADLINES[levelMode]}
-                  </div>
-                  <div className="font-sans text-[12.5px] leading-[1.8] text-tx">
-                    {showOriginal ? (
-                      <span>{selectedText}</span>
-                    ) : (
-                      <>
-                        <span>{level.before}</span>
-                        {level.sub1 && <span className="cursor-help border-b border-dashed border-acc" title={level.origSub1}>{level.sub1}</span>}
-                        <span>{level.mid}</span>
-                        {level.sub2 && <span className="cursor-help border-b border-dashed border-acc" title={level.origSub2}>{level.sub2}</span>}
-                        <span>{level.after}</span>
-                      </>
+                  <div className="mb-2 flex items-baseline justify-between gap-2">
+                    <div className="font-mono text-[8.5px] font-semibold uppercase tracking-[0.1em] text-acc">
+                      {MODE_LABELS[levelMode]}
+                      {leveled && leveled.available
+                        ? ` · ${leveled.substitutions.length} replaced`
+                        : ''}
+                    </div>
+                    {leveled?.cached && (
+                      <span className="font-mono text-[8.5px] text-tx3" title="Served from the paragraph-hash cache">
+                        cached
+                      </span>
                     )}
                   </div>
+
+                  {levelStatus === 'loading' && (
+                    <div className="font-mono text-[10.5px] text-tx3">leveling…</div>
+                  )}
+                  {levelStatus === 'error' && (
+                    <div className="font-mono text-[10.5px] text-tx3">Couldn't level this passage.</div>
+                  )}
+
+                  {levelStatus !== 'loading' && leveled && (
+                    <div className="font-sans text-[12.5px] leading-[1.8] text-tx">
+                      {showOriginal || leveled.segments.length === 0 ? (
+                        <span>{leveled.original}</span>
+                      ) : (
+                        leveled.segments.map((seg, i) =>
+                          seg.original ? (
+                            <span
+                              key={i}
+                              className="cursor-help border-b border-dashed border-acc"
+                              title={seg.original}
+                            >
+                              {seg.text}
+                            </span>
+                          ) : (
+                            <span key={i}>{seg.text}</span>
+                          ),
+                        )
+                      )}
+                    </div>
+                  )}
+
+                  {/* The two generative modes have no model behind them yet;
+                      say so rather than passing off a weaker result as the
+                      one that was asked for. */}
+                  {leveled?.note && (
+                    <div
+                      className="mt-[9px] rounded-field border px-[9px] py-[7px] font-mono text-[9.5px] leading-[1.6]"
+                      style={{
+                        borderColor: leveled.available ? 'var(--line2)' : 'var(--accLine)',
+                        background: leveled.available ? 'transparent' : 'var(--accSoft)',
+                        color: leveled.available ? 'var(--tx3)' : 'var(--acc)',
+                      }}
+                    >
+                      {leveled.note}
+                    </div>
+                  )}
                 </div>
-                {(level.origSub1 || level.origSub2) && (
+
+                {leveled && leveled.substitutions.length > 0 && (
                   <div className="border-t border-line2 pt-3">
                     <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">Substitutions</div>
                     <div className="flex flex-col gap-[6px]">
-                      {level.origSub1 && level.sub1 && (
-                        <div className="flex items-center gap-2 rounded-field border border-line2 px-[9px] py-[7px]">
-                          <span className="font-mono text-[11px] text-tx3 line-through">{level.origSub1}</span>
+                      {leveled.substitutions.map((s, i) => (
+                        <div key={i} className="flex items-center gap-2 rounded-field border border-line2 px-[9px] py-[7px]">
+                          <span className="font-mono text-[11px] text-tx3 line-through">{s.from_text}</span>
                           <span className="font-mono text-[10px] text-tx3">→</span>
-                          <span className="font-sans text-[11px] font-medium text-tx">{level.sub1}</span>
+                          <span className="font-sans text-[11px] font-medium text-tx">{s.to_text}</span>
                         </div>
-                      )}
-                      {level.origSub2 && level.sub2 && (
-                        <div className="flex items-center gap-2 rounded-field border border-line2 px-[9px] py-[7px]">
-                          <span className="font-mono text-[11px] text-tx3 line-through">{level.origSub2}</span>
-                          <span className="font-mono text-[10px] text-tx3">→</span>
-                          <span className="font-sans text-[11px] font-medium text-tx">{level.sub2}</span>
-                        </div>
-                      )}
+                      ))}
                     </div>
                   </div>
                 )}
+
                 <button
                   onClick={() => setShowOriginal((v) => !v)}
-                  className="rounded-field border border-line py-2 font-mono text-[11px] text-tx2 hover:border-acc hover:text-acc"
+                  disabled={!leveled || leveled.segments.length === 0}
+                  className="rounded-field border border-line py-2 font-mono text-[11px] text-tx2 hover:border-acc hover:text-acc disabled:opacity-40 disabled:hover:border-line disabled:hover:text-tx2"
                 >
                   {showOriginal ? 'show simplified' : 'show original'}
                 </button>
