@@ -8,12 +8,12 @@ interface ShellState {
   heatTip: string;
   nowPlaying: string;
   nowReading: string;
-  readerChapter: string;
-  readerPos: string;
+  readerBookId: string | null;
   selectedWord: string;
   goScreen: (key: ScreenKey) => void;
   goPlayer: (title: string) => void;
-  goReader: (title: string, chapter: string, pos: string) => void;
+  goReader: (bookId: string, title?: string) => void;
+  setNowReading: (title: string) => void;
   goWord: (word: string) => void;
   toggleNav: () => void;
   toggleTheme: () => void;
@@ -27,8 +27,7 @@ export const useShellStore = create<ShellState>((set, get) => ({
   heatTip: 'hover a day',
   nowPlaying: 'Arrival (2016)',
   nowReading: 'The Overstory — Richard Powers',
-  readerChapter: 'Chapter 4 · The Weight of Small Words',
-  readerPos: '118 / 342',
+  readerBookId: null,
   selectedWord: 'reticent',
 
   goScreen: (key) => set({ screen: key }),
@@ -36,8 +35,9 @@ export const useShellStore = create<ShellState>((set, get) => ({
   // Mirrors the mockup's immersive() behavior: entering player/reader collapses
   // the nav to icon-only so the content area gets more room.
   goPlayer: (title) => set({ screen: 'player', collapsed: true, nowPlaying: title }),
-  goReader: (title, chapter, pos) =>
-    set({ screen: 'reader', collapsed: true, nowReading: title, readerChapter: chapter, readerPos: pos }),
+  goReader: (bookId, title) =>
+    set((s) => ({ screen: 'reader', collapsed: true, readerBookId: bookId, nowReading: title ?? s.nowReading })),
+  setNowReading: (title) => set({ nowReading: title }),
   toggleNav: () => set({ collapsed: !get().collapsed }),
   toggleTheme: () => {
     const next = get().theme === 'dark' ? 'light' : 'dark';
