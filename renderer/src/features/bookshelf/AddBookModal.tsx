@@ -153,7 +153,7 @@ export function AddBookModal({ onClose }: { onClose: () => void }) {
           </button>
           <button
             onClick={handleClose}
-            className="rounded-field bg-acc px-[18px] py-[9px] font-sans text-[11.5px] font-semibold text-white hover:brightness-110"
+            className="rounded-field bg-accSolid px-[18px] py-[9px] font-sans text-[11.5px] font-semibold text-white hover:brightness-110"
           >
             {importQueue.length > 0 ? 'Done' : 'Close'}
           </button>

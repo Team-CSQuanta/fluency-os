@@ -36,6 +36,7 @@ interface BookshelfState {
   importBooks: (paths: string[], opts?: { countTowardGoal?: boolean; heatOverlay?: boolean }) => Promise<void>;
   retryIngest: (bookId: string) => Promise<void>;
   deleteBook: (bookId: string) => Promise<void>;
+  setFinished: (bookId: string, finished: boolean) => Promise<void>;
   clearImportQueue: () => void;
   loadCover: (bookId: string) => void;
 }
@@ -170,6 +171,20 @@ export const useBookshelfStore = create<BookshelfState>((set, get) => ({
   retryIngest: async (bookId) => {
     await api.post<BookOut>(`/books/${bookId}/retry-ingest`);
     await get().fetchBooks();
+  },
+
+  setFinished: async (bookId, finished) => {
+    const updated = await api.patch<BookOut>(`/books/${bookId}`, { finished });
+    // PATCH selects from books alone, so its response carries no
+    // last_read_at/percent — those come from the list endpoint's join. Keep
+    // the ones already on screen rather than blanking the tile's progress.
+    set((s) => ({
+      books: s.books.map((b) =>
+        b.id === bookId ? { ...updated, last_read_at: b.last_read_at, percent: b.percent } : b,
+      ),
+    }));
+    // The Finished / Reading / Not started chips all move together.
+    void get().fetchCounts();
   },
 
   deleteBook: async (bookId) => {

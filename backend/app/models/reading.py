@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -22,6 +24,29 @@ class ReadingStatsOut(BaseModel):
 class GoalUpdate(BaseModel):
     user_id: str
     daily_page_goal: int = Field(ge=1, le=500)
+
+
+PAGE_THEMES = ("auto", "light", "sepia", "dark")
+PANEL_TABS = ("toc", "search", "marks", "text", "ai", "level")
+
+
+class ReaderPrefsOut(BaseModel):
+    font_size: float
+    page_theme: str
+    heat_on: bool
+    panel_open: bool
+    panel_tab: str
+
+
+class ReaderPrefsUpdate(BaseModel):
+    user_id: str
+    # Bounds match the A−/A+ buttons; the server is the one that has to hold
+    # the line, since a stored 400px font would make the reader unusable.
+    font_size: float = Field(ge=12, le=22)
+    page_theme: Literal["auto", "light", "sepia", "dark"]
+    heat_on: bool
+    panel_open: bool
+    panel_tab: Literal["toc", "search", "marks", "text", "ai", "level"]
 
 
 class LeveledSegmentOut(BaseModel):
