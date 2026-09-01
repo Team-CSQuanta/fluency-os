@@ -6,7 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import configure_from_argv, settings
 from app.db import get_connection
 from app.migrations.runner import run_migrations
-from app.routers import hardware, health, placement, users
+from app.routers import books, hardware, health, placement, reading, users
+from app.services.book_search import ensure_fts_backfilled
 
 configure_from_argv()
 
@@ -16,6 +17,7 @@ async def lifespan(_app: FastAPI):
     conn = get_connection()
     try:
         run_migrations(conn)
+        ensure_fts_backfilled(conn)
     finally:
         conn.close()
     yield
@@ -35,6 +37,8 @@ app.include_router(health.router)
 app.include_router(users.router)
 app.include_router(placement.router)
 app.include_router(hardware.router)
+app.include_router(books.router)
+app.include_router(reading.router)
 
 
 def main() -> None:

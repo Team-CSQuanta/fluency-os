@@ -1,0 +1,1067 @@
+# FluencyOS CEFR wordlist — Phase 6 (difficulty heat, word lookup, leveling).
+#
+# LICENCE: this file is original to this project. Several widely-cited CEFR
+# wordlists (EVP, Kelly, CEFR-J) are NOT redistributable, so rather than
+# vendoring one, this is the fallback the plan calls for: a frequency-band
+# approximation, hand-checked, covering the bands that actually matter to the
+# reader. It is a reading aid, not an authoritative grading of English.
+#
+# Coverage is deliberately asymmetric. A1-B1 entries exist so that ordinary
+# words are known-easy and never tint; B2-C2 entries carry the full payload
+# (simpler synonym, definition, example) because those are the words the heat
+# overlay marks and the lookup panel explains.
+#
+# An unknown word is treated as unrated, NOT as above-level: a missing hard
+# word simply fails to tint, which is far less damaging than tinting every
+# ordinary word on the page.
+#
+# columns: lemma,cefr,pos,simpler,definition,example,synonyms
+lemma,cefr,pos,simpler,definition,example,synonyms
+a,A1,determiner,,,,
+about,A1,preposition,,,,
+after,A1,preposition,,,,
+again,A1,adverb,,,,
+all,A1,determiner,,,,
+also,A1,adverb,,,,
+and,A1,conjunction,,,,
+animal,A1,noun,,,,
+answer,A1,noun,,,,
+any,A1,determiner,,,,
+ask,A1,verb,,,,
+back,A1,noun,,,,
+bad,A1,adjective,,,,
+be,A1,verb,,,,
+because,A1,conjunction,,,,
+before,A1,preposition,,,,
+begin,A1,verb,,,,
+big,A1,adjective,,,,
+book,A1,noun,,,,
+boy,A1,noun,,,,
+but,A1,conjunction,,,,
+buy,A1,verb,,,,
+call,A1,verb,,,,
+can,A1,verb,,,,
+car,A1,noun,,,,
+child,A1,noun,,,,
+city,A1,noun,,,,
+close,A1,verb,,,,
+cold,A1,adjective,,,,
+come,A1,verb,,,,
+country,A1,noun,,,,
+day,A1,noun,,,,
+do,A1,verb,,,,
+door,A1,noun,,,,
+down,A1,adverb,,,,
+drink,A1,verb,,,,
+eat,A1,verb,,,,
+end,A1,noun,,,,
+every,A1,determiner,,,,
+eye,A1,noun,,,,
+family,A1,noun,,,,
+far,A1,adverb,,,,
+father,A1,noun,,,,
+find,A1,verb,,,,
+first,A1,adjective,,,,
+food,A1,noun,,,,
+for,A1,preposition,,,,
+friend,A1,noun,,,,
+from,A1,preposition,,,,
+get,A1,verb,,,,
+girl,A1,noun,,,,
+give,A1,verb,,,,
+go,A1,verb,,,,
+good,A1,adjective,,,,
+great,A1,adjective,,,,
+hand,A1,noun,,,,
+happy,A1,adjective,,,,
+have,A1,verb,,,,
+he,A1,pronoun,,,,
+head,A1,noun,,,,
+hear,A1,verb,,,,
+help,A1,verb,,,,
+here,A1,adverb,,,,
+home,A1,noun,,,,
+house,A1,noun,,,,
+how,A1,adverb,,,,
+if,A1,conjunction,,,,
+in,A1,preposition,,,,
+it,A1,pronoun,,,,
+know,A1,verb,,,,
+last,A1,adjective,,,,
+leave,A1,verb,,,,
+left,A1,adjective,,,,
+life,A1,noun,,,,
+light,A1,noun,,,,
+like,A1,verb,,,,
+little,A1,adjective,,,,
+live,A1,verb,,,,
+long,A1,adjective,,,,
+look,A1,verb,,,,
+love,A1,verb,,,,
+make,A1,verb,,,,
+man,A1,noun,,,,
+many,A1,determiner,,,,
+me,A1,pronoun,,,,
+money,A1,noun,,,,
+month,A1,noun,,,,
+morning,A1,noun,,,,
+mother,A1,noun,,,,
+name,A1,noun,,,,
+new,A1,adjective,,,,
+next,A1,adjective,,,,
+night,A1,noun,,,,
+no,A1,determiner,,,,
+not,A1,adverb,,,,
+now,A1,adverb,,,,
+of,A1,preposition,,,,
+off,A1,adverb,,,,
+old,A1,adjective,,,,
+on,A1,preposition,,,,
+one,A1,number,,,,
+only,A1,adverb,,,,
+open,A1,verb,,,,
+or,A1,conjunction,,,,
+other,A1,adjective,,,,
+out,A1,adverb,,,,
+over,A1,preposition,,,,
+people,A1,noun,,,,
+place,A1,noun,,,,
+play,A1,verb,,,,
+put,A1,verb,,,,
+read,A1,verb,,,,
+right,A1,adjective,,,,
+room,A1,noun,,,,
+run,A1,verb,,,,
+same,A1,adjective,,,,
+say,A1,verb,,,,
+school,A1,noun,,,,
+see,A1,verb,,,,
+she,A1,pronoun,,,,
+short,A1,adjective,,,,
+show,A1,verb,,,,
+sit,A1,verb,,,,
+sleep,A1,verb,,,,
+small,A1,adjective,,,,
+so,A1,adverb,,,,
+some,A1,determiner,,,,
+speak,A1,verb,,,,
+stand,A1,verb,,,,
+start,A1,verb,,,,
+stop,A1,verb,,,,
+take,A1,verb,,,,
+talk,A1,verb,,,,
+tell,A1,verb,,,,
+than,A1,conjunction,,,,
+that,A1,determiner,,,,
+the,A1,determiner,,,,
+then,A1,adverb,,,,
+there,A1,adverb,,,,
+they,A1,pronoun,,,,
+thing,A1,noun,,,,
+think,A1,verb,,,,
+this,A1,determiner,,,,
+time,A1,noun,,,,
+to,A1,preposition,,,,
+today,A1,adverb,,,,
+tree,A1,noun,,,,
+try,A1,verb,,,,
+turn,A1,verb,,,,
+under,A1,preposition,,,,
+up,A1,adverb,,,,
+use,A1,verb,,,,
+very,A1,adverb,,,,
+walk,A1,verb,,,,
+want,A1,verb,,,,
+watch,A1,verb,,,,
+water,A1,noun,,,,
+way,A1,noun,,,,
+we,A1,pronoun,,,,
+week,A1,noun,,,,
+well,A1,adverb,,,,
+what,A1,pronoun,,,,
+when,A1,adverb,,,,
+where,A1,adverb,,,,
+which,A1,pronoun,,,,
+who,A1,pronoun,,,,
+why,A1,adverb,,,,
+window,A1,noun,,,,
+with,A1,preposition,,,,
+woman,A1,noun,,,,
+word,A1,noun,,,,
+work,A1,verb,,,,
+world,A1,noun,,,,
+write,A1,verb,,,,
+year,A1,noun,,,,
+yes,A1,adverb,,,,
+you,A1,pronoun,,,,
+young,A1,adjective,,,,
+able,A2,adjective,,,,
+above,A2,preposition,,,,
+accept,A2,verb,,,,
+across,A2,preposition,,,,
+actually,A2,adverb,,,,
+add,A2,verb,,,,
+afraid,A2,adjective,,,,
+against,A2,preposition,,,,
+age,A2,noun,,,,
+ago,A2,adverb,,,,
+agree,A2,verb,,,,
+air,A2,noun,,,,
+almost,A2,adverb,,,,
+alone,A2,adjective,,,,
+along,A2,preposition,,,,
+already,A2,adverb,,,,
+always,A2,adverb,,,,
+among,A2,preposition,,,,
+another,A2,determiner,,,,
+appear,A2,verb,,,,
+area,A2,noun,,,,
+arm,A2,noun,,,,
+around,A2,preposition,,,,
+arrive,A2,verb,,,,
+believe,A2,verb,,,,
+below,A2,preposition,,,,
+best,A2,adjective,,,,
+better,A2,adjective,,,,
+between,A2,preposition,,,,
+body,A2,noun,,,,
+both,A2,determiner,,,,
+break,A2,verb,,,,
+bring,A2,verb,,,,
+build,A2,verb,,,,
+business,A2,noun,,,,
+carry,A2,verb,,,,
+case,A2,noun,,,,
+catch,A2,verb,,,,
+cause,A2,verb,,,,
+centre,A2,noun,,,,
+certain,A2,adjective,,,,
+chance,A2,noun,,,,
+change,A2,verb,,,,
+choose,A2,verb,,,,
+clear,A2,adjective,,,,
+company,A2,noun,,,,
+complete,A2,verb,,,,
+continue,A2,verb,,,,
+cost,A2,noun,,,,
+course,A2,noun,,,,
+cover,A2,verb,,,,
+create,A2,verb,,,,
+cut,A2,verb,,,,
+dark,A2,adjective,,,,
+dead,A2,adjective,,,,
+deal,A2,verb,,,,
+decide,A2,verb,,,,
+deep,A2,adjective,,,,
+describe,A2,verb,,,,
+develop,A2,verb,,,,
+die,A2,verb,,,,
+difference,A2,noun,,,,
+different,A2,adjective,,,,
+difficult,A2,adjective,,,,
+direct,A2,adjective,,,,
+during,A2,preposition,,,,
+early,A2,adverb,,,,
+earth,A2,noun,,,,
+easy,A2,adjective,,,,
+edge,A2,noun,,,,
+effect,A2,noun,,,,
+either,A2,determiner,,,,
+enough,A2,determiner,,,,
+enter,A2,verb,,,,
+even,A2,adverb,,,,
+ever,A2,adverb,,,,
+example,A2,noun,,,,
+expect,A2,verb,,,,
+experience,A2,noun,,,,
+explain,A2,verb,,,,
+face,A2,noun,,,,
+fact,A2,noun,,,,
+fall,A2,verb,,,,
+fast,A2,adjective,,,,
+feel,A2,verb,,,,
+few,A2,determiner,,,,
+field,A2,noun,,,,
+fill,A2,verb,,,,
+finally,A2,adverb,,,,
+follow,A2,verb,,,,
+force,A2,noun,,,,
+forget,A2,verb,,,,
+form,A2,noun,,,,
+free,A2,adjective,,,,
+full,A2,adjective,,,,
+future,A2,noun,,,,
+game,A2,noun,,,,
+general,A2,adjective,,,,
+government,A2,noun,,,,
+ground,A2,noun,,,,
+group,A2,noun,,,,
+grow,A2,verb,,,,
+guess,A2,verb,,,,
+half,A2,noun,,,,
+hard,A2,adjective,,,,
+heart,A2,noun,,,,
+heavy,A2,adjective,,,,
+high,A2,adjective,,,,
+history,A2,noun,,,,
+hold,A2,verb,,,,
+hope,A2,verb,,,,
+hour,A2,noun,,,,
+however,A2,adverb,,,,
+idea,A2,noun,,,,
+important,A2,adjective,,,,
+include,A2,verb,,,,
+increase,A2,verb,,,,
+inside,A2,preposition,,,,
+instead,A2,adverb,,,,
+interest,A2,noun,,,,
+job,A2,noun,,,,
+keep,A2,verb,,,,
+kind,A2,noun,,,,
+land,A2,noun,,,,
+language,A2,noun,,,,
+large,A2,adjective,,,,
+late,A2,adjective,,,,
+lead,A2,verb,,,,
+learn,A2,verb,,,,
+less,A2,determiner,,,,
+letter,A2,noun,,,,
+level,A2,noun,,,,
+line,A2,noun,,,,
+list,A2,noun,,,,
+lose,A2,verb,,,,
+low,A2,adjective,,,,
+main,A2,adjective,,,,
+mark,A2,noun,,,,
+matter,A2,noun,,,,
+mean,A2,verb,,,,
+meet,A2,verb,,,,
+member,A2,noun,,,,
+mind,A2,noun,,,,
+minute,A2,noun,,,,
+moment,A2,noun,,,,
+more,A2,determiner,,,,
+most,A2,determiner,,,,
+move,A2,verb,,,,
+much,A2,determiner,,,,
+music,A2,noun,,,,
+must,A2,verb,,,,
+near,A2,preposition,,,,
+need,A2,verb,,,,
+never,A2,adverb,,,,
+news,A2,noun,,,,
+nothing,A2,pronoun,,,,
+notice,A2,verb,,,,
+number,A2,noun,,,,
+often,A2,adverb,,,,
+once,A2,adverb,,,,
+order,A2,noun,,,,
+own,A2,adjective,,,,
+page,A2,noun,,,,
+paper,A2,noun,,,,
+part,A2,noun,,,,
+pass,A2,verb,,,,
+past,A2,noun,,,,
+pay,A2,verb,,,,
+perhaps,A2,adverb,,,,
+person,A2,noun,,,,
+picture,A2,noun,,,,
+piece,A2,noun,,,,
+plan,A2,noun,,,,
+point,A2,noun,,,,
+poor,A2,adjective,,,,
+possible,A2,adjective,,,,
+power,A2,noun,,,,
+present,A2,adjective,,,,
+press,A2,verb,,,,
+probably,A2,adverb,,,,
+problem,A2,noun,,,,
+produce,A2,verb,,,,
+provide,A2,verb,,,,
+question,A2,noun,,,,
+quick,A2,adjective,,,,
+quite,A2,adverb,,,,
+rather,A2,adverb,,,,
+reach,A2,verb,,,,
+real,A2,adjective,,,,
+reason,A2,noun,,,,
+receive,A2,verb,,,,
+record,A2,noun,,,,
+remember,A2,verb,,,,
+report,A2,noun,,,,
+rest,A2,noun,,,,
+result,A2,noun,,,,
+return,A2,verb,,,,
+rise,A2,verb,,,,
+road,A2,noun,,,,
+round,A2,adjective,,,,
+rule,A2,noun,,,,
+safe,A2,adjective,,,,
+seem,A2,verb,,,,
+sell,A2,verb,,,,
+send,A2,verb,,,,
+sense,A2,noun,,,,
+serve,A2,verb,,,,
+set,A2,verb,,,,
+several,A2,determiner,,,,
+side,A2,noun,,,,
+sign,A2,noun,,,,
+similar,A2,adjective,,,,
+simple,A2,adjective,,,,
+since,A2,preposition,,,,
+single,A2,adjective,,,,
+sound,A2,noun,,,,
+space,A2,noun,,,,
+special,A2,adjective,,,,
+stay,A2,verb,,,,
+step,A2,noun,,,,
+still,A2,adverb,,,,
+story,A2,noun,,,,
+strong,A2,adjective,,,,
+student,A2,noun,,,,
+study,A2,verb,,,,
+subject,A2,noun,,,,
+such,A2,determiner,,,,
+suggest,A2,verb,,,,
+sure,A2,adjective,,,,
+system,A2,noun,,,,
+table,A2,noun,,,,
+teach,A2,verb,,,,
+team,A2,noun,,,,
+term,A2,noun,,,,
+test,A2,noun,,,,
+themselves,A2,pronoun,,,,
+though,A2,conjunction,,,,
+through,A2,preposition,,,,
+together,A2,adverb,,,,
+too,A2,adverb,,,,
+top,A2,noun,,,,
+toward,A2,preposition,,,,
+town,A2,noun,,,,
+true,A2,adjective,,,,
+understand,A2,verb,,,,
+until,A2,preposition,,,,
+usually,A2,adverb,,,,
+value,A2,noun,,,,
+view,A2,noun,,,,
+visit,A2,verb,,,,
+voice,A2,noun,,,,
+wait,A2,verb,,,,
+wall,A2,noun,,,,
+war,A2,noun,,,,
+whether,A2,conjunction,,,,
+while,A2,conjunction,,,,
+whole,A2,adjective,,,,
+wide,A2,adjective,,,,
+wind,A2,noun,,,,
+wish,A2,verb,,,,
+within,A2,preposition,,,,
+without,A2,preposition,,,,
+wonder,A2,verb,,,,
+achieve,B1,verb,,,,
+active,B1,adjective,,,,
+addition,B1,noun,,,,
+adult,B1,noun,,,,
+advantage,B1,noun,,,,
+advice,B1,noun,,,,
+affect,B1,verb,,,,
+allow,B1,verb,,,,
+amount,B1,noun,,,,
+ancient,B1,adjective,,,,
+apply,B1,verb,,,,
+approach,B1,noun,,,,
+argue,B1,verb,,,,
+argument,B1,noun,,,,
+arrange,B1,verb,,,,
+attack,B1,verb,,,,
+attempt,B1,noun,,,,
+attention,B1,noun,,,,
+attitude,B1,noun,,,,
+available,B1,adjective,,,,
+avoid,B1,verb,,,,
+aware,B1,adjective,,,,
+balance,B1,noun,,,,
+basic,B1,adjective,,,,
+behaviour,B1,noun,,,,
+benefit,B1,noun,,,,
+brief,B1,adjective,,,,
+capital,B1,noun,,,,
+career,B1,noun,,,,
+central,B1,adjective,,,,
+century,B1,noun,,,,
+challenge,B1,noun,,,,
+character,B1,noun,,,,
+claim,B1,verb,,,,
+collect,B1,verb,,,,
+comfortable,B1,adjective,,,,
+common,B1,adjective,,,,
+communicate,B1,verb,,,,
+community,B1,noun,,,,
+compare,B1,verb,,,,
+compete,B1,verb,,,,
+concern,B1,noun,,,,
+condition,B1,noun,,,,
+confidence,B1,noun,,,,
+connect,B1,verb,,,,
+consider,B1,verb,,,,
+contain,B1,verb,,,,
+context,B1,noun,,,,
+control,B1,verb,,,,
+convince,B1,verb,,,,
+culture,B1,noun,,,,
+damage,B1,noun,,,,
+decision,B1,noun,,,,
+declare,B1,verb,,,,
+degree,B1,noun,,,,
+deliver,B1,verb,,,,
+demand,B1,noun,,,,
+depend,B1,verb,,,,
+design,B1,noun,,,,
+despite,B1,preposition,,,,
+detail,B1,noun,,,,
+determine,B1,verb,,,,
+discover,B1,verb,,,,
+discuss,B1,verb,,,,
+distance,B1,noun,,,,
+divide,B1,verb,,,,
+effort,B1,noun,,,,
+element,B1,noun,,,,
+emerge,B1,verb,,,,
+employ,B1,verb,,,,
+encourage,B1,verb,,,,
+energy,B1,noun,,,,
+environment,B1,noun,,,,
+equal,B1,adjective,,,,
+escape,B1,verb,,,,
+establish,B1,verb,,,,
+estimate,B1,verb,,,,
+event,B1,noun,,,,
+evidence,B1,noun,,,,
+exact,B1,adjective,,,,
+exist,B1,verb,,,,
+expert,B1,noun,,,,
+express,B1,verb,,,,
+extra,B1,adjective,,,,
+familiar,B1,adjective,,,,
+figure,B1,noun,,,,
+final,B1,adjective,,,,
+financial,B1,adjective,,,,
+focus,B1,verb,,,,
+former,B1,adjective,,,,
+forward,B1,adverb,,,,
+frequent,B1,adjective,,,,
+further,B1,adverb,,,,
+gather,B1,verb,,,,
+generation,B1,noun,,,,
+goal,B1,noun,,,,
+guard,B1,verb,,,,
+guide,B1,noun,,,,
+handle,B1,verb,,,,
+identify,B1,verb,,,,
+image,B1,noun,,,,
+imagine,B1,verb,,,,
+impact,B1,noun,,,,
+improve,B1,verb,,,,
+individual,B1,adjective,,,,
+industry,B1,noun,,,,
+influence,B1,noun,,,,
+inform,B1,verb,,,,
+injury,B1,noun,,,,
+intend,B1,verb,,,,
+introduce,B1,verb,,,,
+involve,B1,verb,,,,
+issue,B1,noun,,,,
+judge,B1,verb,,,,
+knowledge,B1,noun,,,,
+lack,B1,noun,,,,
+limit,B1,noun,,,,
+link,B1,noun,,,,
+maintain,B1,verb,,,,
+major,B1,adjective,,,,
+manage,B1,verb,,,,
+measure,B1,verb,,,,
+mention,B1,verb,,,,
+method,B1,noun,,,,
+modern,B1,adjective,,,,
+nature,B1,noun,,,,
+obvious,B1,adjective,,,,
+occur,B1,verb,,,,
+offer,B1,verb,,,,
+opinion,B1,noun,,,,
+opportunity,B1,noun,,,,
+oppose,B1,verb,,,,
+option,B1,noun,,,,
+original,B1,adjective,,,,
+particular,B1,adjective,,,,
+pattern,B1,noun,,,,
+perform,B1,verb,,,,
+period,B1,noun,,,,
+permit,B1,verb,,,,
+physical,B1,adjective,,,,
+policy,B1,noun,,,,
+popular,B1,adjective,,,,
+population,B1,noun,,,,
+position,B1,noun,,,,
+practice,B1,noun,,,,
+prefer,B1,verb,,,,
+prepare,B1,verb,,,,
+prevent,B1,verb,,,,
+previous,B1,adjective,,,,
+private,B1,adjective,,,,
+process,B1,noun,,,,
+professional,B1,adjective,,,,
+project,B1,noun,,,,
+prove,B1,verb,,,,
+public,B1,adjective,,,,
+purpose,B1,noun,,,,
+quality,B1,noun,,,,
+range,B1,noun,,,,
+rate,B1,noun,,,,
+recent,B1,adjective,,,,
+recognise,B1,verb,,,,
+reduce,B1,verb,,,,
+refer,B1,verb,,,,
+reflect,B1,verb,,,,
+regard,B1,verb,,,,
+region,B1,noun,,,,
+regular,B1,adjective,,,,
+relate,B1,verb,,,,
+relationship,B1,noun,,,,
+remain,B1,verb,,,,
+remove,B1,verb,,,,
+repeat,B1,verb,,,,
+replace,B1,verb,,,,
+represent,B1,verb,,,,
+require,B1,verb,,,,
+research,B1,noun,,,,
+resource,B1,noun,,,,
+respond,B1,verb,,,,
+responsible,B1,adjective,,,,
+reveal,B1,verb,,,,
+risk,B1,noun,,,,
+role,B1,noun,,,,
+scene,B1,noun,,,,
+science,B1,noun,,,,
+search,B1,verb,,,,
+season,B1,noun,,,,
+section,B1,noun,,,,
+security,B1,noun,,,,
+separate,B1,adjective,,,,
+series,B1,noun,,,,
+serious,B1,adjective,,,,
+share,B1,verb,,,,
+shift,B1,noun,,,,
+significant,B1,adjective,,,,
+situation,B1,noun,,,,
+skill,B1,noun,,,,
+social,B1,adjective,,,,
+society,B1,noun,,,,
+solution,B1,noun,,,,
+source,B1,noun,,,,
+specific,B1,adjective,,,,
+standard,B1,noun,,,,
+state,B1,noun,,,,
+stress,B1,noun,,,,
+structure,B1,noun,,,,
+succeed,B1,verb,,,,
+sudden,B1,adjective,,,,
+supply,B1,noun,,,,
+support,B1,verb,,,,
+suppose,B1,verb,,,,
+survive,B1,verb,,,,
+target,B1,noun,,,,
+technology,B1,noun,,,,
+theory,B1,noun,,,,
+throughout,B1,preposition,,,,
+tiny,B1,adjective,,,,
+tool,B1,noun,,,,
+topic,B1,noun,,,,
+total,B1,adjective,,,,
+track,B1,noun,,,,
+trade,B1,noun,,,,
+tradition,B1,noun,,,,
+traffic,B1,noun,,,,
+treat,B1,verb,,,,
+trust,B1,verb,,,,
+truth,B1,noun,,,,
+typical,B1,adjective,,,,
+unit,B1,noun,,,,
+unless,B1,conjunction,,,,
+various,B1,adjective,,,,
+version,B1,noun,,,,
+volume,B1,noun,,,,
+weight,B1,noun,,,,
+whereas,B1,conjunction,,,,
+abandon,B2,verb,leave,to leave someone or something behind for good,They had to abandon the car in the snow.,desert|forsake
+absorb,B2,verb,take in,to take in a liquid or information gradually,Dry soil absorbs water quickly.,soak up|take in
+abstract,B2,adjective,general,based on general ideas rather than physical things,Freedom is an abstract idea.,theoretical|conceptual
+accompany,B2,verb,go with,to go somewhere with someone,She accompanied her father to the station.,escort|go with
+accumulate,B2,verb,build up,to gradually collect or increase,Dust accumulated on the shelves.,gather|build up
+accurate,B2,adjective,correct,exactly right and free from mistakes,His account of the night was accurate.,precise|exact
+acknowledge,B2,verb,admit,to accept or admit that something is true,He acknowledged that he had been wrong.,admit|concede
+adapt,B2,verb,adjust,to change something so it suits a new situation,Animals adapt to the cold.,adjust|modify
+adequate,B2,adjective,enough,good enough for a particular purpose,The lighting was barely adequate.,sufficient|acceptable
+adjacent,B2,adjective,next to,lying next to something,They lived in adjacent houses.,neighbouring|next to
+adopt,B2,verb,take up,to start using a method or attitude,The school adopted a new policy.,take up|embrace
+advocate,B2,verb,support,to publicly support an idea or course of action,She advocates smaller classes.,support|champion
+aesthetic,B2,adjective,artistic,concerned with beauty or the appreciation of beauty,The building has real aesthetic value.,artistic|visual
+alter,B2,verb,change,to change something slightly,He altered the design.,change|modify
+ambiguous,B2,adjective,unclear,having more than one possible meaning,Her reply was deliberately ambiguous.,unclear|vague
+ample,B2,adjective,plenty of,more than enough,There was ample time to finish.,plentiful|abundant
+anticipate,B2,verb,expect,to expect something to happen and prepare for it,We anticipate a busy autumn.,expect|foresee
+apparent,B2,adjective,clear,easy to see or understand,It became apparent that he was lying.,clear|evident
+appreciate,B2,verb,value,to recognise the value of something,She appreciates good design.,value|admire
+appropriate,B2,adjective,suitable,right for a particular situation,That was not an appropriate remark.,suitable|fitting
+approximate,B2,adjective,rough,close to but not exactly right,Give me an approximate figure.,rough|estimated
+arbitrary,B2,adjective,random,based on chance or personal choice rather than reason,The deadline felt arbitrary.,random|capricious
+articulate,B2,verb,express,to express an idea clearly in words,She articulated her doubts.,express|voice
+assemble,B2,verb,gather,to bring people or parts together,The crowd assembled outside.,gather|collect
+assert,B2,verb,state,to state something firmly,He asserted his innocence.,state|declare
+assess,B2,verb,judge,to judge the quality or amount of something,The damage has yet to be assessed.,evaluate|judge
+assume,B2,verb,suppose,to accept something as true without proof,I assumed you knew.,suppose|presume
+attain,B2,verb,reach,to succeed in reaching something,She attained the rank of captain.,achieve|reach
+attribute,B2,verb,credit,to say that something was caused by someone or something,He attributed the delay to the weather.,credit|ascribe
+authentic,B2,adjective,genuine,real rather than copied or false,An authentic medieval door.,genuine|real
+autonomy,B2,noun,independence,the freedom to govern or decide for yourself,The region was granted autonomy.,independence|self-rule
+bias,B2,noun,unfairness,an unfair preference for or against something,The study corrected for bias.,prejudice|slant
+capacity,B2,noun,ability,the ability to do something or hold something,The hall has a capacity of 400.,ability|volume
+cease,B2,verb,stop,to stop happening,The rain ceased at dawn.,stop|halt
+coherent,B2,adjective,clear,logically ordered and easy to follow,He gave a coherent account.,logical|consistent
+coincide,B2,verb,happen together,to happen at the same time,Our visits coincided.,overlap|concur
+commence,B2,verb,begin,to begin,Work commences on Monday.,begin|start
+compel,B2,verb,force,to force someone to do something,Hunger compelled them to move on.,force|oblige
+compensate,B2,verb,make up for,to make up for something lost or damaged,Nothing could compensate for the delay.,offset|make up for
+competent,B2,adjective,able,having enough skill to do something well,A competent but uninspired teacher.,capable|able
+comply,B2,verb,obey,to act according to a rule or request,All builders must comply with the code.,obey|conform
+comprehensive,B2,adjective,complete,including everything necessary,A comprehensive account of the war.,thorough|complete
+comprise,B2,verb,consist of,to consist of or be made up of,The estate comprises four farms.,consist of|contain
+conceal,B2,verb,hide,to hide something,He concealed the letter.,hide|cover up
+conceive,B2,verb,imagine,to imagine or form an idea,She could not conceive of leaving.,imagine|envisage
+confer,B2,verb,discuss,to discuss something with others,The judges conferred briefly.,consult|discuss
+confine,B2,verb,limit,to keep within limits,Please confine your remarks to the topic.,restrict|limit
+conform,B2,verb,fit in,to behave according to accepted rules,He refused to conform.,comply|fit in
+consent,B2,noun,agreement,permission or agreement,They married without her consent.,permission|agreement
+consequence,B2,noun,result,a result of an action,He accepted the consequences.,result|outcome
+considerable,B2,adjective,large,large in size or amount,A considerable sum of money.,substantial|significant
+consistent,B2,adjective,steady,always behaving in the same way,Her work is consistent.,steady|uniform
+constitute,B2,verb,make up,to be the parts that form something,Women constitute half the workforce.,make up|form
+constrain,B2,verb,limit,to limit or restrict,Budgets constrain what we can do.,restrict|limit
+contemporary,B2,adjective,modern,belonging to the present time,Contemporary architecture.,modern|current
+contradict,B2,verb,disagree with,to say the opposite of what someone said,The evidence contradicts his story.,oppose|refute
+controversial,B2,adjective,disputed,causing strong public disagreement,A controversial decision.,disputed|divisive
+convey,B2,verb,express,to communicate a feeling or idea,Words cannot convey how I felt.,express|communicate
+crucial,B2,adjective,very important,extremely important,A crucial moment in the trial.,vital|critical
+cumulative,B2,adjective,building up,increasing steadily as things are added,The cumulative effect of small errors.,collective|growing
+deduce,B2,verb,work out,to reach an answer by reasoning,From this we can deduce the cause.,infer|conclude
+deem,B2,verb,consider,to consider something to be a certain way,The plan was deemed unsafe.,consider|judge
+deficit,B2,noun,shortfall,the amount by which something is too small,A budget deficit.,shortfall|gap
+denote,B2,verb,mean,to be a sign of something,A red light denotes danger.,indicate|signify
+deprive,B2,verb,take from,to prevent someone from having something,The illness deprived him of sleep.,strip|deny
+derive,B2,verb,come from,to get or come from a source,The word derives from Latin.,obtain|originate
+deteriorate,B2,verb,get worse,to become worse,Her health deteriorated quickly.,worsen|decline
+devise,B2,verb,invent,to plan or invent something,They devised a new system.,invent|design
+diminish,B2,verb,lessen,to become or make smaller,The pain gradually diminished.,decrease|lessen
+discrepancy,B2,noun,difference,a difference between things that should match,A discrepancy in the accounts.,inconsistency|mismatch
+displace,B2,verb,move,to force something out of its place,The war displaced thousands.,dislodge|uproot
+dispute,B2,noun,argument,a serious disagreement,A dispute over the boundary.,argument|quarrel
+distinct,B2,adjective,clearly different,clearly different or separate,Two distinct species.,separate|different
+distort,B2,verb,twist,to change something so it is no longer accurate,The report distorted the facts.,twist|misrepresent
+diverse,B2,adjective,varied,very different from one another,A diverse group of people.,varied|assorted
+dominate,B2,verb,control,to control or be most important,One firm dominates the market.,control|rule
+elaborate,B2,adjective,detailed,with many carefully arranged parts,An elaborate ceremony.,detailed|intricate
+eliminate,B2,verb,remove,to remove completely,We eliminated the obvious suspects.,remove|eradicate
+embrace,B2,verb,accept,to accept an idea eagerly,She embraced the new method.,accept|adopt
+emphasise,B2,verb,stress,to give special importance to something,He emphasised the risk.,stress|highlight
+empirical,B2,adjective,observed,based on observation rather than theory,Empirical evidence.,observed|experimental
+endure,B2,verb,bear,to suffer something patiently,They endured a hard winter.,bear|withstand
+enhance,B2,verb,improve,to improve the quality of something,Lighting enhances the room.,improve|boost
+entail,B2,verb,involve,to make something necessary,The job entails travel.,involve|require
+equivalent,B2,adjective,equal,equal in value or meaning,A sum equivalent to a year's rent.,equal|comparable
+erode,B2,verb,wear away,to wear away gradually,The cliff is eroding.,wear away|undermine
+essential,B2,adjective,necessary,absolutely necessary,Water is essential to life.,vital|necessary
+evident,B2,adjective,clear,easy to see or understand,Her relief was evident.,clear|obvious
+evoke,B2,verb,bring to mind,to bring a memory or feeling to mind,The smell evoked his childhood.,recall|conjure
+exceed,B2,verb,go beyond,to be greater than a limit,Costs exceeded the estimate.,surpass|outstrip
+exclude,B2,verb,leave out,to deliberately leave out,They excluded him from the meeting.,omit|bar
+exert,B2,verb,use,to use influence or effort,He exerted considerable pressure.,apply|wield
+exhibit,B2,verb,show,to show a quality or feeling,The patient exhibited no symptoms.,display|show
+explicit,B2,adjective,clear,stated clearly and directly,Explicit instructions.,clear|direct
+exploit,B2,verb,use,"to use something fully, or unfairly",They exploited the loophole.,use|abuse
+extract,B2,verb,take out,to remove or take out,They extracted the oil.,remove|draw out
+facilitate,B2,verb,help,to make something easier,The grant facilitated the research.,ease|assist
+fluctuate,B2,verb,vary,to change often and irregularly,Prices fluctuate daily.,vary|waver
+fundamental,B2,adjective,basic,forming a necessary base,A fundamental difference.,basic|essential
+generate,B2,verb,produce,to produce or create,The scheme generated income.,produce|create
+hierarchy,B2,noun,ranking,a system in which people are ranked above one another,The company hierarchy.,ranking|pecking order
+hypothesis,B2,noun,theory,an idea suggested as an explanation,The hypothesis was tested.,theory|proposition
+illustrate,B2,verb,show,to make something clear with examples,The case illustrates the danger.,demonstrate|show
+impose,B2,verb,force,to force a rule or burden on someone,They imposed a curfew.,inflict|force
+inclined,B2,adjective,likely,likely to do or think something,I am inclined to agree.,disposed|likely
+incorporate,B2,verb,include,to include something as part of a whole,The design incorporates a courtyard.,include|integrate
+indicate,B2,verb,show,to show or point out,The figures indicate a rise.,show|suggest
+inevitable,B2,adjective,unavoidable,certain to happen,A clash was inevitable.,unavoidable|certain
+infer,B2,verb,work out,to work something out from evidence,We can infer his motive.,deduce|conclude
+inherent,B2,adjective,built-in,existing as a natural part of something,The inherent risk of climbing.,intrinsic|built-in
+initiate,B2,verb,start,to cause something to begin,They initiated a review.,begin|launch
+innovation,B2,noun,new idea,a new method or idea,A period of rapid innovation.,invention|novelty
+integral,B2,adjective,essential,necessary to make something complete,Trust is integral to the plan.,essential|intrinsic
+integrate,B2,verb,combine,to combine things into a whole,The parts integrate smoothly.,combine|merge
+interpret,B2,verb,explain,to explain the meaning of something,How do you interpret this line?,explain|construe
+intervene,B2,verb,step in,to become involved in order to change something,The teacher intervened.,step in|interfere
+intrinsic,B2,adjective,natural,belonging naturally to something,The intrinsic value of the land.,inherent|innate
+justify,B2,verb,defend,to give a good reason for something,Nothing justifies that tone.,defend|warrant
+legitimate,B2,adjective,lawful,allowed by law or reasonable,A legitimate concern.,lawful|valid
+manipulate,B2,verb,control,to control someone or something skilfully or unfairly,He manipulated the figures.,control|rig
+margin,B2,noun,edge,the edge of something or a spare amount,A narrow margin of error.,edge|allowance
+mediate,B2,verb,settle,to help two sides reach agreement,The union mediated the dispute.,arbitrate|reconcile
+minimal,B2,adjective,very small,as small as possible,Minimal damage.,slight|negligible
+mutual,B2,adjective,shared,felt or done by two people equally,Mutual respect.,shared|reciprocal
+negligible,B2,adjective,tiny,so small as not to matter,A negligible difference.,insignificant|trivial
+notion,B2,noun,idea,an idea or belief,The notion that money buys happiness.,idea|concept
+nonetheless,B2,adverb,even so,in spite of that,It rained; nonetheless we walked.,however|even so
+objective,B2,adjective,unbiased,not influenced by personal feeling,An objective account.,impartial|neutral
+obscure,B2,adjective,unclear,not well known or hard to understand,An obscure poet.,unclear|little-known
+occupy,B2,verb,fill,to fill a space or time,The desk occupies the corner.,fill|inhabit
+offset,B2,verb,balance,to balance one effect against another,Savings offset the cost.,balance|counteract
+ongoing,B2,adjective,continuing,still happening,An ongoing investigation.,continuing|current
+outcome,B2,noun,result,the final result,The outcome was never in doubt.,result|upshot
+overlap,B2,verb,share,to cover part of the same area,Our duties overlap.,coincide|intersect
+paradox,B2,noun,contradiction,a statement that seems to contradict itself,It is a paradox that we work to rest.,contradiction|puzzle
+perceive,B2,verb,see,to notice or understand something,He perceived a change in her tone.,notice|discern
+persist,B2,verb,continue,to continue in spite of difficulty,The rumour persisted.,continue|endure
+phenomenon,B2,noun,event,something observed to happen,A natural phenomenon.,occurrence|event
+plausible,B2,adjective,believable,seeming reasonable or probable,A plausible excuse.,believable|credible
+precede,B2,verb,come before,to come before something,A storm preceded the calm.,antedate|come before
+predominant,B2,adjective,main,most common or most powerful,The predominant colour is grey.,main|prevailing
+preliminary,B2,adjective,first,coming before the main part,Preliminary results.,initial|introductory
+presume,B2,verb,assume,to suppose something is true,I presume you have eaten.,assume|suppose
+prevail,B2,verb,win,to be the strongest or most common,Good sense prevailed.,triumph|predominate
+prior,B2,adjective,earlier,existing before something else,No prior experience needed.,earlier|previous
+prominent,B2,adjective,well known,important or easily noticed,A prominent local family.,notable|conspicuous
+prompt,B2,verb,cause,to cause someone to do something,The letter prompted a reply.,provoke|spur
+proportion,B2,noun,share,a part in relation to the whole,A large proportion of readers.,share|ratio
+pursue,B2,verb,follow,to follow or try to achieve something,She pursued a career in law.,chase|seek
+radical,B2,adjective,extreme,very new and different,A radical change of plan.,extreme|drastic
+reinforce,B2,verb,strengthen,to make something stronger,The result reinforced his view.,strengthen|bolster
+reluctant,B2,adjective,unwilling,not wanting to do something,He was reluctant to speak.,unwilling|hesitant
+render,B2,verb,make,to cause something to be in a certain state,The blow rendered him unconscious.,make|leave
+resemble,B2,verb,look like,to look or be like something,She resembles her mother.,look like|mirror
+reside,B2,verb,live,to live in a place,They reside abroad.,live|dwell
+resolve,B2,verb,settle,to find a solution to a problem,They resolved the dispute.,settle|solve
+restrict,B2,verb,limit,to keep within limits,Access is restricted.,limit|curb
+retain,B2,verb,keep,to continue to have something,The house retains its original doors.,keep|hold
+reverse,B2,verb,undo,to change to the opposite,The court reversed the ruling.,overturn|undo
+rigid,B2,adjective,stiff,stiff or unwilling to change,A rigid set of rules.,inflexible|stiff
+scope,B2,noun,range,the range of a subject or activity,The scope of the study.,range|extent
+seek,B2,verb,look for,to try to find or obtain,They sought shelter.,look for|pursue
+sequence,B2,noun,order,a set of things in a particular order,The sequence of events.,order|succession
+simultaneous,B2,adjective,at once,happening at the same time,Simultaneous translation.,concurrent|synchronous
+solely,B2,adverb,only,only and not involving anything else,Judged solely on merit.,only|exclusively
+sophisticated,B2,adjective,advanced,complicated and advanced,A sophisticated instrument.,advanced|refined
+speculate,B2,verb,guess,to form an opinion without firm evidence,We can only speculate.,guess|conjecture
+stability,B2,noun,steadiness,the state of being steady,Political stability.,steadiness|balance
+subsequent,B2,adjective,later,coming after something,Subsequent events proved him right.,later|following
+substantial,B2,adjective,large,large in amount or importance,A substantial improvement.,considerable|sizeable
+subtle,B2,adjective,slight,so slight as to be hard to notice,A subtle difference in tone.,slight|delicate
+sufficient,B2,adjective,enough,as much as is needed,Sufficient evidence.,enough|adequate
+sustain,B2,verb,keep up,to keep something going over time,The pace could not be sustained.,maintain|prolong
+tension,B2,noun,strain,mental or physical strain,The tension in the room rose.,strain|stress
+terminate,B2,verb,end,to bring to an end,The contract was terminated.,end|conclude
+thereby,B2,adverb,so,as a result of that,"He resigned, thereby ending the crisis.",thus|so
+transform,B2,verb,change,to change completely,The city has been transformed.,change|convert
+transition,B2,noun,change,the process of changing from one state to another,A smooth transition.,changeover|shift
+undergo,B2,verb,go through,to experience something difficult,She underwent surgery.,experience|endure
+underlying,B2,adjective,basic,forming the hidden basis of something,The underlying cause.,basic|fundamental
+undertake,B2,verb,take on,to agree to do something,They undertook the repairs.,take on|assume
+uniform,B2,adjective,the same,the same in all cases,A uniform rate of pay.,consistent|even
+utilise,B2,verb,use,to make practical use of something,We utilise every scrap.,use|employ
+valid,B2,adjective,sound,based on good reasoning,A valid objection.,sound|legitimate
+vary,B2,verb,differ,to be different or change,Prices vary by region.,differ|fluctuate
+via,B2,preposition,through,travelling through a place or means,We flew via Rome.,through|by way of
+viable,B2,adjective,workable,able to work successfully,A viable alternative.,workable|feasible
+virtually,B2,adverb,almost,almost but not completely,Virtually everyone agreed.,almost|nearly
+widespread,B2,adjective,common,existing over a large area,Widespread flooding.,extensive|prevalent
+yield,B2,verb,give,to produce or give way,The field yields a good crop.,produce|surrender
+abstain,C1,verb,hold back,to choose not to do something,Two members abstained.,refrain|forgo
+acute,C1,adjective,sharp,severe or very perceptive,An acute shortage of nurses.,severe|keen
+adhere,C1,verb,stick to,to stick to a rule or surface,Please adhere to the timetable.,comply|stick
+adverse,C1,adjective,unfavourable,harmful or unfavourable,Adverse weather conditions.,unfavourable|hostile
+albeit,C1,conjunction,although,although,"A useful, albeit costly, method.",although|though
+alleviate,C1,verb,ease,to make pain or a problem less severe,Aspirin alleviates the pain.,ease|relieve
+allude,C1,verb,hint at,to refer to something indirectly,She alluded to his past.,hint|refer
+ambivalent,C1,adjective,unsure,having mixed feelings about something,He was ambivalent about leaving.,conflicted|uncertain
+anomaly,C1,noun,oddity,something that differs from what is normal,A statistical anomaly.,oddity|irregularity
+apprehension,C1,noun,worry,anxiety about the future,She waited with apprehension.,unease|dread
+arduous,C1,adjective,hard,needing a lot of hard effort,An arduous climb.,strenuous|gruelling
+ascertain,C1,verb,find out,to find something out for certain,We could not ascertain the cause.,determine|establish
+assiduous,C1,adjective,hard-working,showing great care and effort,An assiduous student.,diligent|thorough
+augment,C1,verb,increase,to make something greater,He augmented his income by teaching.,increase|supplement
+austere,C1,adjective,plain,severely simple and without comfort,An austere little room.,stark|spartan
+banister,C1,noun,handrail,the handrail on the side of a staircase,She ran her hand along the banister.,handrail|balustrade
+benign,C1,adjective,harmless,gentle and not harmful,A benign influence.,harmless|kindly
+candid,C1,adjective,honest,honest and direct in a way that may seem blunt,A candid assessment.,frank|forthright
+coerce,C1,verb,force,to force someone to do something by threat,They were coerced into signing.,force|pressure
+cogent,C1,adjective,convincing,clear and convincing,A cogent argument.,persuasive|compelling
+commensurate,C1,adjective,matching,in proportion to something,Pay commensurate with experience.,proportionate|matching
+compelling,C1,adjective,convincing,so strong as to demand attention,A compelling case for reform.,persuasive|gripping
+complacent,C1,adjective,smug,too satisfied with yourself to notice danger,We must not grow complacent.,smug|self-satisfied
+conducive,C1,adjective,helpful,making an outcome more likely,Not conducive to sleep.,favourable|helpful
+conjecture,C1,noun,guess,an opinion formed without proof,Pure conjecture.,speculation|guesswork
+consensus,C1,noun,agreement,general agreement among a group,A consensus emerged.,agreement|accord
+contentious,C1,adjective,disputed,likely to cause argument,A contentious proposal.,controversial|divisive
+converge,C1,verb,come together,to move towards the same point,The paths converge here.,meet|merge
+copious,C1,adjective,plentiful,in large amounts,Copious notes.,abundant|profuse
+corroborate,C1,verb,confirm,to support a statement with evidence,Two witnesses corroborated her account.,confirm|verify
+culminate,C1,verb,end in,to reach a final result,The tour culminated in a concert.,climax|conclude
+cursory,C1,adjective,quick,done quickly and without attention to detail,A cursory glance.,hasty|superficial
+daunting,C1,adjective,intimidating,seeming difficult and discouraging,A daunting task.,intimidating|formidable
+decipher,C1,verb,work out,to succeed in reading or understanding something unclear,I cannot decipher his writing.,decode|make out
+delineate,C1,verb,outline,to describe or mark the edges of something precisely,The report delineates three options.,outline|define
+deplete,C1,verb,use up,to reduce a supply greatly,Stocks were badly depleted.,exhaust|drain
+depict,C1,verb,show,to represent something in words or pictures,The novel depicts village life.,portray|represent
+discern,C1,verb,make out,to recognise something with difficulty,I could just discern a figure.,perceive|detect
+discrete,C1,adjective,separate,separate and distinct,Three discrete stages.,separate|distinct
+disparate,C1,adjective,different,very different in kind,Disparate sources of evidence.,dissimilar|varied
+disseminate,C1,verb,spread,to spread information widely,The findings were disseminated online.,circulate|broadcast
+divergent,C1,adjective,differing,developing in different directions,Divergent opinions.,differing|conflicting
+elicit,C1,verb,draw out,to get a response from someone,The question elicited laughter.,draw out|evoke
+elusive,C1,adjective,hard to catch,difficult to find or achieve,An elusive answer.,evasive|fleeting
+embellish,C1,verb,decorate,to make something more attractive or add invented detail,He embellished the story.,adorn|exaggerate
+eminent,C1,adjective,distinguished,famous and respected in a field,An eminent historian.,distinguished|renowned
+enigmatic,C1,adjective,mysterious,difficult to understand,An enigmatic smile.,mysterious|cryptic
+ephemeral,C1,adjective,short-lived,lasting for a very short time,Ephemeral fame.,fleeting|transient
+equivocal,C1,adjective,unclear,deliberately unclear or open to interpretation,An equivocal answer.,ambiguous|evasive
+exacerbate,C1,verb,worsen,to make a problem worse,The delay exacerbated the shortage.,aggravate|worsen
+exemplify,C1,verb,show,to be a typical example of something,This case exemplifies the problem.,illustrate|typify
+exhaustive,C1,adjective,thorough,including every possible detail,An exhaustive search.,thorough|comprehensive
+expedite,C1,verb,speed up,to make a process happen faster,We can expedite the order.,hasten|accelerate
+extraneous,C1,adjective,irrelevant,not relevant to the matter,Extraneous detail.,irrelevant|superfluous
+facile,C1,adjective,shallow,too simple and showing little thought,A facile explanation.,glib|simplistic
+feasible,C1,adjective,possible,able to be done,A feasible plan.,practicable|workable
+fortuitous,C1,adjective,lucky,"happening by chance, often luckily",A fortuitous meeting.,accidental|lucky
+futile,C1,adjective,pointless,producing no useful result,A futile gesture.,pointless|vain
+germane,C1,adjective,relevant,relevant to the subject,That is not germane to the case.,relevant|pertinent
+hitherto,C1,adverb,until now,until the present time,A hitherto unknown letter.,previously|so far
+impede,C1,verb,slow,to slow down or block progress,Fog impeded the search.,hinder|obstruct
+implicit,C1,adjective,implied,suggested without being stated,An implicit criticism.,implied|tacit
+inadvertent,C1,adjective,accidental,not deliberate,An inadvertent error.,unintentional|accidental
+incessant,C1,adjective,constant,continuing without pause,Incessant rain.,unceasing|relentless
+incongruous,C1,adjective,out of place,seeming out of place,An incongruous modern porch.,inappropriate|jarring
+indispensable,C1,adjective,essential,absolutely necessary,An indispensable guide.,essential|vital
+inept,C1,adjective,clumsy,showing no skill,An inept attempt at repair.,incompetent|clumsy
+innate,C1,adjective,inborn,present from birth,An innate sense of rhythm.,inborn|natural
+innocuous,C1,adjective,harmless,not harmful or offensive,An innocuous remark.,harmless|inoffensive
+insidious,C1,adjective,creeping,"harmful in a gradual, hidden way",An insidious decline.,stealthy|subtle
+intricate,C1,adjective,complicated,having many small connected parts,Intricate carving.,complex|elaborate
+juxtapose,C1,verb,place side by side,to place things close together for contrast,The film juxtaposes wealth and poverty.,contrast|pair
+laconic,C1,adjective,brief,using very few words,A laconic reply.,terse|concise
+lucid,C1,adjective,clear,clearly expressed or thinking clearly,A lucid explanation.,clear|coherent
+meticulous,C1,adjective,careful,showing great attention to detail,Meticulous records.,thorough|painstaking
+mitigate,C1,verb,soften,to make something less severe,Steps to mitigate the damage.,alleviate|lessen
+mundane,C1,adjective,ordinary,dull and ordinary,Mundane chores.,routine|banal
+nuance,C1,noun,shade of meaning,a very slight difference in meaning,The nuances of the translation.,subtlety|shade
+obsolete,C1,adjective,out of date,no longer in use,Obsolete machinery.,outdated|defunct
+ostensibly,C1,adverb,apparently,according to what is claimed but perhaps not truly,"Ostensibly a holiday, in fact a working trip.",apparently|supposedly
+paramount,C1,adjective,most important,more important than anything else,Safety is paramount.,supreme|foremost
+pertinent,C1,adjective,relevant,directly relevant to the matter,A pertinent question.,relevant|apposite
+pervasive,C1,adjective,widespread,spreading through every part,A pervasive smell of damp.,ubiquitous|widespread
+precarious,C1,adjective,unsafe,not securely held and likely to fail,A precarious living.,unstable|shaky
+preclude,C1,verb,prevent,to make something impossible,The rules preclude appeal.,prevent|rule out
+predicament,C1,noun,difficulty,a difficult situation,An awkward predicament.,plight|dilemma
+prerequisite,C1,noun,requirement,something required before something else,Trust is a prerequisite.,requirement|precondition
+proliferate,C1,verb,multiply,to increase rapidly in number,Rumours proliferated.,multiply|mushroom
+prosaic,C1,adjective,dull,ordinary and lacking imagination,A prosaic account.,dull|pedestrian
+quandary,C1,noun,dilemma,a state of uncertainty over what to do,A moral quandary.,dilemma|predicament
+reciprocal,C1,adjective,mutual,given and received in return,A reciprocal arrangement.,mutual|shared
+redundant,C1,adjective,unnecessary,no longer needed or repeated needlessly,A redundant clause.,superfluous|unnecessary
+refute,C1,verb,disprove,to prove a statement wrong,He refuted the charge.,disprove|rebut
+relinquish,C1,verb,give up,to give something up,She relinquished the title.,surrender|cede
+reticent,C1,adjective,quiet,unwilling to speak freely about something,He was reticent about his early life.,reserved|guarded
+scrutiny,C1,noun,close study,careful and critical examination,The plan came under scrutiny.,examination|inspection
+sporadic,C1,adjective,occasional,happening at irregular intervals,Sporadic gunfire.,intermittent|occasional
+stringent,C1,adjective,strict,strict and demanding,Stringent controls.,rigorous|severe
+succinct,C1,adjective,brief,expressed clearly in few words,A succinct summary.,concise|terse
+superfluous,C1,adjective,unnecessary,more than is needed,Superfluous detail.,redundant|excess
+tacit,C1,adjective,unspoken,understood without being said,Tacit approval.,implicit|unspoken
+tangible,C1,adjective,real,able to be touched or clearly real,Tangible benefits.,concrete|palpable
+tenuous,C1,adjective,weak,very weak or slight,A tenuous connection.,flimsy|slight
+ubiquitous,C1,adjective,everywhere,found everywhere,Ubiquitous advertising.,omnipresent|pervasive
+vindicate,C1,verb,clear,to prove someone right,The result vindicated her.,justify|exonerate
+abstruse,C2,adjective,hard to understand,difficult to understand,An abstruse argument.,obscure|arcane
+acrimonious,C2,adjective,bitter,angry and bitter,An acrimonious dispute.,bitter|rancorous
+alacrity,C2,noun,eagerness,brisk and cheerful readiness,He accepted with alacrity.,eagerness|willingness
+anathema,C2,noun,something hated,something greatly disliked,Waste was anathema to her.,abomination|taboo
+antithesis,C2,noun,opposite,the direct opposite,The antithesis of good taste.,opposite|contrary
+approbation,C2,noun,approval,approval or praise,A murmur of approbation.,approval|praise
+assuage,C2,verb,ease,to make an unpleasant feeling less intense,Nothing assuaged her guilt.,soothe|allay
+banal,C2,adjective,unoriginal,boring because it is so ordinary,A banal observation.,trite|hackneyed
+cacophony,C2,noun,harsh noise,a harsh mixture of sounds,A cacophony of horns.,din|discord
+capricious,C2,adjective,unpredictable,changing mood or behaviour suddenly,A capricious employer.,fickle|volatile
+circumspect,C2,adjective,cautious,careful to consider all consequences,A circumspect reply.,wary|prudent
+craven,C2,adjective,cowardly,shamefully lacking in courage,A craven retreat.,cowardly|spineless
+denigrate,C2,verb,belittle,to criticise unfairly,He denigrated her work.,disparage|belittle
+desultory,C2,adjective,aimless,lacking a plan or purpose,Desultory conversation.,aimless|random
+diffident,C2,adjective,shy,modest and lacking confidence,A diffident young man.,shy|timid
+disparage,C2,verb,belittle,to speak of someone as unimportant,He disparaged their efforts.,belittle|denigrate
+ebullient,C2,adjective,lively,cheerful and full of energy,An ebullient host.,exuberant|buoyant
+efficacy,C2,noun,effectiveness,the ability to produce a desired result,The efficacy of the drug.,effectiveness|potency
+egregious,C2,adjective,shocking,outstandingly bad,An egregious error.,flagrant|blatant
+enervate,C2,verb,tire,to drain of energy,The heat enervated them.,weaken|exhaust
+ennui,C2,noun,boredom,a weary dissatisfaction with life,A summer of ennui.,boredom|listlessness
+esoteric,C2,adjective,specialised,understood by only a few,Esoteric knowledge.,arcane|obscure
+extol,C2,verb,praise,to praise highly,He extolled her patience.,praise|laud
+fastidious,C2,adjective,fussy,very attentive to detail and hard to please,A fastidious editor.,meticulous|finicky
+garrulous,C2,adjective,talkative,excessively talkative,A garrulous neighbour.,talkative|loquacious
+harangue,C2,noun,lecture,"a long, angry speech",A harangue about waste.,tirade|rant
+iconoclast,C2,noun,rebel,someone who attacks cherished beliefs,An iconoclast by temperament.,rebel|dissenter
+inexorable,C2,adjective,unstoppable,impossible to stop or change,The inexorable passage of time.,relentless|inevitable
+ineffable,C2,adjective,indescribable,too great to be described in words,Ineffable sadness.,indescribable|inexpressible
+inscrutable,C2,adjective,unreadable,impossible to interpret,An inscrutable expression.,enigmatic|impenetrable
+intransigent,C2,adjective,stubborn,refusing to change one's views,An intransigent negotiator.,uncompromising|obdurate
+inveterate,C2,adjective,habitual,having a long-established habit,An inveterate gambler.,habitual|chronic
+laudable,C2,adjective,praiseworthy,deserving praise,A laudable aim.,commendable|admirable
+magnanimous,C2,adjective,generous,generous towards a rival,A magnanimous concession.,generous|forgiving
+mendacious,C2,adjective,untruthful,not telling the truth,A mendacious account.,dishonest|deceitful
+obdurate,C2,adjective,stubborn,stubbornly refusing to change,He remained obdurate.,unyielding|inflexible
+obfuscate,C2,verb,confuse,to make something deliberately unclear,The report obfuscates the cost.,confuse|cloud
+obsequious,C2,adjective,fawning,excessively eager to please,An obsequious waiter.,servile|fawning
+ossify,C2,verb,harden,to become rigid and unable to change,The rules had ossified.,harden|fossilise
+palpable,C2,adjective,obvious,so intense as to seem touchable,A palpable silence.,tangible|evident
+panacea,C2,noun,cure-all,a solution for all problems,Technology is no panacea.,cure-all|remedy
+paucity,C2,noun,shortage,a very small amount of something,A paucity of evidence.,scarcity|dearth
+pellucid,C2,adjective,very clear,transparently clear,Pellucid prose.,lucid|limpid
+penchant,C2,noun,liking,a strong liking for something,A penchant for old maps.,fondness|taste
+perfunctory,C2,adjective,half-hearted,done without care or interest,A perfunctory apology.,cursory|token
+pernicious,C2,adjective,harmful,having a gradual harmful effect,A pernicious rumour.,damaging|insidious
+platitude,C2,noun,cliché,a dull remark used as if it were meaningful,A speech full of platitudes.,cliché|truism
+polemic,C2,noun,attack,a strong verbal attack on an opinion,A polemic against reform.,tirade|diatribe
+pragmatic,C2,adjective,practical,dealing with things practically,A pragmatic compromise.,practical|realistic
+prescient,C2,adjective,far-seeing,knowing about things before they happen,A prescient warning.,prophetic|farsighted
+prevaricate,C2,verb,evade,to avoid telling the truth directly,He prevaricated when asked.,equivocate|stall
+pusillanimous,C2,adjective,cowardly,showing a lack of courage,A pusillanimous silence.,timid|craven
+quixotic,C2,adjective,idealistic,unrealistically idealistic,A quixotic scheme.,idealistic|impractical
+recalcitrant,C2,adjective,uncooperative,stubbornly resisting authority,A recalcitrant witness.,defiant|unruly
+recondite,C2,adjective,obscure,concerned with an obscure subject,Recondite scholarship.,abstruse|arcane
+reprobate,C2,noun,rogue,an unprincipled person,An old reprobate.,rogue|scoundrel
+sanguine,C2,adjective,hopeful,optimistic in a difficult situation,Sanguine about the outcome.,optimistic|upbeat
+sedulous,C2,adjective,diligent,showing dedication and care,Sedulous attention to detail.,assiduous|diligent
+soporific,C2,adjective,sleep-inducing,tending to cause sleep,A soporific lecture.,sleepy|drowsy
+specious,C2,adjective,misleading,seeming right but actually wrong,A specious argument.,plausible|fallacious
+spurious,C2,adjective,false,not genuine,Spurious claims.,false|bogus
+stultify,C2,verb,dull,to make dull or ineffective,Routine stultified him.,deaden|blunt
+supercilious,C2,adjective,haughty,behaving as though superior,A supercilious tone.,haughty|disdainful
+surfeit,C2,noun,excess,an excessive amount,A surfeit of choice.,excess|glut
+sycophant,C2,noun,flatterer,someone who flatters to gain advantage,Surrounded by sycophants.,flatterer|toady
+taciturn,C2,adjective,quiet,saying very little,A taciturn farmer.,reserved|silent
+temerity,C2,noun,boldness,excessive confidence or boldness,He had the temerity to ask.,audacity|nerve
+tenacious,C2,adjective,persistent,holding firmly and not giving up,A tenacious campaigner.,persistent|dogged
+truculent,C2,adjective,aggressive,eager to argue or fight,A truculent response.,belligerent|combative
+turpitude,C2,noun,wickedness,depraved or wicked behaviour,Moral turpitude.,depravity|wickedness
+ubiquity,C2,noun,presence everywhere,the state of being everywhere,The ubiquity of screens.,omnipresence|pervasiveness
+vacillate,C2,verb,waver,to keep changing your mind,He vacillated for weeks.,waver|dither
+venerate,C2,verb,revere,to regard with deep respect,They venerated the founder.,revere|worship
+veracity,C2,noun,truthfulness,conformity to facts,The veracity of the account.,truthfulness|accuracy
+verbose,C2,adjective,wordy,using more words than needed,A verbose introduction.,wordy|long-winded
+vicissitude,C2,noun,change,"a change of circumstances, usually unwelcome",The vicissitudes of fortune.,fluctuation|upheaval
+vituperative,C2,adjective,abusive,bitter and abusive,A vituperative review.,scathing|abusive
+zealous,C2,adjective,eager,showing great energy for a cause,A zealous reformer.,fervent|ardent
