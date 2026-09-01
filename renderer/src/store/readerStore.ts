@@ -11,9 +11,12 @@ import type {
   HeatOut,
   HighlightColour,
   HighlightOut,
+  LeveledTextOut,
+  LevelMode,
   PageOut,
   PositionOut,
   SearchHitOut,
+  SessionOut,
   WordLookupOut,
 } from '@/types/api';
 
@@ -46,6 +49,11 @@ interface ReaderState {
   heatTotal: number;
   lookup: WordLookupOut | null;
   lookupStatus: 'idle' | 'loading' | 'error';
+  levelMode: LevelMode;
+  leveled: LeveledTextOut | null;
+  levelStatus: 'idle' | 'loading' | 'error';
+  levelBlockIndex: number | null;
+  session: SessionOut | null;
   status: 'idle' | 'loading' | 'error' | 'ready';
   error: string | null;
 
@@ -68,6 +76,10 @@ interface ReaderState {
   setSearchQuery: (query: string) => void;
   lookupWord: (word: string, sentence?: string) => Promise<void>;
   clearLookup: () => void;
+  setLevelMode: (mode: LevelMode) => void;
+  levelBlock: (blockIndex: number, mode?: LevelMode) => Promise<void>;
+  openSession: () => Promise<void>;
+  heartbeat: (seconds: number) => Promise<void>;
   close: () => void;
 }
 
@@ -93,6 +105,11 @@ const INITIAL: Pick<
   | 'heatTotal'
   | 'lookup'
   | 'lookupStatus'
+  | 'levelMode'
+  | 'leveled'
+  | 'levelStatus'
+  | 'levelBlockIndex'
+  | 'session'
   | 'status'
   | 'error'
 > = {
@@ -116,12 +133,22 @@ const INITIAL: Pick<
   heatTotal: 0,
   lookup: null,
   lookupStatus: 'idle',
+  // Defaults to a mode that actually works offline; the two generative modes
+  // are selectable but gated.
+  levelMode: 'inline',
+  leveled: null,
+  levelStatus: 'idle',
+  levelBlockIndex: null,
+  session: null,
   status: 'idle',
   error: null,
 };
 
 let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let searchAbortController: AbortController | null = null;
+// Leveling is a POST, so it can't be cancelled the way search is — the
+// sequence number drops a stale response instead.
+let levelRequestSeq = 0;
 
 function cancelPendingSearch(): void {
   if (searchDebounceTimer) {
@@ -277,6 +304,66 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   },
 
   clearLookup: () => set({ lookup: null, lookupStatus: 'idle' }),
+
+  setLevelMode: (mode) => {
+    set({ levelMode: mode });
+    const { levelBlockIndex } = get();
+    if (levelBlockIndex !== null) void get().levelBlock(levelBlockIndex, mode);
+  },
+
+  levelBlock: async (blockIndex, mode) => {
+    const { bookId, levelMode } = get();
+    if (!bookId) return;
+    const requested = mode ?? levelMode;
+
+    levelRequestSeq += 1;
+    const seq = levelRequestSeq;
+    set({ levelStatus: 'loading', levelBlockIndex: blockIndex });
+
+    try {
+      const result = await api.post<LeveledTextOut>('/reading/level', {
+        book_id: bookId,
+        block_index: blockIndex,
+        mode: requested,
+        user_id: useAppStore.getState().currentUserId,
+      });
+      // A slower earlier request must not overwrite a newer one's result.
+      if (seq !== levelRequestSeq || get().bookId !== bookId) return;
+      set({ leveled: result, levelStatus: 'idle' });
+    } catch {
+      if (seq !== levelRequestSeq) return;
+      set({ leveled: null, levelStatus: 'error' });
+    }
+  },
+
+  openSession: async () => {
+    const { bookId } = get();
+    if (!bookId) return;
+    try {
+      const userId = requireUserId();
+      const session = await api.post<SessionOut>(`/books/${bookId}/sessions`, { user_id: userId });
+      if (get().bookId !== bookId) return;
+      set({ session });
+    } catch {
+      // Time-on-page is a nice-to-have; failing to open a session must never
+      // stop someone reading.
+    }
+  },
+
+  heartbeat: async (seconds) => {
+    const { bookId, session } = get();
+    if (!bookId || !session || seconds <= 0) return;
+    try {
+      const updated = await api.patch<SessionOut>(
+        `/books/${bookId}/sessions/${session.id}`,
+        { seconds },
+      );
+      if (get().bookId !== bookId) return;
+      set({ session: updated });
+    } catch {
+      // Same: a dropped beat costs one interval, nothing more.
+    }
+  },
 
   close: () => {
     cancelPendingSearch();

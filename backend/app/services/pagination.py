@@ -21,6 +21,14 @@ def total_pages(total_words: int) -> int:
     return math.ceil(total_words / WORDS_PER_PAGE)
 
 
+def pages_from_words(words: int) -> int:
+    """Pages *read*, as opposed to the page a position falls on. Rounded so a
+    day of short sessions still adds up to roughly what was actually read."""
+    if words <= 0:
+        return 0
+    return round(words / WORDS_PER_PAGE)
+
+
 def percent_complete(max_block_seen: int, total_blocks: int) -> float:
     """max_block_seen only ever increases (spec §7.1), so this is monotonic
     for a given book regardless of where the reader currently is."""
