@@ -6,9 +6,16 @@
 :root {
   --sans: 'Public Sans', system-ui, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
-  --acc: #3e7c5a;
-  --accSoft: rgba(62, 124, 90, 0.11);
-  --accLine: rgba(62, 124, 90, 0.35);
+  /* The accent, as channels so every tint derives from one place rather than
+     from copies of an rgba() literal scattered through the components. */
+  --accRGB: 138, 107, 193;
+  --acc: #8a6bc1;
+  --accSoft: rgba(var(--accRGB), 0.11);
+  --accLine: rgba(var(--accRGB), 0.35);
+  /* Solid fills that carry white text. #8a6bc1 behind white is 4.24:1, just
+     under AA for body-size text, so primary buttons use a darker step of the
+     same hue (6.17:1) while borders, bars and tints keep the accent itself. */
+  --accSolid: #6f51a6;
   --pad: 24px;
 }
 
