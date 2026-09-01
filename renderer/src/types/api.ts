@@ -140,3 +140,46 @@ export interface BookUpdate {
   count_toward_goal?: boolean;
   heat_overlay?: boolean;
 }
+
+export interface ChapterOut {
+  id: string;
+  order_index: number;
+  label: string;
+  depth: number;
+  start_block: number;
+  page: number;
+}
+
+export type BlockKind = 'p' | 'h1' | 'h2' | 'h3' | 'quote' | 'list' | 'caption' | 'code';
+
+export interface BlockOut {
+  block_index: number;
+  chapter_id: string | null;
+  kind: BlockKind;
+  text: string;
+  word_count: number;
+}
+
+export interface PositionOut {
+  block_index: number;
+  char_offset: number;
+  max_block_seen: number;
+  page: number;
+  total_pages: number;
+  percent: number;
+}
+
+export interface PositionUpdate {
+  user_id: string;
+  block_index: number;
+  char_offset?: number;
+}
+
+export interface PageOut {
+  page: number;
+  total_pages: number;
+  blocks: BlockOut[];
+  has_prev: boolean;
+  has_next: boolean;
+  first_block_index: number;
+}
