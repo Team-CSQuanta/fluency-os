@@ -16,8 +16,16 @@ from app.models.books import (
     PositionOut,
     PositionUpdate,
 )
+from app.models.highlights import (
+    BookmarkCreate,
+    BookmarkOut,
+    HighlightCreate,
+    HighlightOut,
+    HighlightUpdate,
+)
+from app.models.search import SearchHitOut, SnippetSegmentOut
 from app.security import require_token
-from app.services import book_storage, pagination
+from app.services import book_search, book_storage, pagination
 from app.services.ingest import pipeline
 from app.utils.ids import uuid7
 from app.utils.time import iso8601_utc_now
@@ -322,6 +330,173 @@ def update_position(book_id: str, payload: PositionUpdate, conn: sqlite3.Connect
         """,
         (book_id, payload.user_id, payload.block_index, payload.char_offset, max_seen, iso8601_utc_now()),
     )
+
+
+def _block_page(conn: sqlite3.Connection, book_id: str, block_index: int) -> int:
+    return pagination.page_number(_word_offset_before(conn, book_id, block_index))
+
+
+def _row_to_highlight(conn: sqlite3.Connection, row: sqlite3.Row) -> HighlightOut:
+    return HighlightOut(
+        id=row["id"],
+        book_id=row["book_id"],
+        user_id=row["user_id"],
+        block_index=row["block_index"],
+        start_char=row["start_char"],
+        end_char=row["end_char"],
+        colour=row["colour"],
+        quoted_text=row["quoted_text"],
+        note=row["note"],
+        created_at=row["created_at"],
+        page=_block_page(conn, row["book_id"], row["block_index"]),
+    )
+
+
+def _get_highlight_row(conn: sqlite3.Connection, book_id: str, highlight_id: str) -> sqlite3.Row:
+    row = conn.execute(
+        "SELECT * FROM book_highlights WHERE id = ? AND book_id = ?", (highlight_id, book_id)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Highlight not found")
+    return row
+
+
+@router.get("/{book_id}/highlights", response_model=list[HighlightOut])
+def list_highlights(book_id: str, user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> list[HighlightOut]:
+    _get_book_row(conn, book_id)
+    rows = conn.execute(
+        "SELECT * FROM book_highlights WHERE book_id = ? AND user_id = ? ORDER BY block_index, start_char",
+        (book_id, user_id),
+    ).fetchall()
+    return [_row_to_highlight(conn, row) for row in rows]
+
+
+@router.post("/{book_id}/highlights", response_model=HighlightOut, status_code=status.HTTP_201_CREATED)
+def create_highlight(
+    book_id: str, payload: HighlightCreate, conn: sqlite3.Connection = Depends(get_db)
+) -> HighlightOut:
+    book = _get_book_row(conn, book_id)
+    if payload.end_char <= payload.start_char:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="end_char must be greater than start_char")
+    if payload.block_index < 0 or (book["total_blocks"] and payload.block_index >= book["total_blocks"]):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="block_index out of range")
+
+    highlight_id = uuid7()
+    conn.execute(
+        """
+        INSERT INTO book_highlights (id, book_id, user_id, block_index, start_char, end_char, colour, quoted_text, note, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            highlight_id,
+            book_id,
+            payload.user_id,
+            payload.block_index,
+            payload.start_char,
+            payload.end_char,
+            payload.colour,
+            payload.quoted_text,
+            payload.note,
+            iso8601_utc_now(),
+        ),
+    )
+    return _row_to_highlight(conn, _get_highlight_row(conn, book_id, highlight_id))
+
+
+@router.patch("/{book_id}/highlights/{highlight_id}", response_model=HighlightOut)
+def update_highlight(
+    book_id: str, highlight_id: str, payload: HighlightUpdate, conn: sqlite3.Connection = Depends(get_db)
+) -> HighlightOut:
+    _get_highlight_row(conn, book_id, highlight_id)
+    fields = payload.model_dump(exclude_unset=True)
+    if fields:
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        conn.execute(f"UPDATE book_highlights SET {set_clause} WHERE id = ?", (*fields.values(), highlight_id))
+    return _row_to_highlight(conn, _get_highlight_row(conn, book_id, highlight_id))
+
+
+@router.delete("/{book_id}/highlights/{highlight_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_highlight(book_id: str, highlight_id: str, conn: sqlite3.Connection = Depends(get_db)) -> None:
+    _get_highlight_row(conn, book_id, highlight_id)
+    conn.execute("DELETE FROM book_highlights WHERE id = ?", (highlight_id,))
+
+
+def _row_to_bookmark(conn: sqlite3.Connection, row: sqlite3.Row) -> BookmarkOut:
+    return BookmarkOut(
+        id=row["id"],
+        book_id=row["book_id"],
+        user_id=row["user_id"],
+        block_index=row["block_index"],
+        label=row["label"],
+        created_at=row["created_at"],
+        page=_block_page(conn, row["book_id"], row["block_index"]),
+    )
+
+
+def _get_bookmark_row(conn: sqlite3.Connection, book_id: str, bookmark_id: str) -> sqlite3.Row:
+    row = conn.execute(
+        "SELECT * FROM book_bookmarks WHERE id = ? AND book_id = ?", (bookmark_id, book_id)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bookmark not found")
+    return row
+
+
+@router.get("/{book_id}/bookmarks", response_model=list[BookmarkOut])
+def list_bookmarks(book_id: str, user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> list[BookmarkOut]:
+    _get_book_row(conn, book_id)
+    rows = conn.execute(
+        "SELECT * FROM book_bookmarks WHERE book_id = ? AND user_id = ? ORDER BY block_index", (book_id, user_id)
+    ).fetchall()
+    return [_row_to_bookmark(conn, row) for row in rows]
+
+
+@router.post("/{book_id}/bookmarks", response_model=BookmarkOut, status_code=status.HTTP_201_CREATED)
+def create_bookmark(book_id: str, payload: BookmarkCreate, conn: sqlite3.Connection = Depends(get_db)) -> BookmarkOut:
+    book = _get_book_row(conn, book_id)
+    if payload.block_index < 0 or (book["total_blocks"] and payload.block_index >= book["total_blocks"]):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="block_index out of range")
+
+    bookmark_id = uuid7()
+    conn.execute(
+        "INSERT INTO book_bookmarks (id, book_id, user_id, block_index, label, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (bookmark_id, book_id, payload.user_id, payload.block_index, payload.label, iso8601_utc_now()),
+    )
+    return _row_to_bookmark(conn, _get_bookmark_row(conn, book_id, bookmark_id))
+
+
+@router.delete("/{book_id}/bookmarks/{bookmark_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_bookmark(book_id: str, bookmark_id: str, conn: sqlite3.Connection = Depends(get_db)) -> None:
+    _get_bookmark_row(conn, book_id, bookmark_id)
+    conn.execute("DELETE FROM book_bookmarks WHERE id = ?", (bookmark_id,))
+
+
+def _chapter_label_for_block(conn: sqlite3.Connection, book_id: str, block_index: int) -> str | None:
+    row = conn.execute(
+        "SELECT label FROM book_chapters WHERE book_id = ? AND start_block <= ? ORDER BY start_block DESC LIMIT 1",
+        (book_id, block_index),
+    ).fetchone()
+    return row["label"] if row else None
+
+
+@router.get("/{book_id}/search", response_model=list[SearchHitOut])
+def search_book(
+    book_id: str, q: str, limit: int = 20, conn: sqlite3.Connection = Depends(get_db)
+) -> list[SearchHitOut]:
+    _get_book_row(conn, book_id)
+    rows = book_search.search_book(conn, book_id, q, limit=limit)
+    return [
+        SearchHitOut(
+            block_index=row["block_index"],
+            page=_block_page(conn, book_id, row["block_index"]),
+            chapter_label=_chapter_label_for_block(conn, book_id, row["block_index"]),
+            snippet=[
+                SnippetSegmentOut(text=seg.text, matched=seg.matched)
+                for seg in book_search.parse_snippet(row["snippet"])
+            ],
+        )
+        for row in rows
+    ]
 
 
 @router.patch("/{book_id}", response_model=BookOut)
