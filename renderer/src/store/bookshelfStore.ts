@@ -1,7 +1,13 @@
 import { create } from 'zustand';
 import { api, fetchBlobUrl } from '@/lib/apiClient';
 import { useAppStore } from '@/store/appStore';
-import type { BookCountsOut, BookImportRequest, BookIngestStatus, BookOut } from '@/types/api';
+import type {
+  BookCountsOut,
+  BookImportRequest,
+  BookIngestStatus,
+  BookOut,
+  ReadingStatsOut,
+} from '@/types/api';
 
 export interface ImportQueueItem {
   path: string;
@@ -13,17 +19,23 @@ export interface ImportQueueItem {
 interface BookshelfState {
   books: BookOut[];
   counts: BookCountsOut | null;
+  stats: ReadingStatsOut | null;
   filter: string;
+  query: string;
   booksStatus: 'idle' | 'loading' | 'error';
   booksError: string | null;
   importQueue: ImportQueueItem[];
   coverUrls: Record<string, string>;
 
   setFilter: (name: string) => void;
+  setQuery: (query: string) => void;
   fetchBooks: () => Promise<void>;
   fetchCounts: () => Promise<void>;
+  fetchStats: () => Promise<void>;
+  setGoal: (pages: number) => Promise<void>;
   importBooks: (paths: string[], opts?: { countTowardGoal?: boolean; heatOverlay?: boolean }) => Promise<void>;
   retryIngest: (bookId: string) => Promise<void>;
+  deleteBook: (bookId: string) => Promise<void>;
   clearImportQueue: () => void;
   loadCover: (bookId: string) => void;
 }
@@ -44,13 +56,16 @@ function fileName(path: string): string {
 export const useBookshelfStore = create<BookshelfState>((set, get) => ({
   books: [],
   counts: null,
+  stats: null,
   filter: 'All',
+  query: '',
   booksStatus: 'idle',
   booksError: null,
   importQueue: [],
   coverUrls: {},
 
   setFilter: (name) => set({ filter: name }),
+  setQuery: (query) => set({ query }),
 
   loadCover: (bookId) => {
     if (get().coverUrls[bookId]) return; // already fetched (or in flight, close enough for a shelf tile)
@@ -80,6 +95,28 @@ export const useBookshelfStore = create<BookshelfState>((set, get) => ({
     } catch {
       // Decorative (filter-chip badges) — a failure here shouldn't block the shelf.
     }
+  },
+
+  fetchStats: async () => {
+    try {
+      const userId = requireUserId();
+      const stats = await api.get<ReadingStatsOut>(`/reading/stats?user_id=${encodeURIComponent(userId)}`);
+      set({ stats });
+    } catch {
+      // The shelf still works without the goal ring — leave the panel empty
+      // rather than failing the whole screen.
+    }
+  },
+
+  setGoal: async (pages) => {
+    const userId = requireUserId();
+    // The response is the recomputed stats: changing the target also changes
+    // whether today counts and how long the streak is.
+    const stats = await api.put<ReadingStatsOut>('/reading/goal', {
+      user_id: userId,
+      daily_page_goal: pages,
+    });
+    set({ stats });
   },
 
   importBooks: async (paths, opts) => {
@@ -135,6 +172,19 @@ export const useBookshelfStore = create<BookshelfState>((set, get) => ({
     await get().fetchBooks();
   },
 
+  deleteBook: async (bookId) => {
+    await api.delete(`/books/${bookId}`);
+    // Drop the row and its cover object URL locally so the tile disappears
+    // immediately rather than after the refetch round-trip.
+    const url = get().coverUrls[bookId];
+    if (url) URL.revokeObjectURL(url);
+    set((s) => {
+      const { [bookId]: _removed, ...coverUrls } = s.coverUrls;
+      return { books: s.books.filter((b) => b.id !== bookId), coverUrls };
+    });
+    void get().fetchCounts();
+  },
+
   clearImportQueue: () => set({ importQueue: [] }),
 }));
 
@@ -180,9 +230,19 @@ async function pollUntilSettled(
 export function matchesBookFilter(book: BookOut, filter: string): boolean {
   if (filter === 'All') return true;
   if (filter === 'Finished') return !!book.finished_at;
-  if (filter === 'Not started') return book.ingest_status === 'ready' && !book.finished_at;
-  // No reading_positions rows are written until Phase 2, so nothing can
-  // match "Reading" yet.
-  if (filter === 'Reading') return false;
+  // These two mirror GET /books/counts exactly: a book is "reading" once it
+  // has a position row, so opening it moves it out of "Not started".
+  if (filter === 'Reading') return !!book.last_read_at && !book.finished_at;
+  if (filter === 'Not started') {
+    return book.ingest_status === 'ready' && !book.finished_at && !book.last_read_at;
+  }
   return true;
+}
+
+export function matchesBookQuery(book: BookOut, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return (
+    book.title.toLowerCase().includes(q) || (book.author ?? '').toLowerCase().includes(q)
+  );
 }
