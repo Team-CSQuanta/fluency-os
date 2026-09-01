@@ -23,6 +23,8 @@ from app.models.reading import (
     LeveledSegmentOut,
     LeveledTextOut,
     LevelRequest,
+    ReaderPrefsOut,
+    ReaderPrefsUpdate,
     ReadingStatsOut,
     SubstitutionOut,
     WordLookupOut,
@@ -323,4 +325,79 @@ def _unavailable(
         ),
         cached=False,
         requested_mode=mode,
+    )
+
+
+DEFAULT_PREFS = ReaderPrefsOut(
+    font_size=15.5, page_theme="auto", heat_on=True, panel_open=True, panel_tab="toc"
+)
+
+
+@router.get("/prefs", response_model=ReaderPrefsOut)
+def get_reader_prefs(
+    user_id: str, conn: sqlite3.Connection = Depends(get_db)
+) -> ReaderPrefsOut:
+    """Reader display preferences (spec Phase 2 step 5).
+
+    A reader who has never opened a book has no settings row yet, which is not
+    an error — they get the same defaults the panel is built around.
+    """
+    row = conn.execute(
+        """
+        SELECT reader_font_size, reader_page_theme, reader_heat_on,
+               reader_panel_open, reader_panel_tab
+        FROM user_settings WHERE user_id = ?
+        """,
+        (user_id,),
+    ).fetchone()
+    if row is None:
+        return DEFAULT_PREFS
+    return ReaderPrefsOut(
+        font_size=row["reader_font_size"],
+        page_theme=row["reader_page_theme"],
+        heat_on=bool(row["reader_heat_on"]),
+        panel_open=bool(row["reader_panel_open"]),
+        panel_tab=row["reader_panel_tab"],
+    )
+
+
+@router.put("/prefs", response_model=ReaderPrefsOut)
+def update_reader_prefs(
+    payload: ReaderPrefsUpdate, conn: sqlite3.Connection = Depends(get_db)
+) -> ReaderPrefsOut:
+    """Upserts only the reader columns.
+
+    Deliberately not PUT /users/{id}/settings, which rewrites the whole row
+    from an onboarding payload — reusing it here would wipe the LLM config
+    every time someone nudged the font size.
+    """
+    conn.execute(
+        """
+        INSERT INTO user_settings (
+          user_id, reader_font_size, reader_page_theme, reader_heat_on,
+          reader_panel_open, reader_panel_tab
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+          reader_font_size = excluded.reader_font_size,
+          reader_page_theme = excluded.reader_page_theme,
+          reader_heat_on = excluded.reader_heat_on,
+          reader_panel_open = excluded.reader_panel_open,
+          reader_panel_tab = excluded.reader_panel_tab
+        """,
+        (
+            payload.user_id,
+            payload.font_size,
+            payload.page_theme,
+            int(payload.heat_on),
+            int(payload.panel_open),
+            payload.panel_tab,
+        ),
+    )
+    return ReaderPrefsOut(
+        font_size=payload.font_size,
+        page_theme=payload.page_theme,
+        heat_on=payload.heat_on,
+        panel_open=payload.panel_open,
+        panel_tab=payload.panel_tab,
     )
