@@ -29,7 +29,10 @@ function getFreePort(): Promise<number> {
   });
 }
 
-async function waitForHealth(baseUrl: string, token: string, timeoutMs = 10_000): Promise<void> {
+// 30s, not 10s: `uv run` syncs new/updated deps on first launch after a
+// pull that changes pyproject.toml/uv.lock (e.g. pymupdf+lxml, ~30MB), and
+// that download+build can outlast a short health-check window.
+async function waitForHealth(baseUrl: string, token: string, timeoutMs = 30_000): Promise<void> {
   const start = Date.now();
   let lastError: unknown = null;
   while (Date.now() - start < timeoutMs) {
