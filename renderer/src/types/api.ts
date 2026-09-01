@@ -242,3 +242,45 @@ export interface SearchHitOut {
   chapter_label: string | null;
   snippet: SnippetSegmentOut[];
 }
+
+export interface HeatSpanOut {
+  start_char: number;
+  end_char: number;
+  word: string;
+  cefr: string;
+  simpler: string | null;
+}
+
+export interface BlockHeatOut {
+  block_index: number;
+  spans: HeatSpanOut[];
+}
+
+export interface HeatOut {
+  target_cefr: string;
+  /** False when the book's own heat_overlay flag is off. */
+  enabled: boolean;
+  blocks: BlockHeatOut[];
+  total_above_level: number;
+}
+
+export interface WordSenseOut {
+  definition: string;
+  example: string | null;
+}
+
+export interface WordLookupOut {
+  word: string;
+  lemma: string | null;
+  pos: string | null;
+  cefr: string | null;
+  ipa: string | null;
+  senses: WordSenseOut[];
+  synonyms: string[];
+  simpler: string | null;
+  /** False when the word isn't in the offline lexicon at all. */
+  found: boolean;
+  /** Explaining the word in its sentence needs a model — Phase 7. */
+  context_available: boolean;
+  context_note: string | null;
+}

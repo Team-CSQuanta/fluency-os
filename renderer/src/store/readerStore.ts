@@ -3,15 +3,18 @@ import { api } from '@/lib/apiClient';
 import { useAppStore } from '@/store/appStore';
 import { useShellStore } from '@/store/shellStore';
 import type {
+  BlockHeatOut,
   BlockOut,
   BookmarkOut,
   BookOut,
   ChapterOut,
+  HeatOut,
   HighlightColour,
   HighlightOut,
   PageOut,
   PositionOut,
   SearchHitOut,
+  WordLookupOut,
 } from '@/types/api';
 
 const SEARCH_DEBOUNCE_MS = 200;
@@ -37,6 +40,12 @@ interface ReaderState {
   searchQuery: string;
   searchHits: SearchHitOut[];
   searchStatus: 'idle' | 'loading' | 'error';
+  heat: BlockHeatOut[];
+  heatEnabled: boolean;
+  heatTarget: string;
+  heatTotal: number;
+  lookup: WordLookupOut | null;
+  lookupStatus: 'idle' | 'loading' | 'error';
   status: 'idle' | 'loading' | 'error' | 'ready';
   error: string | null;
 
@@ -57,6 +66,8 @@ interface ReaderState {
   createBookmark: (blockIndex: number, label: string) => Promise<void>;
   deleteBookmark: (id: string) => Promise<void>;
   setSearchQuery: (query: string) => void;
+  lookupWord: (word: string, sentence?: string) => Promise<void>;
+  clearLookup: () => void;
   close: () => void;
 }
 
@@ -76,6 +87,12 @@ const INITIAL: Pick<
   | 'searchQuery'
   | 'searchHits'
   | 'searchStatus'
+  | 'heat'
+  | 'heatEnabled'
+  | 'heatTarget'
+  | 'heatTotal'
+  | 'lookup'
+  | 'lookupStatus'
   | 'status'
   | 'error'
 > = {
@@ -93,6 +110,12 @@ const INITIAL: Pick<
   searchQuery: '',
   searchHits: [],
   searchStatus: 'idle',
+  heat: [],
+  heatEnabled: true,
+  heatTarget: 'B1',
+  heatTotal: 0,
+  lookup: null,
+  lookupStatus: 'idle',
   status: 'idle',
   error: null,
 };
@@ -239,11 +262,68 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     }, SEARCH_DEBOUNCE_MS);
   },
 
+  lookupWord: async (word, sentence) => {
+    const clean = word.trim();
+    if (!clean) return;
+    set({ lookupStatus: 'loading' });
+    try {
+      const query = new URLSearchParams({ w: clean });
+      if (sentence) query.set('ctx', sentence);
+      const result = await api.get<WordLookupOut>(`/reading/lookup?${query.toString()}`);
+      set({ lookup: result, lookupStatus: 'idle' });
+    } catch {
+      set({ lookup: null, lookupStatus: 'error' });
+    }
+  },
+
+  clearLookup: () => set({ lookup: null, lookupStatus: 'idle' }),
+
   close: () => {
     cancelPendingSearch();
     set({ ...INITIAL });
   },
 }));
+
+/** Difficulty heat for the blocks now on screen. Fetched per page rather than
+ * per book: a 500-page book's spans would be megabytes, and the reader only
+ * ever tints what it is currently showing. */
+async function loadHeat(
+  bookId: string,
+  opts: { get: () => ReaderState; set: (partial: Partial<ReaderState>) => void },
+): Promise<void> {
+  const { get, set } = opts;
+  const blocks = get().blocks;
+  if (blocks.length === 0) {
+    set({ heat: [], heatTotal: 0 });
+    return;
+  }
+
+  const fromIndex = blocks[0].block_index;
+  const limit = blocks.length;
+  try {
+    const userId = useAppStore.getState().currentUserId;
+    const query = new URLSearchParams({
+      book_id: bookId,
+      from_index: String(fromIndex),
+      limit: String(limit),
+    });
+    if (userId) query.set('user_id', userId);
+
+    const result = await api.get<HeatOut>(`/reading/heat?${query.toString()}`);
+    // The page may have turned while this was in flight.
+    if (get().bookId !== bookId || get().blocks[0]?.block_index !== fromIndex) return;
+
+    set({
+      heat: result.blocks,
+      heatEnabled: result.enabled,
+      heatTarget: result.target_cefr,
+      heatTotal: result.total_above_level,
+    });
+  } catch {
+    // Heat is decorative — a failure here must not blank the page.
+    set({ heat: [], heatTotal: 0 });
+  }
+}
 
 async function loadPage(
   bookId: string,
@@ -267,7 +347,13 @@ async function loadPage(
       hasPrev: pageData.has_prev,
       hasNext: pageData.has_next,
       status: 'ready',
+      // Drop the previous page's spans immediately so stale tinting never
+      // paints over the new page's text while the fetch is in flight.
+      heat: [],
+      heatTotal: 0,
     });
+
+    void loadHeat(bookId, { get, set });
 
     // Page turns are discrete, deliberate actions — write position
     // immediately rather than debouncing, unlike a continuous-scroll reader.
