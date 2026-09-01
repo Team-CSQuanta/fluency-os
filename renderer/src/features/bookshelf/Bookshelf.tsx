@@ -1,13 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AddBookModal } from '@/features/bookshelf/AddBookModal';
-import {
-  BOOK_FILTERS,
-  BOOKS,
-  GOAL_WEEK,
-  matchesBookFilter,
-  READING_GOAL,
-  READING_NOW,
-} from '@/features/bookshelf/bookshelfMockData';
+import { GOAL_WEEK, READING_GOAL, READING_NOW } from '@/features/bookshelf/bookshelfMockData';
+import { useAppStore } from '@/store/appStore';
+import { matchesBookFilter, useBookshelfStore } from '@/store/bookshelfStore';
 import { useShellStore } from '@/store/shellStore';
 
 const FMT_STYLE: Record<string, { bg: string; fg: string; bd: string }> = {
@@ -15,15 +10,44 @@ const FMT_STYLE: Record<string, { bg: string; fg: string; bd: string }> = {
   pdf: { bg: 'var(--line2)', fg: 'var(--tx2)', bd: 'var(--line2)' },
   mobi: { bg: 'var(--line2)', fg: 'var(--tx2)', bd: 'var(--line2)' },
   azw3: { bg: 'var(--line2)', fg: 'var(--tx2)', bd: 'var(--line2)' },
+  txt: { bg: 'var(--line2)', fg: 'var(--tx2)', bd: 'var(--line2)' },
 };
 
 export function Bookshelf() {
-  const [filter, setFilter] = useState('All');
   const [addOpen, setAddOpen] = useState(false);
   const [goalTarget, setGoalTarget] = useState(20);
   const goReader = useShellStore((s) => s.goReader);
+  const currentUserId = useAppStore((s) => s.currentUserId);
 
-  const books = BOOKS.filter((b) => matchesBookFilter(b, filter));
+  const allBooks = useBookshelfStore((s) => s.books);
+  const counts = useBookshelfStore((s) => s.counts);
+  const filter = useBookshelfStore((s) => s.filter);
+  const setFilter = useBookshelfStore((s) => s.setFilter);
+  const fetchBooks = useBookshelfStore((s) => s.fetchBooks);
+  const fetchCounts = useBookshelfStore((s) => s.fetchCounts);
+  const retryIngest = useBookshelfStore((s) => s.retryIngest);
+  const coverUrls = useBookshelfStore((s) => s.coverUrls);
+  const loadCover = useBookshelfStore((s) => s.loadCover);
+
+  useEffect(() => {
+    if (!currentUserId) return;
+    void fetchBooks();
+    void fetchCounts();
+  }, [currentUserId, fetchBooks, fetchCounts]);
+
+  useEffect(() => {
+    for (const b of allBooks) {
+      if (b.ingest_status === 'ready' && b.cover_path) loadCover(b.id);
+    }
+  }, [allBooks, loadCover]);
+
+  const bookFilters = [
+    { n: 'All', c: String(counts?.all ?? allBooks.length) },
+    { n: 'Reading', c: String(counts?.reading ?? 0) },
+    { n: 'Not started', c: String(counts?.not_started ?? 0) },
+    { n: 'Finished', c: String(counts?.finished ?? 0) },
+  ];
+  const books = allBooks.filter((b) => matchesBookFilter(b, filter));
   const goalDeg = Math.round(Math.min(1, READING_GOAL.done / goalTarget) * 360);
 
   return (
@@ -126,7 +150,7 @@ export function Bookshelf() {
           <div className="mr-[6px] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
             My books
           </div>
-          {BOOK_FILTERS.map((f) => {
+          {bookFilters.map((f) => {
             const on = filter === f.n;
             return (
               <button
@@ -155,53 +179,95 @@ export function Bookshelf() {
           </button>
         </div>
 
-        <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(158px,1fr))' }}>
-          {books.map((b) => {
-            const fs = FMT_STYLE[b.fmt];
-            return (
-              <button
-                key={b.title}
-                onClick={() => goReader(`${b.title} — ${b.author}`, b.chapter, b.pos)}
-                className="text-left hover:-translate-y-[2px]"
-              >
-                <div
-                  className="relative overflow-hidden rounded-[4px] border border-line2 shadow-panel"
-                  style={{
-                    aspectRatio: '2/3',
-                    background: 'repeating-linear-gradient(135deg,var(--tile) 0 6px,var(--tileB) 6px 12px)',
+        {books.length === 0 && allBooks.length === 0 ? (
+          <div className="flex flex-col items-center justify-center gap-2 rounded-panel border border-dashed border-line py-[48px] text-center">
+            <div className="font-sans text-[13px] font-medium text-tx">Your shelf is empty</div>
+            <div className="max-w-[280px] font-mono text-[10.5px] leading-[1.6] text-tx3">
+              Drag a TXT or EPUB file onto the shelf, or use "Add books" to browse for one.
+            </div>
+          </div>
+        ) : (
+          <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(158px,1fr))' }}>
+            {books.map((b) => {
+              const fs = FMT_STYLE[b.format] ?? FMT_STYLE.txt;
+              const pct = b.finished_at ? 100 : 0;
+              const meta =
+                b.ingest_status === 'ready'
+                  ? `~${b.page_estimate} pages · ${b.total_words.toLocaleString()} words`
+                  : b.ingest_status === 'failed'
+                    ? (b.ingest_error ?? 'Import failed')
+                    : b.ingest_status === 'parsing'
+                      ? 'parsing…'
+                      : 'queued…';
+              const busy = b.ingest_status === 'queued' || b.ingest_status === 'parsing';
+              const failed = b.ingest_status === 'failed';
+
+              return (
+                <button
+                  key={b.id}
+                  onClick={() => {
+                    if (failed) {
+                      void retryIngest(b.id);
+                      return;
+                    }
+                    if (busy) return;
+                    goReader(`${b.title}${b.author ? ` — ${b.author}` : ''}`, 'Chapter 1', `1 / ${b.page_estimate || 1}`);
                   }}
+                  className="text-left hover:-translate-y-[2px]"
+                  style={{ opacity: busy ? 0.6 : 1 }}
                 >
-                  <div className="grid h-full place-items-center font-mono text-[8px] text-tx3">cover</div>
-                  <span
-                    className="absolute right-[7px] top-[7px] rounded-[3px] border px-[5px] py-[2px] font-mono text-[8.5px] font-medium uppercase tracking-[0.05em]"
-                    style={{ color: fs.fg, background: fs.bg, borderColor: fs.bd }}
+                  <div
+                    className="relative overflow-hidden rounded-[4px] border border-line2 shadow-panel"
+                    style={{
+                      aspectRatio: '2/3',
+                      background: 'repeating-linear-gradient(135deg,var(--tile) 0 6px,var(--tileB) 6px 12px)',
+                    }}
                   >
-                    {b.fmt}
-                  </span>
-                  {b.pct > 0 && (
-                    <span className="absolute inset-x-0 bottom-0 h-[3px] bg-black/25">
-                      <span className="block h-[3px] bg-acc" style={{ width: `${b.pct}%` }} />
+                    {coverUrls[b.id] ? (
+                      <img
+                        src={coverUrls[b.id]}
+                        alt={`${b.title} cover`}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="grid h-full place-items-center font-mono text-[8px] text-tx3">
+                        {busy ? '⟳ parsing' : failed ? '⚠ failed' : 'cover'}
+                      </div>
+                    )}
+                    <span
+                      className="absolute right-[7px] top-[7px] rounded-[3px] border px-[5px] py-[2px] font-mono text-[8.5px] font-medium uppercase tracking-[0.05em]"
+                      style={{ color: fs.fg, background: fs.bg, borderColor: fs.bd }}
+                    >
+                      {b.format}
                     </span>
-                  )}
-                </div>
-                <div className="mt-[9px] font-sans text-[12px] font-semibold leading-[1.35] text-tx">{b.title}</div>
-                <div className="mt-[3px] font-mono text-[10px] text-tx3">{b.author}</div>
-                <div className="mt-[5px] font-mono text-[9.5px] text-tx3">{b.meta}</div>
-              </button>
-            );
-          })}
-          <button
-            onClick={() => setAddOpen(true)}
-            className="flex flex-col items-center justify-center gap-[9px] rounded-[6px] border border-dashed border-line text-tx3 hover:border-acc hover:text-acc"
-            style={{ aspectRatio: '2/3' }}
-          >
-            <span className="font-sans text-[26px] font-light leading-none">+</span>
-            <span className="font-sans text-[11px] font-medium">Add books</span>
-            <span className="max-w-[110px] text-center font-mono text-[9px] leading-[1.6]">
-              pdf · epub · mobi · azw3 · txt
-            </span>
-          </button>
-        </div>
+                    {pct > 0 && (
+                      <span className="absolute inset-x-0 bottom-0 h-[3px] bg-black/25">
+                        <span className="block h-[3px] bg-acc" style={{ width: `${pct}%` }} />
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-[9px] font-sans text-[12px] font-semibold leading-[1.35] text-tx">{b.title}</div>
+                  <div className="mt-[3px] font-mono text-[10px] text-tx3">{b.author ?? '—'}</div>
+                  <div className="mt-[5px] font-mono text-[9.5px] text-tx3">
+                    {meta}
+                    {failed && <span className="ml-1 text-acc">· tap to retry</span>}
+                  </div>
+                </button>
+              );
+            })}
+            <button
+              onClick={() => setAddOpen(true)}
+              className="flex flex-col items-center justify-center gap-[9px] rounded-[6px] border border-dashed border-line text-tx3 hover:border-acc hover:text-acc"
+              style={{ aspectRatio: '2/3' }}
+            >
+              <span className="font-sans text-[26px] font-light leading-none">+</span>
+              <span className="font-sans text-[11px] font-medium">Add books</span>
+              <span className="max-w-[110px] text-center font-mono text-[9px] leading-[1.6]">
+                pdf · epub · mobi · azw3 · txt
+              </span>
+            </button>
+          </div>
+        )}
       </div>
 
       {addOpen && <AddBookModal onClose={() => setAddOpen(false)} />}
