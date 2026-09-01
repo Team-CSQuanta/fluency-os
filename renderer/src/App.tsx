@@ -11,6 +11,7 @@ import { Bookshelf } from '@/features/bookshelf/Bookshelf';
 import { Reader } from '@/features/reader/Reader';
 import { VocabularyList } from '@/features/vocabulary/VocabularyList';
 import { VocabularyEntry } from '@/features/vocabulary/VocabularyEntry';
+import { Review } from '@/features/review/Review';
 import { useAppStore } from '@/store/appStore';
 import { useShellStore } from '@/store/shellStore';
 
@@ -31,6 +32,8 @@ function ScreenContent() {
       return <VocabularyList />;
     case 'word':
       return <VocabularyEntry />;
+    case 'review':
+      return <Review />;
     default:
       return <ComingSoon />;
   }
