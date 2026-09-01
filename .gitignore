@@ -27,3 +27,4 @@ backend/.pytest_cache/
 # mockups and specs
 claude-ui-mockup-files/
 fluencyos_spec.md
+renderer/tsconfig.tsbuildinfo
