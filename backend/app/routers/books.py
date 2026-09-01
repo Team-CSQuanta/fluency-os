@@ -5,9 +5,19 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 
 from app.db import get_connection, get_db
-from app.models.books import BookCountsOut, BookImportRequest, BookOut, BookUpdate
+from app.models.books import (
+    BlockOut,
+    BookCountsOut,
+    BookImportRequest,
+    BookOut,
+    BookUpdate,
+    ChapterOut,
+    PageOut,
+    PositionOut,
+    PositionUpdate,
+)
 from app.security import require_token
-from app.services import book_storage
+from app.services import book_storage, pagination
 from app.services.ingest import pipeline
 from app.utils.ids import uuid7
 from app.utils.time import iso8601_utc_now
@@ -142,8 +152,8 @@ def get_counts(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> Book
     finished = conn.execute(
         "SELECT COUNT(*) AS c FROM books WHERE user_id = ? AND finished_at IS NOT NULL", (user_id,)
     ).fetchone()["c"]
-    # No reading_positions rows are written until Phase 2, so "reading" is
-    # always 0 for now and every ready, unfinished book counts as not-started.
+    # A book only has a reading_positions row once it's been opened at least
+    # once (PUT /books/{id}/position writes the first row on open).
     reading = conn.execute(
         """
         SELECT COUNT(*) AS c FROM books b
@@ -170,6 +180,148 @@ def get_cover(book_id: str, conn: sqlite3.Connection = Depends(get_db)) -> FileR
     if not row["cover_path"] or not Path(row["cover_path"]).is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No cover for this book")
     return FileResponse(row["cover_path"])
+
+
+@router.get("/{book_id}/toc", response_model=list[ChapterOut])
+def get_toc(book_id: str, conn: sqlite3.Connection = Depends(get_db)) -> list[ChapterOut]:
+    _get_book_row(conn, book_id)
+    rows = conn.execute(
+        "SELECT * FROM book_chapters WHERE book_id = ? ORDER BY order_index", (book_id,)
+    ).fetchall()
+    return [
+        ChapterOut(
+            id=row["id"],
+            order_index=row["order_index"],
+            label=row["label"],
+            depth=row["depth"],
+            start_block=row["start_block"],
+            page=pagination.page_number(row["word_offset"]),
+        )
+        for row in rows
+    ]
+
+
+@router.get("/{book_id}/blocks", response_model=list[BlockOut])
+def get_blocks(
+    book_id: str, from_index: int = 0, limit: int = 60, conn: sqlite3.Connection = Depends(get_db)
+) -> list[BlockOut]:
+    _get_book_row(conn, book_id)
+    rows = conn.execute(
+        "SELECT * FROM book_blocks WHERE book_id = ? AND block_index >= ? ORDER BY block_index LIMIT ?",
+        (book_id, from_index, limit),
+    ).fetchall()
+    return [
+        BlockOut(
+            block_index=row["block_index"],
+            chapter_id=row["chapter_id"],
+            kind=row["kind"],
+            text=row["text"],
+            word_count=row["word_count"],
+        )
+        for row in rows
+    ]
+
+
+@router.get("/{book_id}/page", response_model=PageOut)
+def get_page(book_id: str, page: int = 1, conn: sqlite3.Connection = Depends(get_db)) -> PageOut:
+    """Groups blocks into pages at block boundaries — a page is never split
+    mid-paragraph. Each block belongs to whichever page its own cumulative
+    starting word offset falls on (spec's 275-words-per-page rule), computed
+    with a running-total window function so this stays one query."""
+    book = _get_book_row(conn, book_id)
+    total_pages = pagination.total_pages(book["total_words"])
+    page = max(1, page)
+    if total_pages:
+        page = min(page, total_pages)
+
+    rows = conn.execute(
+        f"""
+        WITH cum AS (
+          SELECT block_index, chapter_id, kind, text, word_count,
+                 COALESCE(SUM(word_count) OVER (
+                   ORDER BY block_index ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                 ), 0) AS word_offset_before
+          FROM book_blocks WHERE book_id = ?
+        )
+        SELECT * FROM cum WHERE (word_offset_before / {pagination.WORDS_PER_PAGE}) + 1 = ? ORDER BY block_index
+        """,
+        (book_id, page),
+    ).fetchall()
+
+    blocks = [
+        BlockOut(
+            block_index=row["block_index"],
+            chapter_id=row["chapter_id"],
+            kind=row["kind"],
+            text=row["text"],
+            word_count=row["word_count"],
+        )
+        for row in rows
+    ]
+    return PageOut(
+        page=page,
+        total_pages=total_pages,
+        blocks=blocks,
+        has_prev=page > 1,
+        has_next=total_pages > 0 and page < total_pages,
+        first_block_index=blocks[0].block_index if blocks else 0,
+    )
+
+
+def _word_offset_before(conn: sqlite3.Connection, book_id: str, block_index: int) -> int:
+    row = conn.execute(
+        "SELECT COALESCE(SUM(word_count), 0) AS w FROM book_blocks WHERE book_id = ? AND block_index < ?",
+        (book_id, block_index),
+    ).fetchone()
+    return row["w"]
+
+
+@router.get("/{book_id}/position", response_model=PositionOut)
+def get_position(book_id: str, user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> PositionOut:
+    book = _get_book_row(conn, book_id)
+    row = conn.execute(
+        "SELECT * FROM reading_positions WHERE book_id = ? AND user_id = ?", (book_id, user_id)
+    ).fetchone()
+    block_index = row["block_index"] if row else 0
+    char_offset = row["char_offset"] if row else 0
+    max_seen = row["max_block_seen"] if row else 0
+    word_offset = _word_offset_before(conn, book_id, block_index)
+    return PositionOut(
+        block_index=block_index,
+        char_offset=char_offset,
+        max_block_seen=max_seen,
+        page=pagination.page_number(word_offset),
+        total_pages=pagination.total_pages(book["total_words"]),
+        percent=pagination.percent_complete(max_seen, book["total_blocks"]),
+    )
+
+
+@router.put("/{book_id}/position", status_code=status.HTTP_204_NO_CONTENT)
+def update_position(book_id: str, payload: PositionUpdate, conn: sqlite3.Connection = Depends(get_db)) -> None:
+    book = _get_book_row(conn, book_id)
+    if payload.block_index < 0 or (book["total_blocks"] and payload.block_index >= book["total_blocks"]):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="block_index out of range")
+
+    existing = conn.execute(
+        "SELECT max_block_seen FROM reading_positions WHERE book_id = ? AND user_id = ?",
+        (book_id, payload.user_id),
+    ).fetchone()
+    # max_block_seen only ever increases (spec §7.1) — flipping back to an
+    # earlier chapter to re-read must not wipe a mostly-read book's progress.
+    max_seen = max(payload.block_index, existing["max_block_seen"] if existing else 0)
+
+    conn.execute(
+        """
+        INSERT INTO reading_positions (book_id, user_id, block_index, char_offset, max_block_seen, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(book_id, user_id) DO UPDATE SET
+          block_index = excluded.block_index,
+          char_offset = excluded.char_offset,
+          max_block_seen = excluded.max_block_seen,
+          updated_at = excluded.updated_at
+        """,
+        (book_id, payload.user_id, payload.block_index, payload.char_offset, max_seen, iso8601_utc_now()),
+    )
 
 
 @router.patch("/{book_id}", response_model=BookOut)
