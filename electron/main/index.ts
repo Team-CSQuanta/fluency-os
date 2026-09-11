@@ -1,11 +1,16 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, dialog } from 'electron';
 import path from 'node:path';
 import { startBackend, stopBackend, type BackendHandle } from './backend-process';
+import { isDownloadActive } from './download-state';
 import { registerIpcHandlers } from './ipc-handlers';
 import { logger } from './logger';
 
 let backendHandle: BackendHandle | null = null;
 let mainWindow: BrowserWindow | null = null;
+// Set true only once the user has confirmed "close anyway" from the warning
+// dialog below — lets the second, re-triggered close() actually go through
+// instead of looping back into the same warning.
+let allowClose = false;
 
 const isDev = !app.isPackaged;
 
@@ -41,6 +46,34 @@ async function createWindow(): Promise<void> {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+  });
+
+  // A model download is real, in-progress network + disk work with no resume
+  // support mid-file — closing while one is active silently loses that
+  // progress, so it's worth an explicit warning rather than just quitting.
+  mainWindow.on('close', (event) => {
+    if (allowClose || !isDownloadActive()) return;
+    event.preventDefault();
+    const win = mainWindow;
+    if (!win) return;
+    void dialog
+      .showMessageBox(win, {
+        type: 'warning',
+        buttons: ['Cancel', 'Close Anyway'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+        title: 'Download in progress',
+        message: 'A model download is still in progress.',
+        detail:
+          "Closing FluencyOS now will interrupt it. There's no partial-file resume yet, so the download will need to restart from the beginning next time.",
+      })
+      .then((result) => {
+        if (result.response === 1) {
+          allowClose = true;
+          win.close();
+        }
+      });
   });
 }
 

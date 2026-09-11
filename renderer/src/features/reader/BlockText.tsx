@@ -72,7 +72,7 @@ export function BlockText({
   fontSize: number;
   textColor: string;
   onClick: (blockIndex: number) => void;
-  onWordClick?: (word: string, sentence: string) => void;
+  onWordClick?: (word: string, sentence: string, blockIndex: number) => void;
 }) {
   const isHeading = block.kind === 'h1' || block.kind === 'h2' || block.kind === 'h3';
   const headingSize = block.kind === 'h1' ? 22 : block.kind === 'h2' ? 19 : 17;
@@ -130,7 +130,7 @@ export function BlockText({
                 seg.heat && onWordClick
                   ? (e) => {
                       e.stopPropagation();
-                      onWordClick(seg.heat!.word, block.text);
+                      onWordClick(seg.heat!.word, block.text, block.block_index);
                     }
                   : undefined
               }

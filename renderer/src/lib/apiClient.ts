@@ -47,10 +47,29 @@ export async function fetchBlobUrl(path: string): Promise<string> {
   return URL.createObjectURL(blob);
 }
 
+// Multipart uploads (conversation turn audio) can't go through request<T>()'s
+// forced 'Content-Type: application/json' — the browser needs to set its own
+// boundary — so this bypasses it the same way fetchBlobUrl bypasses the JSON
+// response parsing.
+async function postForm<T>(path: string, form: FormData): Promise<T> {
+  const { baseUrl, token } = requireBackendInfo();
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: 'POST',
+    headers: { 'X-FluencyOS-Token': token },
+    body: form,
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`API POST ${path} failed: ${res.status} ${body}`);
+  }
+  return (await res.json()) as T;
+}
+
 export const api = {
   get: <T>(path: string, signal?: AbortSignal) => request<T>(path, { signal }),
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'POST', body: body !== undefined ? JSON.stringify(body) : undefined }),
+  postForm,
   put: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'PUT', body: body !== undefined ? JSON.stringify(body) : undefined }),
   patch: <T>(path: string, body?: unknown) =>

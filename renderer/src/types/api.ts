@@ -351,3 +351,228 @@ export interface WordLookupOut {
   context_available: boolean;
   context_note: string | null;
 }
+
+export type VocabContextKind = 'clip' | 'page' | 'turn';
+
+export interface VocabWordCreate {
+  user_id: string;
+  word: string;
+  sentence?: string | null;
+  book_id?: string | null;
+  block_index?: number | null;
+}
+
+export interface VocabNoteOut {
+  id: string;
+  text: string;
+  created_at: string;
+}
+
+export interface VocabContextOut {
+  id: string;
+  kind: VocabContextKind;
+  snippet: string;
+  source_label: string;
+  book_id: string | null;
+  block_index: number | null;
+  created_at: string;
+}
+
+export interface VocabWordOut {
+  id: string;
+  user_id: string;
+  word: string;
+  lemma: string;
+  pos: string | null;
+  cefr: string | null;
+  definition: string | null;
+  example: string | null;
+  simpler: string | null;
+  ipa: string | null;
+  audio_url: string | null;
+  synonyms: string[];
+  tags: string[];
+  context_count: number;
+  ai_mnemonic: string | null;
+  created_at: string;
+}
+
+export interface VocabWordDetailOut extends VocabWordOut {
+  contexts: VocabContextOut[];
+  notes: VocabNoteOut[];
+  conversation_usage: Record<string, number>;
+}
+
+export interface VocabWordSaveOut {
+  word: VocabWordOut;
+  already_saved: boolean;
+}
+
+export interface DictionarySenseOut {
+  pos: string;
+  definition: string;
+  example: string | null;
+}
+
+export interface DictionarySearchOut {
+  word: string;
+  found: boolean;
+  ipa: string | null;
+  audio_url: string | null;
+  senses: DictionarySenseOut[];
+  synonyms: string[];
+  /** From our own offline lexicon, when it also happens to know the word. */
+  cefr: string | null;
+  simpler: string | null;
+}
+
+export interface AiExplainOut {
+  word: string;
+  pos: string;
+  definition: string;
+  example: string;
+  synonyms: string[];
+}
+
+export interface AiExamplesOut {
+  examples: string[];
+}
+
+export interface AiMnemonicOut {
+  mnemonic: string;
+}
+
+export interface AiPracticeOut {
+  question: string;
+}
+
+export type ScenarioKey = 'free' | 'coffee' | 'job' | 'debate';
+export type ConversationChannel = 'voice' | 'text';
+export type ConversationSpeaker = 'user' | 'ai';
+export type UsageOutcome = 'spontaneous' | 'prompted' | 'incorrect' | 'avoided';
+
+export interface ConversationSessionCreate {
+  user_id: string;
+  scenario: ScenarioKey;
+  channel: ConversationChannel;
+}
+
+export interface ConversationTurnOut {
+  id: string;
+  turn_index: number;
+  speaker: ConversationSpeaker;
+  text: string;
+  audio_url: string | null;
+  stt_confidence: number | null;
+  created_at: string;
+}
+
+export interface TargetWordOut {
+  id: string;
+  word: string;
+  used_outcome: UsageOutcome | null;
+}
+
+export interface ConversationSessionOut {
+  id: string;
+  user_id: string;
+  scenario: ScenarioKey;
+  channel: ConversationChannel;
+  target_words: TargetWordOut[];
+  started_at: string;
+  ended_at: string | null;
+  has_report: boolean;
+}
+
+export interface ConversationSessionDetailOut extends ConversationSessionOut {
+  turns: ConversationTurnOut[];
+}
+
+export interface TurnSubmitOut {
+  user_turn: ConversationTurnOut;
+  ai_turn: ConversationTurnOut;
+}
+
+export interface ReportErrorOut {
+  bad: string;
+  good: string;
+  why: string;
+}
+
+export interface ReportRoutingRowOut {
+  word: string;
+  outcome: UsageOutcome;
+  evidence_turn: number | null;
+}
+
+export interface ConversationReportOut {
+  session_id: string;
+  contextual_accuracy_pct: number;
+  fluency_score: number;
+  vocabulary_reach_score: number;
+  pronunciation_score: number | null;
+  words_per_minute: number;
+  avg_pause_seconds: number;
+  self_corrections: number;
+  turn_count: number;
+  routing: ReportRoutingRowOut[];
+  errors: ReportErrorOut[];
+  summary: string;
+}
+
+export interface EngineStatusOut {
+  llm: string;
+  stt: string;
+  tts: string;
+}
+
+export interface DownloadStatusOut {
+  status: 'idle' | 'downloading' | 'ready' | 'error';
+  downloaded_bytes: number;
+  total_bytes: number;
+  error: string | null;
+}
+
+export interface LlmOptionOut {
+  key: string;
+  label: string;
+  note: string;
+  approx_size_mb: number;
+  downloaded: boolean;
+  selected: boolean;
+  download: DownloadStatusOut;
+}
+
+export interface SingleModelOut {
+  label: string;
+  downloaded: boolean;
+  download: DownloadStatusOut;
+}
+
+export interface ModelsCatalogOut {
+  llm: LlmOptionOut[];
+  stt: SingleModelOut;
+  tts: SingleModelOut;
+  models_dir: string;
+  disk_usage_bytes: number;
+}
+
+export interface ReadinessOut {
+  ready: boolean;
+  llm: boolean;
+  stt: boolean;
+  tts: boolean;
+  llm_model_label: string;
+}
+
+export interface VocabWordManualCreate {
+  user_id: string;
+  word: string;
+  pos: string;
+  definition: string;
+  example?: string | null;
+  synonyms?: string[];
+  ipa?: string | null;
+  audio_url?: string | null;
+  note?: string | null;
+}

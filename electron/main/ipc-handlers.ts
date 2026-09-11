@@ -1,5 +1,6 @@
 import { dialog, ipcMain, type BrowserWindow } from 'electron';
 import type { BackendHandle } from './backend-process';
+import { setDownloadActive } from './download-state';
 import { getSystemInfo } from './system-info';
 
 export function registerIpcHandlers(
@@ -45,4 +46,6 @@ export function registerIpcHandlers(
     else win.maximize();
   });
   ipcMain.on('window:close', () => getWindow()?.close());
+
+  ipcMain.on('downloads:set-active', (_event, active: boolean) => setDownloadActive(active));
 }

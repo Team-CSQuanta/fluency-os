@@ -52,6 +52,9 @@ interface ReaderState {
   heatTotal: number;
   lookup: WordLookupOut | null;
   lookupStatus: 'idle' | 'loading' | 'error';
+  // The block the current lookup's word was clicked in — the vocabulary
+  // save action needs this for context provenance (book_id + block_index).
+  lookupBlockIndex: number | null;
   levelMode: LevelMode;
   leveled: LeveledTextOut | null;
   levelStatus: 'idle' | 'loading' | 'error';
@@ -82,7 +85,7 @@ interface ReaderState {
   createBookmark: (blockIndex: number, label: string) => Promise<void>;
   deleteBookmark: (id: string) => Promise<void>;
   setSearchQuery: (query: string) => void;
-  lookupWord: (word: string, sentence?: string) => Promise<void>;
+  lookupWord: (word: string, sentence?: string, blockIndex?: number) => Promise<void>;
   clearLookup: () => void;
   setLevelMode: (mode: LevelMode) => void;
   levelBlock: (blockIndex: number, mode?: LevelMode) => Promise<void>;
@@ -118,6 +121,7 @@ const INITIAL: Pick<
   | 'heatTotal'
   | 'lookup'
   | 'lookupStatus'
+  | 'lookupBlockIndex'
   | 'levelMode'
   | 'leveled'
   | 'levelStatus'
@@ -147,6 +151,7 @@ const INITIAL: Pick<
   heatTotal: 0,
   lookup: null,
   lookupStatus: 'idle',
+  lookupBlockIndex: null,
   // Defaults to a mode that actually works offline; the two generative modes
   // are selectable but gated.
   levelMode: 'inline',
@@ -320,10 +325,10 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     }, SEARCH_DEBOUNCE_MS);
   },
 
-  lookupWord: async (word, sentence) => {
+  lookupWord: async (word, sentence, blockIndex) => {
     const clean = word.trim();
     if (!clean) return;
-    set({ lookupStatus: 'loading' });
+    set({ lookupStatus: 'loading', lookupBlockIndex: blockIndex ?? null });
     try {
       const query = new URLSearchParams({ w: clean });
       if (sentence) query.set('ctx', sentence);
@@ -334,7 +339,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     }
   },
 
-  clearLookup: () => set({ lookup: null, lookupStatus: 'idle' }),
+  clearLookup: () => set({ lookup: null, lookupStatus: 'idle', lookupBlockIndex: null }),
 
   loadPrefs: async () => {
     try {
