@@ -1,10 +1,12 @@
 import { useState } from 'react';
+import { ModelsPanel } from '@/features/settings/ModelsPanel';
 import { SETTINGS_GROUPS, SETTINGS_GROUP_ORDER, type SettingsGroupName } from '@/features/settings/settingsMockData';
 import { useAppStore } from '@/store/appStore';
 import { useShellStore } from '@/store/shellStore';
 
 export function Settings() {
-  const [group, setGroup] = useState<SettingsGroupName>('Media');
+  const initialGroup = useShellStore((s) => s.settingsGroup);
+  const [group, setGroup] = useState<SettingsGroupName>(initialGroup);
   const currentUser = useAppStore((s) => s.currentUser);
   const theme = useShellStore((s) => s.theme);
 
@@ -42,22 +44,26 @@ export function Settings() {
           <div className="font-sans text-[18px] font-semibold tracking-[-0.015em] text-tx">{group}</div>
           <div className="mt-[5px] font-sans text-[12px] text-tx3">{def.sub}</div>
 
-          <div className="mt-5 flex flex-col gap-[1px] overflow-hidden rounded-panel border border-line2 bg-panel">
-            {fields.map((f) => (
-              <div
-                key={f.n}
-                className="flex items-center justify-between gap-5 border-b border-line2 px-4 py-[14px] last:border-b-0"
-              >
-                <div className="min-w-0">
-                  <div className="font-sans text-[12.5px] font-medium text-tx">{f.n}</div>
-                  {f.sub && <div className="mt-[3px] font-mono text-[10.5px] leading-[1.6] text-tx3">{f.sub}</div>}
+          {group === 'AI' ? (
+            <ModelsPanel />
+          ) : (
+            <div className="mt-5 flex flex-col gap-[1px] overflow-hidden rounded-panel border border-line2 bg-panel">
+              {fields.map((f) => (
+                <div
+                  key={f.n}
+                  className="flex items-center justify-between gap-5 border-b border-line2 px-4 py-[14px] last:border-b-0"
+                >
+                  <div className="min-w-0">
+                    <div className="font-sans text-[12.5px] font-medium text-tx">{f.n}</div>
+                    {f.sub && <div className="mt-[3px] font-mono text-[10.5px] leading-[1.6] text-tx3">{f.sub}</div>}
+                  </div>
+                  <div className="flex-none rounded-field border border-line2 px-[11px] py-[6px] font-mono text-[11px] font-medium text-tx2">
+                    {f.v}
+                  </div>
                 </div>
-                <div className="flex-none rounded-field border border-line2 px-[11px] py-[6px] font-mono text-[11px] font-medium text-tx2">
-                  {f.v}
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

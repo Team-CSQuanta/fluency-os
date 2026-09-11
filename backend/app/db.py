@@ -11,6 +11,11 @@ def get_connection(db_path: str | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path or settings.db_path, check_same_thread=False)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
+    # Conversation endpoints can hold a connection open for a long time
+    # (real local LLM/STT/TTS inference mid-request) — without a busy
+    # timeout, any other request touching the DB during that window fails
+    # immediately with "database is locked" instead of just waiting briefly.
+    conn.execute("PRAGMA busy_timeout = 10000")
     conn.row_factory = sqlite3.Row
     return conn
 

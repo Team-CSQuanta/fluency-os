@@ -10,6 +10,7 @@ import { getBlockSelectionRange } from '@/features/reader/useSelectionRange';
 import { useReadingSession } from '@/features/reader/useReadingSession';
 import { useReaderStore } from '@/store/readerStore';
 import { useShellStore } from '@/store/shellStore';
+import { useVocabularyStore } from '@/store/vocabularyStore';
 import type { ChapterOut, HighlightColour } from '@/types/api';
 
 type Tab = 'toc' | 'search' | 'marks' | 'text' | 'ai' | 'level';
@@ -90,6 +91,7 @@ export function Reader() {
   const heatTotal = useReaderStore((s) => s.heatTotal);
   const lookup = useReaderStore((s) => s.lookup);
   const lookupStatus = useReaderStore((s) => s.lookupStatus);
+  const lookupBlockIndex = useReaderStore((s) => s.lookupBlockIndex);
   const lookupWord = useReaderStore((s) => s.lookupWord);
   const levelMode = useReaderStore((s) => s.levelMode);
   const setLevelMode = useReaderStore((s) => s.setLevelMode);
@@ -114,6 +116,12 @@ export function Reader() {
   const setPanelOpen = (next: boolean) => setPrefs({ panel_open: next });
   const [showOriginal, setShowOriginal] = useState(false);
   const [highlighterColor, setHighlighterColor] = useState<HighlightColour | null>(null);
+  const saveWord = useVocabularyStore((s) => s.saveWord);
+  const [toast, setToast] = useState('');
+  const flashToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(''), 2200);
+  };
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const justDraggedRef = useRef(false);
@@ -183,9 +191,9 @@ export function Reader() {
   const showHeat = heatOn && heatEnabled;
   const heatByBlock = new Map(heat.map((h) => [h.block_index, h.spans]));
 
-  const handleWordClick = (word: string, sentence: string) => {
+  const handleWordClick = (word: string, sentence: string, blockIndex: number) => {
     setTab('ai');
-    void lookupWord(word, sentence);
+    void lookupWord(word, sentence, blockIndex);
   };
   const fsPct = Math.round(((fontSize - 12) / 10) * 100);
   const selectedBlock = blocks.find((b) => b.block_index === selectedPara);
@@ -761,18 +769,34 @@ export function Reader() {
                       )}
                     </div>
 
-                    {/* The vocabulary tables belong to the SRS increment. Until
-                        they exist the button is disabled rather than faking a save. */}
-                    <button
-                      disabled
-                      title="Saving to vocabulary arrives with the vocabulary & SRS increment"
-                      className="rounded-field border border-line2 py-[10px] font-sans text-[11.5px] font-medium text-tx3 opacity-60"
-                    >
-                      ＋ Save to vocabulary with this sentence
-                    </button>
-                    <div className="font-mono text-[9.5px] leading-[1.7] text-tx3">
-                      definitions come from the bundled offline wordlist · no model required
-                    </div>
+                    {/* Only offered once found — there is no dictionary data
+                        to snapshot for a word the offline lexicon doesn't know. */}
+                    {lookup.found && (
+                      <>
+                        <button
+                          onClick={async () => {
+                            const sentence = blocks.find((b) => b.block_index === lookupBlockIndex)?.text;
+                            const { alreadySaved } = await saveWord({
+                              word: lookup.word,
+                              sentence,
+                              bookId: bookId ?? undefined,
+                              blockIndex: lookupBlockIndex ?? undefined,
+                            });
+                            flashToast(
+                              alreadySaved
+                                ? `"${lookup.word}" is already in your vocabulary`
+                                : `"${lookup.word}" saved to vocabulary`,
+                            );
+                          }}
+                          className="rounded-field border border-accLine bg-accSoft py-[10px] font-sans text-[11.5px] font-medium text-acc hover:brightness-105"
+                        >
+                          ＋ Save to vocabulary with this sentence
+                        </button>
+                        <div className="font-mono text-[9.5px] leading-[1.7] text-tx3">
+                          definitions come from the bundled offline wordlist · no model required
+                        </div>
+                      </>
+                    )}
                   </>
                 )}
               </div>
@@ -990,6 +1014,12 @@ export function Reader() {
             )}
           </div>
         </aside>
+      )}
+
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 rounded-field border border-accLine bg-panel2 px-[14px] py-[10px] font-mono text-[11.5px] font-medium text-tx shadow-panel">
+          {toast}
+        </div>
       )}
     </div>
   );

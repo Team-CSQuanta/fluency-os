@@ -18,6 +18,7 @@ export interface FluencyOSBridge {
   minimizeWindow: () => void;
   maximizeWindow: () => void;
   closeWindow: () => void;
+  setDownloadActive: (active: boolean) => void;
 }
 
 declare global {

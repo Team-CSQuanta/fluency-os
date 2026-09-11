@@ -1,88 +1,134 @@
-import { useState } from 'react';
-import { MASTERY_COLORS, matchesVocabFilter, VOCAB_FILTERS, VOCAB_ROWS } from '@/features/vocabulary/vocabMockData';
+import { useEffect, useMemo, useState } from 'react';
+import { AddWordModal } from '@/features/vocabulary/AddWordModal';
 import { useShellStore } from '@/store/shellStore';
+import { useVocabularyStore } from '@/store/vocabularyStore';
 
 export function VocabularyList() {
-  const [filter, setFilter] = useState<string>('All');
+  const [query, setQuery] = useState('');
+  const [addOpen, setAddOpen] = useState(false);
   const goWord = useShellStore((s) => s.goWord);
   const selectedWord = useShellStore((s) => s.selectedWord);
+  const words = useVocabularyStore((s) => s.words);
+  const wordsStatus = useVocabularyStore((s) => s.wordsStatus);
+  const fetchWords = useVocabularyStore((s) => s.fetchWords);
 
-  const rows = VOCAB_ROWS.filter((r) => matchesVocabFilter(r, filter));
+  useEffect(() => {
+    void fetchWords();
+  }, [fetchWords]);
+
+  const rows = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return words;
+    return words.filter(
+      (w) => w.word.toLowerCase().includes(q) || (w.pos ?? '').toLowerCase().includes(q) || w.tags.some((t) => t.toLowerCase().includes(q)),
+    );
+  }, [words, query]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-none flex-wrap items-center gap-2 border-b border-line2 px-[var(--pad)] py-[14px]">
-        <div className="flex min-w-[210px] items-center gap-[7px] rounded-field border border-line2 px-[11px] py-[7px] font-sans text-[11.5px] text-tx3">
-          ⌕ search 1,847 entries
-        </div>
-        {VOCAB_FILTERS.map((f) => {
-          const on = filter === f;
-          return (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className="rounded-full border px-[11px] py-[6px] font-sans text-[11px] font-medium"
-              style={{
-                borderColor: on ? 'var(--accLine)' : 'var(--line2)',
-                background: on ? 'var(--accSoft)' : 'transparent',
-                color: on ? 'var(--acc)' : 'var(--tx2)',
-              }}
-            >
-              {f}
+        <label className="flex min-w-[210px] items-center gap-[7px] rounded-field border border-line2 px-[11px] py-[7px] font-sans text-[11.5px] text-tx3 focus-within:border-acc">
+          <span aria-hidden>⌕</span>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="search word, POS, or tag"
+            aria-label="Search vocabulary"
+            className="w-[170px] bg-transparent text-tx placeholder:text-tx3 focus:outline-none"
+          />
+          {query && (
+            <button onClick={() => setQuery('')} aria-label="Clear search" className="text-tx3 hover:text-acc">
+              ✕
             </button>
-          );
-        })}
+          )}
+        </label>
+        <span className="font-mono text-[10.5px] text-tx3">
+          {words.length} {words.length === 1 ? 'entry' : 'entries'}
+        </span>
         <div className="flex-1" />
+        <button
+          onClick={() => setAddOpen(true)}
+          className="rounded-field border border-accLine bg-accSoft px-3 py-[7px] font-mono text-[11px] font-medium text-acc"
+        >
+          ＋ add word
+        </button>
         <button className="rounded-field border border-line px-3 py-[7px] font-mono text-[11px] text-tx2 hover:border-acc hover:text-acc">
           export APKG
         </button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div
-          className="sticky top-0 grid gap-3 border-b border-line2 bg-bg px-[var(--pad)] py-[9px] font-mono text-[9px] font-semibold uppercase tracking-[0.1em] text-tx3"
-          style={{ gridTemplateColumns: '1.5fr .6fr .8fr 1.1fr .7fr .6fr' }}
-        >
-          <span>Headword</span>
-          <span>POS</span>
-          <span>Source</span>
-          <span>Mastery</span>
-          <span>Due</span>
-          <span>Status</span>
-        </div>
-        {rows.map((r) => (
-          <button
-            key={r.word}
-            onClick={() => goWord(r.word)}
-            className="grid w-full items-center gap-3 border-b border-line2 px-[var(--pad)] py-[11px] text-left hover:bg-panel2"
-            style={{
-              gridTemplateColumns: '1.5fr .6fr .8fr 1.1fr .7fr .6fr',
-              background: selectedWord === r.word ? 'var(--panel2)' : 'transparent',
-            }}
-          >
-            <span className="min-w-0">
-              <span className="block font-sans text-[13px] font-semibold text-tx">{r.word}</span>
-              <span className="font-mono text-[10px] text-tx3">
-                {r.ipa} · {r.ctx} contexts
-              </span>
-            </span>
-            <span className="font-mono text-[11px] text-tx2">{r.pos}</span>
-            <span className="font-mono text-[10.5px] text-tx3">{r.src}</span>
-            <span className="flex items-center gap-2">
-              <span className="h-1 max-w-[88px] flex-1 rounded-field bg-line2">
-                <span className="block h-1 rounded-field" style={{ width: `${r.mastery * 20}%`, background: MASTERY_COLORS[r.mastery] }} />
-              </span>
-              <span className="font-mono text-[10px] font-medium text-tx3">L{r.mastery}</span>
-            </span>
-            <span className="font-mono text-[10.5px]" style={{ color: r.due === 'today' ? 'var(--acc)' : 'var(--tx3)' }}>
-              {r.due}
-            </span>
-            <span className="justify-self-start rounded-[4px] bg-line2 px-[7px] py-[3px] font-mono text-[9.5px] font-medium text-tx2">
-              {r.status}
-            </span>
-          </button>
-        ))}
+        {wordsStatus === 'loading' && (
+          <div className="p-[var(--pad)] font-mono text-[11px] text-tx3">loading…</div>
+        )}
+        {wordsStatus === 'error' && (
+          <div className="p-[var(--pad)] font-mono text-[11px] text-tx3">couldn't load your vocabulary</div>
+        )}
+        {wordsStatus === 'idle' && words.length === 0 && (
+          <div className="p-[var(--pad)] font-sans text-[12px] leading-[1.6] text-tx2">
+            Nothing saved yet — look up a word while reading and save it to build your list.
+          </div>
+        )}
+        {rows.length > 0 && (
+          <>
+            <div
+              className="sticky top-0 grid gap-3 border-b border-line2 bg-bg px-[var(--pad)] py-[9px] font-mono text-[9px] font-semibold uppercase tracking-[0.1em] text-tx3"
+              style={{ gridTemplateColumns: '1.6fr .6fr 1.3fr .8fr' }}
+            >
+              <span>Headword</span>
+              <span>CEFR</span>
+              <span>Tags</span>
+              <span>Added</span>
+            </div>
+            {rows.map((w) => (
+              <button
+                key={w.id}
+                onClick={() => goWord(w.word)}
+                className="grid w-full items-center gap-3 border-b border-line2 px-[var(--pad)] py-[11px] text-left hover:bg-panel2"
+                style={{
+                  gridTemplateColumns: '1.6fr .6fr 1.3fr .8fr',
+                  background: selectedWord === w.word ? 'var(--panel2)' : 'transparent',
+                }}
+              >
+                <span className="min-w-0">
+                  <span className="block font-sans text-[13px] font-semibold text-tx">{w.word}</span>
+                  <span className="font-mono text-[10px] text-tx3">
+                    {w.pos ?? '—'} · {w.context_count} {w.context_count === 1 ? 'context' : 'contexts'}
+                  </span>
+                </span>
+                <span>
+                  {w.cefr ? (
+                    <span className="rounded-[4px] border border-accLine px-[7px] py-[3px] font-mono text-[9.5px] font-medium text-acc">
+                      {w.cefr}
+                    </span>
+                  ) : (
+                    <span className="font-mono text-[10.5px] text-tx3">—</span>
+                  )}
+                </span>
+                <span className="flex flex-wrap gap-[5px]">
+                  {w.tags.length === 0 ? (
+                    <span className="font-mono text-[10.5px] text-tx3">—</span>
+                  ) : (
+                    w.tags.map((t) => (
+                      <span key={t} className="rounded-full bg-line2 px-[8px] py-[2px] font-mono text-[9.5px] text-tx2">
+                        {t}
+                      </span>
+                    ))
+                  )}
+                </span>
+                <span className="font-mono text-[10.5px] text-tx3">
+                  {new Date(w.created_at).toLocaleDateString()}
+                </span>
+              </button>
+            ))}
+          </>
+        )}
+        {wordsStatus === 'idle' && words.length > 0 && rows.length === 0 && (
+          <div className="p-[var(--pad)] font-mono text-[11px] text-tx3">no matches for "{query}"</div>
+        )}
       </div>
+
+      {addOpen && <AddWordModal onClose={() => setAddOpen(false)} />}
     </div>
   );
 }

@@ -9,4 +9,5 @@ contextBridge.exposeInMainWorld('fluencyos', {
   minimizeWindow: () => ipcRenderer.send('window:minimize'),
   maximizeWindow: () => ipcRenderer.send('window:maximize'),
   closeWindow: () => ipcRenderer.send('window:close'),
+  setDownloadActive: (active: boolean) => ipcRenderer.send('downloads:set-active', active),
 });

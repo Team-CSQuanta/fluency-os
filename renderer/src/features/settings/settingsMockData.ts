@@ -48,14 +48,11 @@ export const SETTINGS_GROUPS: Record<SettingsGroupName, SettingGroup> = {
     ],
   },
   AI: {
-    sub: 'Model selection, keys and downloads',
-    fields: [
-      { n: 'Mode', sub: 'local inference or API key', v: 'local' },
-      { n: 'Model', sub: 'llama.cpp server', v: 'gemma-3-4b-it Q4_K_M' },
-      { n: 'Temperature', sub: 'lower is more literal', v: '0.4' },
-      { n: 'API key', sub: 'OS keychain reference only', v: 'not set' },
-      { n: 'Downloads', sub: 'models live outside the app dir', v: '2.5 GB' },
-    ],
+    // Rendered by ModelsPanel.tsx instead of this generic field list — real
+    // download status/selection from the backend, not mock data. `fields`
+    // stays empty since it's unused for this group.
+    sub: 'Local models — pick one, download it, then start a conversation',
+    fields: [],
   },
   Speech: {
     sub: 'Input, VAD, voice and rate',
@@ -102,7 +99,7 @@ export const SETTINGS_GROUPS: Record<SettingsGroupName, SettingGroup> = {
     sub: 'What stays on this machine',
     fields: [
       { n: 'Telemetry', sub: 'permanently off, not a toggle', v: 'off' },
-      { n: 'Outbound requests', sub: 'local mode', v: 'model download only' },
+      { n: 'Outbound requests', sub: 'model download, or a dictionary search you explicitly run', v: 'only when you ask' },
       { n: 'Voice recordings', sub: 'never uploaded', v: 'local' },
       { n: 'Leaderboards', sub: 'opt-in, code-shared group', v: 'off' },
       { n: 'Clip redistribution', sub: 'from your own files only', v: 'never' },
