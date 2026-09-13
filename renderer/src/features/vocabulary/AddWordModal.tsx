@@ -12,6 +12,7 @@ export function AddWordModal({ onClose }: { onClose: () => void }) {
   const [playing, setPlaying] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const [aiWord, setAiWord] = useState('');
   const [aiContext, setAiContext] = useState('');
@@ -54,6 +55,7 @@ export function AddWordModal({ onClose }: { onClose: () => void }) {
   const handleSaveAi = async () => {
     if (!aiResult) return;
     setSaving(true);
+    setSaveError(null);
     try {
       const { alreadySaved } = await saveManualWord({
         word: aiResult.word,
@@ -64,6 +66,8 @@ export function AddWordModal({ onClose }: { onClose: () => void }) {
         note: note.trim() || undefined,
       });
       setSaved(alreadySaved ? 'already in your vocabulary' : 'saved');
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Could not save this word');
     } finally {
       setSaving(false);
     }
@@ -81,6 +85,7 @@ export function AddWordModal({ onClose }: { onClose: () => void }) {
   const handleSave = async (sense: DictionarySenseOut) => {
     if (!searchResult) return;
     setSaving(true);
+    setSaveError(null);
     try {
       const { alreadySaved } = await saveManualWord({
         word: searchResult.word,
@@ -93,6 +98,8 @@ export function AddWordModal({ onClose }: { onClose: () => void }) {
         note: note.trim() || undefined,
       });
       setSaved(alreadySaved ? 'already in your vocabulary' : 'saved');
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Could not save this word');
     } finally {
       setSaving(false);
     }
@@ -106,6 +113,7 @@ export function AddWordModal({ onClose }: { onClose: () => void }) {
   const switchMode = (next: Mode) => {
     setMode(next);
     setSaved(null);
+    setSaveError(null);
   };
 
   return (
@@ -336,7 +344,11 @@ export function AddWordModal({ onClose }: { onClose: () => void }) {
         )}
 
         <div className="flex items-center justify-between gap-2 border-t border-line2 px-5 py-[14px]">
-          <span className="font-mono text-[10.5px] text-tx3">{saved && `✓ ${saved}`}</span>
+          {saveError ? (
+            <span className="min-w-0 flex-1 font-mono text-[10.5px] leading-[1.5] text-[#c0563f]">{saveError}</span>
+          ) : (
+            <span className="font-mono text-[10.5px] text-tx3">{saved && `✓ ${saved}`}</span>
+          )}
           <div className="flex gap-2">
             <button
               onClick={handleClose}

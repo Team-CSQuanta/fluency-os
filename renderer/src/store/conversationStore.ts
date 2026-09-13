@@ -21,6 +21,7 @@ interface ConversationState {
 
   report: ConversationReportOut | null;
   reportStatus: 'idle' | 'loading' | 'error';
+  reportError: string | null;
 
   engineStatus: EngineStatusOut | null;
 
@@ -31,7 +32,8 @@ interface ConversationState {
   justStarted: boolean;
 
   fetchSessions: () => Promise<void>;
-  startSession: (scenario: ScenarioKey, channel: ConversationChannel) => Promise<string>;
+  startSession: (scenario: ScenarioKey, channel: ConversationChannel, seedWordIds?: string[]) => Promise<string>;
+  regenerateReport: (sessionId: string) => Promise<void>;
   fetchSessionDetail: (sessionId: string) => Promise<void>;
   consumeJustStarted: () => boolean;
   submitTextTurn: (sessionId: string, text: string) => Promise<TurnSubmitOut>;
@@ -39,7 +41,7 @@ interface ConversationState {
   endSession: (sessionId: string) => Promise<void>;
   fetchReport: (sessionId: string) => Promise<void>;
   fetchEngineStatus: () => Promise<void>;
-  turnAudioUrl: (turnId: string) => Promise<string>;
+  turnAudioUrl: (turnId: string, chunk?: number) => Promise<string>;
   deleteSession: (sessionId: string) => Promise<void>;
 }
 
@@ -64,6 +66,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
   report: null,
   reportStatus: 'idle',
+  reportError: null,
 
   engineStatus: null,
   justStarted: false,
@@ -81,12 +84,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }
   },
 
-  startSession: async (scenario, channel) => {
+  startSession: async (scenario, channel, seedWordIds) => {
     const userId = requireUserId();
     const session = await api.post<ConversationSessionOut>('/conversation/sessions', {
       user_id: userId,
       scenario,
       channel,
+      seed_word_ids: seedWordIds,
     });
     set({ activeSession: null, activeStatus: 'idle', report: null });
     await get().fetchSessionDetail(session.id);
@@ -163,19 +167,38 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const report = await api.post<ConversationReportOut>(
       `/conversation/sessions/${sessionId}/end?user_id=${encodeURIComponent(userId)}`,
     );
-    set({ report });
+    set({ report, reportStatus: 'idle', reportError: null });
   },
 
   fetchReport: async (sessionId) => {
-    set({ reportStatus: 'loading' });
+    // Clearing `report` up front matters: without it a failed fetch left the
+    // previously-viewed session's report on screen, so the Report screen
+    // showed another conversation's numbers as if they were this one's.
+    set({ reportStatus: 'loading', report: null, reportError: null });
     try {
       const userId = requireUserId();
       const report = await api.get<ConversationReportOut>(
         `/conversation/sessions/${sessionId}/report?user_id=${encodeURIComponent(userId)}`,
       );
       set({ report, reportStatus: 'idle' });
-    } catch {
-      set({ reportStatus: 'error' });
+    } catch (err) {
+      set({ reportStatus: 'error', reportError: err instanceof Error ? err.message : String(err) });
+    }
+  },
+
+  regenerateReport: async (sessionId) => {
+    // A POST, not a refetch: this re-runs the analysis and rewrites the
+    // session's usage logs, so it costs a real LLM call.
+    const userId = requireUserId();
+    set({ reportStatus: 'loading', reportError: null });
+    try {
+      const report = await api.post<ConversationReportOut>(
+        `/conversation/sessions/${sessionId}/report/regenerate?user_id=${encodeURIComponent(userId)}`,
+      );
+      set({ report, reportStatus: 'idle' });
+    } catch (err) {
+      // Keep the old report on screen — it's still the real one, just older.
+      set({ reportStatus: 'idle', reportError: err instanceof Error ? err.message : String(err) });
     }
   },
 
@@ -187,9 +210,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     set({ engineStatus });
   },
 
-  turnAudioUrl: async (turnId) => {
+  turnAudioUrl: async (turnId, chunk = 0) => {
+    // This request is also what triggers synthesis of that sentence, so it can
+    // take a few seconds on the first fetch and is instant afterwards.
     const userId = requireUserId();
-    return fetchBlobUrl(`/conversation/turns/${turnId}/audio?user_id=${encodeURIComponent(userId)}`);
+    return fetchBlobUrl(
+      `/conversation/turns/${turnId}/audio?user_id=${encodeURIComponent(userId)}&chunk=${chunk}`,
+    );
   },
 
   deleteSession: async (sessionId) => {

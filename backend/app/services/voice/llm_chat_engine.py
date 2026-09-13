@@ -42,6 +42,11 @@ def _load_llm_locked(repo_id: str, filename: str):
         from llama_cpp import Llama
     except ImportError as err:
         raise EngineUnavailable("llama-cpp-python isn't installed") from err
+    # Release the outgoing model *before* allocating the replacement. Holding
+    # both at once doubles peak memory for the length of the load, which on a
+    # light machine is precisely when switching models runs out of RAM.
+    _llm = None
+    _loaded_path = None
     try:
         _llm = Llama(
             model_path=path,
@@ -117,33 +122,6 @@ def generate_reply(
     return text.strip()
 
 
-def generate_report(
-    transcript: list[tuple[str, str]], target_words: list[str], *, repo_id: str, filename: str
-) -> dict:
-    """Asks the model for a structured JSON analysis of the conversation:
-    per-target-word usage classification + a short narrative summary.
-    Fluency proxies (WPM, filler rate) are computed separately, from the
-    raw turns directly — no LLM needed for those, so they're not asked
-    for here."""
-    transcript_text = "\n".join(f"{role}: {text}" for role, text in transcript)
-    words_list = ", ".join(target_words) if target_words else "(none)"
-
-    system_prompt = (
-        "You are a strict, structured language-learning analyst. Given a conversation "
-        "transcript and a list of target vocabulary words the learner was meant to "
-        "practice, respond with ONLY a JSON object (no prose, no markdown fences) of "
-        'the shape: {"word_usage": {"<word>": "spontaneous"|"prompted"|"incorrect"|"avoided"}, '
-        '"accuracy_notes": [string, ...], "summary": string}. '
-        '"spontaneous" = the learner used the word correctly and unprompted. '
-        '"prompted" = used correctly only after the AI said or hinted the word. '
-        '"incorrect" = attempted but used wrongly. "avoided" = never used at all.'
-    )
-    user_prompt = f"Target words: {words_list}\n\nTranscript:\n{transcript_text}"
-    return generate_json(
-        system_prompt, user_prompt, repo_id=repo_id, filename=filename, max_tokens=600, temperature=0.2
-    )
-
-
 def generate_json(
     system_prompt: str,
     user_prompt: str,
@@ -154,8 +132,9 @@ def generate_json(
     temperature: float = 0.4,
 ) -> dict:
     """Shared by every feature that wants a structured (JSON) answer from the
-    local model rather than free-form chat text — generate_report above, and
-    Vocabulary's AI explain/examples/mnemonic/practice features."""
+    local model rather than free-form chat text — the post-chat report analysis
+    and Vocabulary's AI explain/examples/mnemonic/practice features. The
+    prompts themselves live in the services, never here."""
     with _lock:
         llm = _load_llm_locked(repo_id, filename)
         try:

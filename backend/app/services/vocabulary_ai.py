@@ -1,6 +1,6 @@
 """AI-powered additions to the Vocabulary feature, backed by whichever LLM
-Conversation is currently configured to use — local (llama.cpp) or cloud
-(OpenRouter), same provider dispatch as app/services/conversation.py. Gated
+Conversation is currently configured to use — local (llama.cpp), OpenRouter,
+or Gemini — same provider dispatch as app/services/conversation.py. Gated
 the same way Conversation gates real AI use: the model must be both
 downloaded/configured (_ensure_ready) and, for the local provider, actually
 loaded into memory via the explicit "Launch AI" action (_ensure_launched),
@@ -11,7 +11,7 @@ Conversation uses.
 import sqlite3
 
 from app.services import conversation
-from app.services.voice import cloud_llm_engine, llm_chat_engine
+from app.services.voice import cloud_llm_engine, gemini_llm_engine, llm_chat_engine
 
 _JSON_ONLY = "Respond with ONLY a JSON object (no prose, no markdown fences) of the shape: "
 
@@ -26,8 +26,9 @@ def _llm_target(conn: sqlite3.Connection, user_id: str) -> dict:
 def _generate_json(
     target: dict, system_prompt: str, user_prompt: str, *, max_tokens: int = 300, temperature: float = 0.4
 ) -> dict:
-    if target["provider"] == "cloud":
-        return cloud_llm_engine.generate_json(
+    if target["provider"] != "local":
+        engine = gemini_llm_engine if target["provider"] == "gemini" else cloud_llm_engine
+        return engine.generate_json(
             system_prompt,
             user_prompt,
             api_key=target["api_key"],

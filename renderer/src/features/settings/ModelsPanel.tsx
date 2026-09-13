@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useEngineStore } from '@/store/engineStore';
 import type { DownloadStatusOut } from '@/types/api';
 
@@ -102,13 +102,18 @@ function ProviderToggle({
   onChange,
   disabled,
 }: {
-  provider: 'local' | 'cloud';
-  onChange: (p: 'local' | 'cloud') => void;
+  provider: 'local' | 'openrouter' | 'gemini';
+  onChange: (p: 'local' | 'openrouter' | 'gemini') => void;
   disabled: boolean;
 }) {
+  const labels: Record<'local' | 'openrouter' | 'gemini', string> = {
+    local: 'Local (this device)',
+    openrouter: 'Cloud (OpenRouter)',
+    gemini: 'Cloud (Gemini)',
+  };
   return (
     <div className="inline-flex overflow-hidden rounded-field border border-line2">
-      {(['local', 'cloud'] as const).map((p) => (
+      {(['local', 'openrouter', 'gemini'] as const).map((p) => (
         <button
           key={p}
           onClick={() => onChange(p)}
@@ -119,15 +124,27 @@ function ProviderToggle({
             color: provider === p ? 'var(--acc)' : 'var(--tx2)',
           }}
         >
-          {p === 'local' ? 'Local (this device)' : 'Cloud (OpenRouter)'}
+          {labels[p]}
         </button>
       ))}
     </div>
   );
 }
 
-function CloudProviderCard({ active }: { active: boolean }) {
-  const llmProvider = useEngineStore((s) => s.llmProvider);
+interface CloudProviderConfig {
+  provider: 'openrouter' | 'gemini';
+  title: string;
+  description: ReactNode;
+  keyLabel: string;
+  keyPlaceholder: string;
+  modelPlaceholder: string;
+  modelHint: string;
+  hasKey: boolean;
+  keyPreview: string | null;
+  model: string;
+}
+
+function CloudProviderCard({ active, config }: { active: boolean; config: CloudProviderConfig }) {
   const setLlmProvider = useEngineStore((s) => s.setLlmProvider);
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [modelInput, setModelInput] = useState('');
@@ -136,18 +153,23 @@ function CloudProviderCard({ active }: { active: boolean }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (llmProvider) setModelInput(llmProvider.openrouter_model);
-  }, [llmProvider]);
+    setModelInput(config.model);
+    // Only re-sync when the provider identity or its saved model changes —
+    // not on every store update, which would stomp on in-progress typing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.provider, config.model]);
 
   const handleSave = async () => {
     setSaving(true);
     setError(null);
     setSaved(false);
     try {
-      await setLlmProvider('cloud', {
-        apiKey: apiKeyInput.trim() || undefined,
-        model: modelInput.trim() || undefined,
-      });
+      await setLlmProvider(
+        config.provider,
+        config.provider === 'gemini'
+          ? { geminiApiKey: apiKeyInput.trim() || undefined, geminiModel: modelInput.trim() || undefined }
+          : { openrouterApiKey: apiKeyInput.trim() || undefined, openrouterModel: modelInput.trim() || undefined },
+      );
       setApiKeyInput('');
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
@@ -164,29 +186,22 @@ function CloudProviderCard({ active }: { active: boolean }) {
       style={{ borderColor: active ? 'var(--accLine)' : 'var(--line2)', background: active ? 'var(--accSoft)' : 'var(--panel)' }}
     >
       <div className="mb-[10px] flex items-center gap-[8px] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
-        Cloud (OpenRouter)
+        {config.title}
         {active && (
           <span className="rounded-full bg-accSoft px-[7px] py-[2px] font-mono text-[8.5px] font-semibold normal-case tracking-normal text-acc">
             active
           </span>
         )}
       </div>
-      <div className="mb-[10px] font-sans text-[12px] leading-[1.6] text-tx2">
-        Uses any model available on{' '}
-        <span className="font-medium text-tx">openrouter.ai</span> instead of a local download — real API calls
-        leave the machine, unlike the local option. Nothing here is stored anywhere but this device's own local
-        database.
-      </div>
+      <div className="mb-[10px] font-sans text-[12px] leading-[1.6] text-tx2">{config.description}</div>
       <div className="flex flex-col gap-[8px]">
         <div>
-          <div className="mb-1 font-mono text-[9px] font-semibold uppercase tracking-[0.1em] text-tx3">
-            OpenRouter API key
-          </div>
+          <div className="mb-1 font-mono text-[9px] font-semibold uppercase tracking-[0.1em] text-tx3">{config.keyLabel}</div>
           <input
             type="password"
             value={apiKeyInput}
             onChange={(e) => setApiKeyInput(e.target.value)}
-            placeholder={llmProvider?.has_api_key ? `saved (${llmProvider.api_key_preview}) — enter a new key to replace` : 'sk-or-v1-…'}
+            placeholder={config.hasKey ? `saved (${config.keyPreview}) — enter a new key to replace` : config.keyPlaceholder}
             className="w-full rounded-field border border-line2 bg-panel2 px-3 py-[8px] font-mono text-[11.5px] text-tx placeholder:text-tx3 focus:border-acc focus:outline-none"
           />
         </div>
@@ -195,12 +210,10 @@ function CloudProviderCard({ active }: { active: boolean }) {
           <input
             value={modelInput}
             onChange={(e) => setModelInput(e.target.value)}
-            placeholder="openai/gpt-4o-mini"
+            placeholder={config.modelPlaceholder}
             className="w-full rounded-field border border-line2 bg-panel2 px-3 py-[8px] font-mono text-[11.5px] text-tx placeholder:text-tx3 focus:border-acc focus:outline-none"
           />
-          <div className="mt-1 font-mono text-[9.5px] text-tx3">
-            any OpenRouter model id — e.g. openai/gpt-4o-mini, anthropic/claude-3.5-haiku, meta-llama/llama-3.1-8b-instruct:free
-          </div>
+          <div className="mt-1 font-mono text-[9.5px] text-tx3">{config.modelHint}</div>
         </div>
         <div className="mt-1 flex items-center gap-[10px]">
           <button
@@ -208,7 +221,7 @@ function CloudProviderCard({ active }: { active: boolean }) {
             disabled={saving}
             className="rounded-field bg-accSolid px-[14px] py-[8px] font-sans text-[11px] font-semibold text-white hover:brightness-110 disabled:opacity-50"
           >
-            {saving ? 'saving…' : 'save & use cloud'}
+            {saving ? 'saving…' : `save & use ${config.provider === 'gemini' ? 'gemini' : 'openrouter'}`}
           </button>
           {saved && <span className="font-mono text-[10.5px] font-medium text-acc">✓ saved</span>}
           {error && <span className="font-mono text-[10.5px] text-[#c0563f]">{error}</span>}
@@ -251,7 +264,7 @@ export function ModelsPanel() {
     catalog.stt.download.error ||
     catalog.tts.download.error;
 
-  const handleToggleProvider = async (p: 'local' | 'cloud') => {
+  const handleToggleProvider = async (p: 'local' | 'openrouter' | 'gemini') => {
     setSwitchingProvider(true);
     try {
       await setLlmProvider(p);
@@ -271,7 +284,54 @@ export function ModelsPanel() {
         </div>
       )}
 
-      <CloudProviderCard active={llmProvider?.provider === 'cloud'} />
+      {llmProvider && (
+        <CloudProviderCard
+          active={llmProvider.provider === 'openrouter'}
+          config={{
+            provider: 'openrouter',
+            title: 'Cloud (OpenRouter)',
+            description: (
+              <>
+                Uses any model available on <span className="font-medium text-tx">openrouter.ai</span> instead of a
+                local download — real API calls leave the machine, unlike the local option. Nothing here is stored
+                anywhere but this device's own local database.
+              </>
+            ),
+            keyLabel: 'OpenRouter API key',
+            keyPlaceholder: 'sk-or-v1-…',
+            modelPlaceholder: 'openai/gpt-4o-mini',
+            modelHint:
+              'any OpenRouter model id — e.g. openai/gpt-4o-mini, anthropic/claude-3.5-haiku, meta-llama/llama-3.1-8b-instruct:free',
+            hasKey: llmProvider.has_openrouter_key,
+            keyPreview: llmProvider.openrouter_key_preview,
+            model: llmProvider.openrouter_model,
+          }}
+        />
+      )}
+
+      {llmProvider && (
+        <CloudProviderCard
+          active={llmProvider.provider === 'gemini'}
+          config={{
+            provider: 'gemini',
+            title: 'Cloud (Gemini)',
+            description: (
+              <>
+                Uses Google's Gemini API (<span className="font-medium text-tx">ai.google.dev</span>) instead of a
+                local download — a free API key with its own generous free-tier quota, separate from OpenRouter's
+                shared one. Nothing here is stored anywhere but this device's own local database.
+              </>
+            ),
+            keyLabel: 'Gemini API key',
+            keyPlaceholder: 'AIza…',
+            modelPlaceholder: 'gemini-2.0-flash',
+            modelHint: 'any Gemini model id — e.g. gemini-2.0-flash, gemini-1.5-flash, gemini-1.5-pro',
+            hasKey: llmProvider.has_gemini_key,
+            keyPreview: llmProvider.gemini_key_preview,
+            model: llmProvider.gemini_model,
+          }}
+        />
+      )}
 
       <div>
         <div className="mb-2 flex items-center gap-[8px] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">

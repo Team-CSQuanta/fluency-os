@@ -10,13 +10,17 @@ recently saved.
 
 import json
 import sqlite3
-from datetime import datetime
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from app.config import settings
+from app.services import conversation_report
 from app.services.voice import (
     cloud_llm_engine,
+    engine_health,
     engine_status,
+    gemini_llm_engine,
     llm_chat_engine,
     model_catalog,
     model_manager,
@@ -75,19 +79,29 @@ def selected_llm_option(conn: sqlite3.Connection, user_id: str) -> model_catalog
 def llm_target(conn: sqlite3.Connection, user_id: str) -> dict:
     """Resolves what a real LLM call should actually hit right now: either a
     local catalog option (llama.cpp, loaded via Launch AI) or a cloud model
-    over OpenRouter (no local load step — a live API call every time).
+    over OpenRouter or Gemini (no local load step — a live API call every
+    time either way).
 
     Shape: {"provider": "local", "option": LlmOption} or
-           {"provider": "cloud", "model": str, "api_key": str | None}.
-    `llm_model_id` is intentionally NOT reused for the OpenRouter model
-    string — it stays local-catalog-key-only, so a cloud model id can never
-    be misread as a local one (see 0010_openrouter_llm.sql)."""
+           {"provider": "openrouter" | "gemini", "model": str, "api_key": str | None}.
+    `llm_model_id` is intentionally NOT reused for a cloud model string — it
+    stays local-catalog-key-only, so a cloud model id can never be misread as
+    a local one (see 0010_openrouter_llm.sql). `api_provider` picks which
+    cloud service 'api' mode actually means (see 0011_gemini_llm.sql)."""
     row = conn.execute(
-        "SELECT llm_mode, openrouter_api_key, openrouter_model FROM user_settings WHERE user_id = ?", (user_id,)
+        "SELECT llm_mode, api_provider, openrouter_api_key, openrouter_model, gemini_api_key, gemini_model "
+        "FROM user_settings WHERE user_id = ?",
+        (user_id,),
     ).fetchone()
     if row is not None and row["llm_mode"] == "api":
+        if row["api_provider"] == "gemini":
+            return {
+                "provider": "gemini",
+                "model": row["gemini_model"] or gemini_llm_engine.DEFAULT_MODEL,
+                "api_key": row["gemini_api_key"],
+            }
         return {
-            "provider": "cloud",
+            "provider": "openrouter",
             "model": row["openrouter_model"] or cloud_llm_engine.DEFAULT_MODEL,
             "api_key": row["openrouter_api_key"],
         }
@@ -95,42 +109,50 @@ def llm_target(conn: sqlite3.Connection, user_id: str) -> dict:
 
 
 def llm_target_label(target: dict) -> str:
-    if target["provider"] == "cloud":
+    if target["provider"] == "openrouter":
         return f"{target['model']} (OpenRouter)"
+    if target["provider"] == "gemini":
+        return f"{target['model']} (Gemini)"
     return target["option"].label
 
 
 def _session_llm_target(conn: sqlite3.Connection, session: sqlite3.Row) -> dict:
-    """The model/provider a session should keep using for the rest of its
-    turns — consistent history matters more than switching engines partway
-    through a conversation, same reasoning as the old local-only version of
-    this function. `model_id` encodes provider: a local catalog key as
-    before, or "cloud:<openrouter model>" for a session started on the
-    cloud provider. A session with no model_id (genuinely old, or
-    interrupted before start_session finished) falls back to the user's
-    *current* preference rather than a fixed default."""
-    model_id = session["model_id"]
-    if model_id and model_id.startswith("cloud:"):
-        row = conn.execute(
-            "SELECT openrouter_api_key FROM user_settings WHERE user_id = ?", (session["user_id"],)
-        ).fetchone()
-        return {
-            "provider": "cloud",
-            "model": model_id[len("cloud:") :],
-            "api_key": row["openrouter_api_key"] if row else None,
-        }
-    if model_id:
-        return {"provider": "local", "option": model_catalog.llm_option(model_id)}
+    """A conversation follows whatever engine Settings currently points at, so
+    switching model or provider takes effect on the chat already open instead
+    of only on the next one.
+
+    Sessions used to be pinned to the engine they started on, for consistent
+    voice across a transcript. In practice that traded a cosmetic consistency
+    for a real dead end: when the pinned engine became unusable (quota spent,
+    key revoked, model deleted) the conversation could never continue, and no
+    Settings change could rescue it. `model_id` now records what most recently
+    answered rather than dictating what must answer next."""
     return llm_target(conn, session["user_id"])
 
 
+def session_engine(conn: sqlite3.Connection, session: sqlite3.Row) -> dict:
+    """The engine this session's next turn will really call, named for the UI
+    so it can show the truth instead of inferring it from global state (which
+    is how it ended up claiming one engine while the turns called another)."""
+    target = _session_llm_target(conn, session)
+    return {"provider": target["provider"], "label": llm_target_label(target)}
+
+
 def _session_model_id(target: dict) -> str:
-    return f"cloud:{target['model']}" if target["provider"] == "cloud" else target["option"].key
+    if target["provider"] == "gemini":
+        return f"cloud:gemini:{target['model']}"
+    if target["provider"] == "openrouter":
+        return f"cloud:{target['model']}"
+    return target["option"].key
 
 
-def _generate_reply(target: dict, system_prompt: str, history: list[tuple[str, str]], max_tokens: int = 220) -> str:
-    if target["provider"] == "cloud":
-        return cloud_llm_engine.generate_reply(
+def _cloud_engine(provider: str):
+    return gemini_llm_engine if provider == "gemini" else cloud_llm_engine
+
+
+def _generate_reply(target: dict, system_prompt: str, history: list[tuple[str, str]], max_tokens: int = 120) -> str:
+    if target["provider"] != "local":
+        return _cloud_engine(target["provider"]).generate_reply(
             system_prompt, history, api_key=target["api_key"], model=target["model"], max_tokens=max_tokens
         )
     option = target["option"]
@@ -139,20 +161,39 @@ def _generate_reply(target: dict, system_prompt: str, history: list[tuple[str, s
     )
 
 
-def _generate_report(target: dict, transcript: list[tuple[str, str]], target_words: list[str]) -> dict:
-    if target["provider"] == "cloud":
-        return cloud_llm_engine.generate_report(
-            transcript, target_words, api_key=target["api_key"], model=target["model"]
+def _generate_analysis(
+    target: dict, transcript: list[tuple[str, str]], target_words: list[str]
+) -> conversation_report.LlmReportAnalysis:
+    """The judged half of the report. Prompt and parsing both come from
+    conversation_report, so the keys asked for are by construction the keys
+    read back — see that module's docstring for what went wrong when they
+    were maintained separately."""
+    system_prompt = conversation_report.report_system_prompt(target_words)
+    user_prompt = conversation_report.report_user_prompt(transcript)
+
+    if target["provider"] != "local":
+        raw = _cloud_engine(target["provider"]).generate_json(
+            system_prompt, user_prompt, api_key=target["api_key"], model=target["model"], max_tokens=700
         )
-    option = target["option"]
-    return llm_chat_engine.generate_report(transcript, target_words, repo_id=option.repo_id, filename=option.filename)
+    else:
+        option = target["option"]
+        raw = llm_chat_engine.generate_json(
+            system_prompt, user_prompt, repo_id=option.repo_id, filename=option.filename, max_tokens=700
+        )
+    # A small model will sometimes omit a key or mistype a value; a partial
+    # analysis is still worth showing, so tolerate that rather than failing the
+    # whole report. What it cannot do is invent a field nobody asked for.
+    try:
+        return conversation_report.LlmReportAnalysis.model_validate(raw)
+    except ValidationError:
+        return conversation_report.LlmReportAnalysis()
 
 
 def _readiness_for_target(target: dict, channel: str) -> dict:
-    if target["provider"] == "cloud":
-        llm_ready = bool(target["api_key"])
-    else:
+    if target["provider"] == "local":
         llm_ready = model_catalog.llm_is_downloaded(target["option"])
+    else:
+        llm_ready = bool(target["api_key"])
     if channel == "voice":
         stt_ready = model_catalog.stt_is_downloaded()
         tts_ready = model_catalog.tts_is_downloaded()
@@ -205,9 +246,17 @@ def full_engine_status(conn: sqlite3.Connection, user_id: str) -> dict:
     API key is configured, rather than through the local model-residency
     check (which would otherwise always show not_loaded for it)."""
     target = llm_target(conn, user_id)
-    if target["provider"] == "cloud":
+    if target["provider"] != "local":
         st = engine_status.status(None)
-        st["llm"] = "ready" if target["api_key"] else "not_loaded"
+        # A saved key is not a working key. "ready" here means a real request
+        # has actually succeeded — established by Launch AI, and revoked again
+        # the moment one genuinely fails. Read from a record rather than probed
+        # here, so polling this endpoint never spends quota.
+        st["llm"] = (
+            "ready"
+            if target["api_key"] and engine_health.is_verified(target["provider"], target["model"])
+            else "not_loaded"
+        )
         return st
     option = target["option"]
     return engine_status.status(str(model_manager.llm_model_path(option.repo_id, option.filename)))
@@ -226,7 +275,7 @@ def _ensure_launched(needs: set[str], *, llm_target: dict) -> None:
     choosing when via Launch AI."""
     effective_needs = set(needs)
     llm_path = None
-    if llm_target["provider"] == "cloud":
+    if llm_target["provider"] != "local":
         effective_needs.discard("llm")
     else:
         option = llm_target["option"]
@@ -241,16 +290,34 @@ def _ensure_launched(needs: set[str], *, llm_target: dict) -> None:
 
 
 def _select_target_words(conn: sqlite3.Connection, user_id: str) -> list[sqlite3.Row]:
+    """An 'avoided' log means the word was offered as a target but the learner
+    never actually said it — counting that as practice would push exactly the
+    words that still need work to the back of the queue, so only outcomes
+    where the word was really produced count as usage here."""
     return conn.execute(
         """
         SELECT vw.id, vw.word, vw.definition,
-               (SELECT COUNT(*) FROM review_logs rl WHERE rl.vocab_word_id = vw.id) AS usage_count
+               (SELECT COUNT(*) FROM review_logs rl
+                 WHERE rl.vocab_word_id = vw.id AND rl.outcome <> 'avoided') AS usage_count
         FROM vocab_words vw
         WHERE vw.user_id = ?
         ORDER BY usage_count ASC, vw.created_at DESC
         LIMIT ?
         """,
         (user_id, TARGET_WORD_COUNT),
+    ).fetchall()
+
+
+def _words_by_ids(conn: sqlite3.Connection, user_id: str, word_ids: list[str]) -> list[sqlite3.Row]:
+    """Scoped to the owner, so a seeded id can't pull in someone else's word.
+    Silently drops ids that no longer exist — a word deleted since the original
+    session shouldn't block repeating it."""
+    if not word_ids:
+        return []
+    placeholders = ",".join("?" for _ in word_ids)
+    return conn.execute(
+        f"SELECT id, word, definition FROM vocab_words WHERE user_id = ? AND id IN ({placeholders})",
+        [user_id, *word_ids],
     ).fetchall()
 
 
@@ -264,25 +331,32 @@ def _system_prompt(scenario: str, target_words: list[sqlite3.Row]) -> str:
         f"You are Juno, a friendly AI conversation partner helping someone practice English. "
         f"Scenario: {scenario_cfg['brief']}\n\n"
         f"The learner is trying to use these target words naturally in this conversation:\n{words_block}\n\n"
-        "Rules: never say a target word yourself before the learner does. Keep replies short and "
-        "natural (2-4 sentences), like real spoken conversation, not an essay. Ask a follow-up question "
-        "to keep the conversation going."
+        "Rules: never say a target word yourself before the learner does. Keep replies to ONE or TWO "
+        "short sentences — real spoken conversation, not an essay. Speaking them aloud takes longer "
+        "than generating them, so length is what the learner waits on. Ask a follow-up question to "
+        "keep the conversation going."
     )
 
 
 def launch_engines(conn: sqlite3.Connection, user_id: str) -> dict:
     """The "Launch AI" action: explicitly loads whatever's downloaded into
     memory right now, instead of leaving that to happen (or be refused, per
-    _ensure_launched) at first real use. The cloud provider has nothing to
-    load for the LLM itself — just needs a configured key — but voice's
-    local STT/TTS still get warmed up either way."""
+    _ensure_launched) at first real use. Cloud providers have nothing to load
+    for the LLM itself — just need a configured key — but voice's local
+    STT/TTS still get warmed up either way."""
     target = llm_target(conn, user_id)
     if target["provider"] == "local":
         if not model_catalog.llm_is_downloaded(target["option"]):
             raise EngineUnavailable("No AI model downloaded yet — download one in Settings before launching AI.")
         llm_chat_engine.warm_up(target["option"].repo_id, target["option"].filename)
     elif not target["api_key"]:
-        raise EngineUnavailable("No OpenRouter API key configured — add one in Settings before launching AI.")
+        label = "Gemini" if target["provider"] == "gemini" else "OpenRouter"
+        raise EngineUnavailable(f"No {label} API key configured — add one in Settings before launching AI.")
+    else:
+        # The cloud equivalent of loading a model: spend one small request to
+        # establish that the key really works, instead of assuming it from the
+        # fact that something is saved.
+        _cloud_engine(target["provider"]).verify(api_key=target["api_key"], model=target["model"])
     if model_catalog.stt_is_downloaded():
         stt_engine.warm_up()
     if model_catalog.tts_is_downloaded():
@@ -290,12 +364,24 @@ def launch_engines(conn: sqlite3.Connection, user_id: str) -> dict:
     return full_engine_status(conn, user_id)
 
 
-def start_session(conn: sqlite3.Connection, *, user_id: str, scenario: str, channel: str) -> str:
+def start_session(
+    conn: sqlite3.Connection,
+    *,
+    user_id: str,
+    scenario: str,
+    channel: str,
+    seed_word_ids: list[str] | None = None,
+) -> str:
+    """`seed_word_ids` backs "practise this again": rather than picking a fresh
+    set, the new session reuses the words from the one being repeated, so the
+    words that just went badly are the ones that come straight back."""
     _ensure_ready(conn, user_id, channel)
     target = llm_target(conn, user_id)
     _ensure_launched({"llm"} | ({"tts"} if channel == "voice" else set()), llm_target=target)
 
-    target_words = _select_target_words(conn, user_id)
+    target_words = _words_by_ids(conn, user_id, seed_word_ids) if seed_word_ids else []
+    if not target_words:
+        target_words = _select_target_words(conn, user_id)
     session_id = uuid7()
     now = iso8601_utc_now()
 
@@ -329,23 +415,60 @@ def _insert_turn(
     text: str,
     channel: str,
     stt_confidence: float | None = None,
+    speech_seconds: float | None = None,
 ) -> sqlite3.Row:
     turn_id = uuid7()
+    # Deliberately no synthesis here. Kokoro runs slower than real time on this
+    # hardware, so making the whole reply's audio before returning meant the
+    # learner waited ~30s to see any reply at all. Audio is produced per
+    # sentence, on demand, once the text is already on screen.
     audio_path = None
-    if channel == "voice" and speaker == "ai":
-        wav_bytes = tts_engine.synthesize(text)
-        audio_path = str(_audio_dir() / f"{turn_id}.wav")
-        Path(audio_path).write_bytes(wav_bytes)
 
     conn.execute(
         """
-        INSERT INTO conversation_turns (id, session_id, turn_index, speaker, text, audio_path, stt_confidence, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO conversation_turns
+            (id, session_id, turn_index, speaker, text, audio_path, stt_confidence, speech_seconds, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (turn_id, session_id, turn_index, speaker, text, audio_path, stt_confidence, iso8601_utc_now()),
+        (
+            turn_id,
+            session_id,
+            turn_index,
+            speaker,
+            text,
+            audio_path,
+            stt_confidence,
+            speech_seconds,
+            iso8601_utc_now(),
+        ),
     )
     conn.commit()
     return conn.execute("SELECT * FROM conversation_turns WHERE id = ?", (turn_id,)).fetchone()
+
+
+def audio_chunk_path(turn_id: str, index: int) -> Path:
+    return _audio_dir() / f"{turn_id}.{index}.wav"
+
+
+def ensure_audio_chunk(turn_id: str, text: str, index: int) -> Path:
+    """Synthesizes one sentence of a reply, cached on disk after the first
+    request. Called when that sentence is about to be played rather than while
+    the learner is still waiting to read the reply."""
+    chunks = tts_engine.split_for_streaming(text)
+    if index < 0 or index >= len(chunks):
+        raise IndexError(f"chunk {index} out of range for {len(chunks)} chunks")
+    path = audio_chunk_path(turn_id, index)
+    if not path.exists():
+        path.write_bytes(tts_engine.synthesize(chunks[index]))
+    return path
+
+
+def audio_chunk_count(turn: sqlite3.Row, channel: str) -> int:
+    """How many audio pieces this turn can produce. Only the AI speaks aloud,
+    and only on the voice channel."""
+    if channel != "voice" or turn["speaker"] != "ai":
+        return 0
+    return len(tts_engine.split_for_streaming(turn["text"]))
 
 
 def get_session_row(conn: sqlite3.Connection, session_id: str, user_id: str) -> sqlite3.Row | None:
@@ -370,19 +493,37 @@ def submit_user_turn(
     channel = session["channel"]
     target = _session_llm_target(conn, session)
     _ensure_ready_for_target(target, channel)
+    # Record what is actually answering now, so the session's engine label
+    # reflects reality after a mid-conversation switch.
+    model_id = _session_model_id(target)
+    if session["model_id"] != model_id:
+        conn.execute("UPDATE conversation_sessions SET model_id = ? WHERE id = ?", (model_id, session["id"]))
+        conn.commit()
     _ensure_launched(
         {"llm"} | ({"stt"} if audio_bytes is not None else set()) | ({"tts"} if channel == "voice" else set()),
         llm_target=target,
     )
     stt_confidence = None
+    speech_seconds = None
     if audio_bytes is not None:
-        text, stt_confidence = stt_engine.transcribe(audio_bytes)
+        text, stt_confidence, speech_seconds = stt_engine.transcribe(audio_bytes)
 
     text = (text or "").strip()
+    if not text:
+        # Audio was provided (the router already rejects "neither text nor
+        # audio") but STT came back empty — silence, too short a clip, or
+        # unclear speech. Sending an empty turn to the LLM isn't meaningful
+        # for any provider, and Gemini specifically rejects it outright
+        # (its "ends with a model turn" error is really this in disguise:
+        # an empty user part gets dropped from validation, leaving the
+        # prior AI turn looking like the last one). Fail honestly instead.
+        raise ValueError("Didn't catch any speech there — try speaking again, a bit louder or closer to the mic.")
     turns = get_turns(conn, session["id"])
     next_index = turns[-1]["turn_index"] + 1 if turns else 0
 
-    user_turn = _insert_turn(conn, session["id"], next_index, "user", text, channel, stt_confidence)
+    user_turn = _insert_turn(
+        conn, session["id"], next_index, "user", text, channel, stt_confidence, speech_seconds
+    )
 
     target_words = conn.execute(
         f"SELECT id, word, definition FROM vocab_words WHERE id IN "
@@ -396,10 +537,6 @@ def submit_user_turn(
     ai_turn = _insert_turn(conn, session["id"], next_index + 1, "ai", reply, channel)
 
     return user_turn, ai_turn
-
-
-def _parse_ts(ts: str) -> datetime:
-    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
 
 def end_session(conn: sqlite3.Connection, session: sqlite3.Row) -> dict:
@@ -417,37 +554,17 @@ def end_session(conn: sqlite3.Connection, session: sqlite3.Row) -> dict:
     )
 
     transcript = [(t["speaker"], t["text"]) for t in turns]
-    analysis = _generate_report(target, transcript, [w["word"] for w in target_words])
+    analysis = _generate_analysis(target, transcript, [w["word"] for w in target_words])
 
-    word_usage: dict[str, str] = analysis.get("word_usage", {}) or {}
-    fluency_score = int(analysis.get("fluency_score", 0) or 0)
-    vocabulary_reach_score = int(analysis.get("vocabulary_reach_score", 0) or 0)
-    self_corrections = int(analysis.get("self_corrections", 0) or 0)
-    raw_errors = analysis.get("errors", []) or []
-    summary = str(analysis.get("summary", "")) or "No summary was generated."
+    cefr_row = conn.execute("SELECT cefr_level FROM users WHERE id = ?", (session["user_id"],)).fetchone()
+    target_cefr = conversation_report.resolve_cefr(cefr_row["cefr_level"] if cefr_row else None)
+    metrics = conversation_report.compute_metrics(turns, target_cefr)
 
     user_turns = [t for t in turns if t["speaker"] == "user"]
-    total_words_spoken = sum(len(t["text"].split()) for t in user_turns)
-    if len(turns) >= 2:
-        started = _parse_ts(turns[0]["created_at"])
-        ended = _parse_ts(turns[-1]["created_at"])
-        elapsed_minutes = max((ended - started).total_seconds() / 60.0, 1 / 60.0)
-    else:
-        elapsed_minutes = 1 / 60.0
-    words_per_minute = round(total_words_spoken / elapsed_minutes)
-
-    gaps = []
-    for prev, cur in zip(turns, turns[1:]):
-        gaps.append((_parse_ts(cur["created_at"]) - _parse_ts(prev["created_at"])).total_seconds())
-    avg_pause_seconds = round(sum(gaps) / len(gaps), 1) if gaps else 0.0
-
-    confidences = [t["stt_confidence"] for t in user_turns if t["stt_confidence"] is not None]
-    pronunciation_score = round(100 * sum(confidences) / len(confidences)) if confidences else None
-
     routing = []
     outcomes_for_logs: list[tuple[str, str]] = []
     for w in target_words:
-        outcome = word_usage.get(w["word"], "avoided")
+        outcome = analysis.word_usage.get(w["word"], "avoided")
         if outcome not in ("spontaneous", "prompted", "incorrect", "avoided"):
             outcome = "avoided"
         evidence_turn = next(
@@ -457,27 +574,29 @@ def end_session(conn: sqlite3.Connection, session: sqlite3.Row) -> dict:
         outcomes_for_logs.append((w["id"], outcome))
 
     correct_count = sum(1 for r in routing if r["outcome"] in ("spontaneous", "prompted"))
-    contextual_accuracy_pct = round(100 * correct_count / len(routing)) if routing else 0
-
-    errors = [
-        {"bad": e.get("bad", ""), "good": e.get("good", ""), "why": e.get("why", "")}
-        for e in raw_errors[:5]
-        if isinstance(e, dict)
-    ]
+    # None, not 0: a session with no target words didn't score zero accuracy,
+    # it had nothing to be accurate about.
+    contextual_accuracy_pct = round(100 * correct_count / len(routing)) if routing else None
 
     report = {
+        "report_version": conversation_report.REPORT_VERSION,
         "session_id": session["id"],
         "contextual_accuracy_pct": contextual_accuracy_pct,
-        "fluency_score": fluency_score,
-        "vocabulary_reach_score": vocabulary_reach_score,
-        "pronunciation_score": pronunciation_score,
-        "words_per_minute": words_per_minute,
-        "avg_pause_seconds": avg_pause_seconds,
-        "self_corrections": self_corrections,
+        "grammatical_precision": analysis.grammatical_precision,
+        # Type-token ratio is 0-1; the dial needs 0-100.
+        "lexical_range": round(100 * metrics.type_token_ratio),
+        "pronunciation_score": metrics.pronunciation_score,
+        "words_per_minute": metrics.words_per_minute,
+        "filler_rate_per_100w": metrics.filler_rate_per_100w,
+        "avg_response_delay_seconds": metrics.avg_response_delay_seconds,
+        "longest_run_words": metrics.longest_run_words,
+        "type_token_ratio": metrics.type_token_ratio,
+        "above_level_words": metrics.above_level_words,
+        "self_corrections": analysis.self_corrections,
         "turn_count": len(turns),
         "routing": routing,
-        "errors": errors,
-        "summary": summary,
+        "errors": [e.model_dump() for e in analysis.errors[:3]],
+        "summary": analysis.summary or "No summary was generated.",
     }
 
     now = iso8601_utc_now()
@@ -485,6 +604,11 @@ def end_session(conn: sqlite3.Connection, session: sqlite3.Row) -> dict:
         "UPDATE conversation_sessions SET report_json = ?, ended_at = ? WHERE id = ?",
         (json.dumps(report), now, session["id"]),
     )
+    # Ending recomputes over the WHOLE transcript so far, so a re-end
+    # supersedes this session's previous logs rather than adding a second set
+    # — appending would make one conversation count twice, both in a word's
+    # usage history and in _select_target_words' "not practised yet" ordering.
+    conn.execute("DELETE FROM review_logs WHERE session_id = ?", (session["id"],))
     for vocab_word_id, outcome in outcomes_for_logs:
         conn.execute(
             "INSERT INTO review_logs (id, user_id, vocab_word_id, session_id, source, outcome, created_at) "
@@ -513,9 +637,13 @@ def delete_session(conn: sqlite3.Connection, user_id: str, session_id: str) -> b
     if row is None:
         return False
 
-    for turn in conn.execute("SELECT audio_path FROM conversation_turns WHERE session_id = ?", (session_id,)):
+    for turn in conn.execute("SELECT id, audio_path FROM conversation_turns WHERE session_id = ?", (session_id,)):
         if turn["audio_path"]:
             Path(turn["audio_path"]).unlink(missing_ok=True)
+        # Per-sentence audio is written lazily and named off the turn id, so it
+        # isn't reachable through audio_path.
+        for chunk in _audio_dir().glob(f"{turn['id']}.*.wav"):
+            chunk.unlink(missing_ok=True)
 
     conn.execute("DELETE FROM conversation_sessions WHERE id = ?", (session_id,))
     return True

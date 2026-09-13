@@ -455,6 +455,8 @@ export interface ConversationSessionCreate {
   user_id: string;
   scenario: ScenarioKey;
   channel: ConversationChannel;
+  /** "Practise this again" — reuse a previous session's target words. */
+  seed_word_ids?: string[];
 }
 
 export interface ConversationTurnOut {
@@ -463,6 +465,9 @@ export interface ConversationTurnOut {
   speaker: ConversationSpeaker;
   text: string;
   audio_url: string | null;
+  /** Sentence-sized audio pieces, fetched one at a time so the first can play
+   * while the rest are still being synthesized. */
+  audio_chunk_count: number;
   stt_confidence: number | null;
   created_at: string;
 }
@@ -482,6 +487,9 @@ export interface ConversationSessionOut {
   started_at: string;
   ended_at: string | null;
   has_report: boolean;
+  /** Pinned when the session started — not necessarily what Settings says now. */
+  engine_provider: LlmProvider;
+  engine_label: string;
 }
 
 export interface ConversationSessionDetailOut extends ConversationSessionOut {
@@ -507,17 +515,27 @@ export interface ReportRoutingRowOut {
 
 export interface ConversationReportOut {
   session_id: string;
-  contextual_accuracy_pct: number;
-  fluency_score: number;
-  vocabulary_reach_score: number;
-  pronunciation_score: number | null;
-  words_per_minute: number;
-  avg_pause_seconds: number;
-  self_corrections: number;
+  /** 1 = written before the current analysis existed; fields below may be null. */
+  report_version: number;
+  summary: string;
   turn_count: number;
   routing: ReportRoutingRowOut[];
   errors: ReportErrorOut[];
-  summary: string;
+
+  /** Dials, 0-100. Null means not measured, which is not the same as zero. */
+  contextual_accuracy_pct: number | null;
+  grammatical_precision: number | null;
+  lexical_range: number | null;
+  pronunciation_score: number | null;
+
+  /** Fluency proxies. */
+  words_per_minute: number | null;
+  filler_rate_per_100w: number | null;
+  avg_response_delay_seconds: number | null;
+  longest_run_words: number | null;
+  type_token_ratio: number | null;
+  above_level_words: string[];
+  self_corrections: number | null;
 }
 
 export interface EngineStatusOut {
@@ -565,13 +583,16 @@ export interface ReadinessOut {
   llm_model_label: string;
 }
 
-export type LlmProvider = 'local' | 'cloud';
+export type LlmProvider = 'local' | 'openrouter' | 'gemini';
 
 export interface LlmProviderOut {
   provider: LlmProvider;
   openrouter_model: string;
-  has_api_key: boolean;
-  api_key_preview: string | null;
+  has_openrouter_key: boolean;
+  openrouter_key_preview: string | null;
+  gemini_model: string;
+  has_gemini_key: boolean;
+  gemini_key_preview: string | null;
 }
 
 export interface VocabWordManualCreate {
