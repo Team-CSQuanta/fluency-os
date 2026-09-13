@@ -67,19 +67,43 @@ def _stream_to_file(url: str, dest: Path, state: DownloadState) -> None:
     never resetting state.total_bytes, so a multi-file download (TTS: model
     + voices) can report one combined, monotonically-increasing progress
     instead of the total visibly shrinking when the second, smaller file
-    starts."""
+    starts.
+
+    The size check before the rename is load-bearing. A dropped connection
+    ends res.read() with b"" exactly like a completed one, so without it a
+    truncated file gets renamed into place, every is_downloaded() check
+    (which only tests existence) reports "✓ downloaded", and the failure
+    surfaces much later as an unintelligible parse error from whichever
+    library tries to load half a model. Observed in practice on a 219MB
+    download that stopped 6MB short. Leaving the .part file behind on
+    failure would be worse than useless — there is no resume — so it goes."""
     tmp = dest.with_suffix(dest.suffix + ".part")
     request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-    with urllib.request.urlopen(request, timeout=30) as res:
-        tmp.parent.mkdir(parents=True, exist_ok=True)
-        with open(tmp, "wb") as f:
-            while True:
-                chunk = res.read(_CHUNK_SIZE)
-                if not chunk:
-                    break
-                f.write(chunk)
-                with state.lock:
-                    state.downloaded_bytes += len(chunk)
+    written = 0
+    try:
+        with urllib.request.urlopen(request, timeout=30) as res:
+            expected = int(res.headers.get("Content-Length") or 0)
+            tmp.parent.mkdir(parents=True, exist_ok=True)
+            with open(tmp, "wb") as f:
+                while True:
+                    chunk = res.read(_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    written += len(chunk)
+                    with state.lock:
+                        state.downloaded_bytes += len(chunk)
+        if expected and written != expected:
+            raise OSError(
+                f"{dest.name} downloaded incompletely ({written} of {expected} bytes) — "
+                "check your connection and try again"
+            )
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        # Progress already reported for this file is no longer on disk.
+        with state.lock:
+            state.downloaded_bytes = max(0, state.downloaded_bytes - written)
+        raise
     tmp.replace(dest)
 
 
@@ -118,6 +142,31 @@ def _run_tts_download(key: str) -> None:
             state.status, state.error = "error", str(err)
 
 
+def _run_pocket_tts_download(key: str) -> None:
+    """Three specific files, not a repo snapshot: kyutai/pocket-tts ships
+    every language and both model sizes in one repo — ~11.7GB — of which this
+    app needs the English 100M weights, its tokenizer and one voice."""
+    state = _state_for(key)
+    with state.lock:
+        state.status, state.error, state.downloaded_bytes, state.total_bytes = "downloading", None, 0, 0
+    try:
+        weights, tokenizer, voice = model_manager.pocket_tts_paths()
+        urls = (
+            (model_manager.POCKET_MODEL_URL, weights),
+            (model_manager.POCKET_TOKENIZER_URL, tokenizer),
+            (model_manager.POCKET_VOICE_URL, voice),
+        )
+        with state.lock:
+            state.total_bytes = sum(_content_length(url) for url, _ in urls)
+        for url, dest in urls:
+            _stream_to_file(url, dest, state)
+        with state.lock:
+            state.status = "ready"
+    except (urllib.error.URLError, OSError) as err:
+        with state.lock:
+            state.status, state.error = "error", str(err)
+
+
 def _run_stt_download(key: str) -> None:
     # faster-whisper manages its own HF cache/download internally with no
     # byte-progress hook exposed publicly — this just brackets the (blocking,
@@ -138,7 +187,7 @@ def _run_stt_download(key: str) -> None:
 
 
 def start_download(kind: str, key: str) -> None:
-    """kind: 'llm' | 'stt' | 'tts'. key: catalog key for 'llm', ignored otherwise."""
+    """kind: 'llm' | 'stt' | 'tts' | 'pocket_tts'. key: catalog key for 'llm', ignored otherwise."""
     state = _state_for(download_key(kind, key))
     with state.lock:
         if state.status == "downloading":
@@ -152,6 +201,8 @@ def start_download(kind: str, key: str) -> None:
         thread = threading.Thread(target=_run_llm_download, args=(download_key(kind, key), option), daemon=True)
     elif kind == "tts":
         thread = threading.Thread(target=_run_tts_download, args=(download_key(kind, key),), daemon=True)
+    elif kind == "pocket_tts":
+        thread = threading.Thread(target=_run_pocket_tts_download, args=(download_key(kind, key),), daemon=True)
     elif kind == "stt":
         thread = threading.Thread(target=_run_stt_download, args=(download_key(kind, key),), daemon=True)
     else:

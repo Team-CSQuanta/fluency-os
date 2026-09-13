@@ -158,14 +158,28 @@ def test_first_chunk_is_never_merged_however_short():
     assert len(chunks) == 2
 
 
-def test_later_stray_fragments_fold_into_the_sentence_before_them():
-    """A trickle of two-word audio files would cost more in requests than it
-    saves — but only after the first chunk is already playing."""
+def test_a_reply_never_splits_into_more_than_two_pieces():
+    """Each synthesis call costs ~0.9s of fixed overhead on top of ~2.65s per
+    second of audio, so a third chunk buys nothing but its own overhead — it
+    makes the reply as a whole slower without advancing the first sound."""
     from app.services.voice.tts_engine import split_for_streaming
 
-    chunks = split_for_streaming("Yes! Oh. Right. I went to a cafe and read for hours.")
-    assert chunks[0] == "Yes!"
+    chunks = split_for_streaming(
+        "That sounds lovely. I went there once. It was very quiet. What did you read?"
+    )
     assert len(chunks) == 2
+    assert chunks[0] == "That sounds lovely."
+    assert chunks[1] == "I went there once. It was very quiet. What did you read?"
+
+
+def test_a_very_short_opener_is_not_given_its_own_call():
+    """"Yes!" would spend 0.9s of overhead to advance the first sound by almost
+    nothing, and delay everything after it."""
+    from app.services.voice.tts_engine import split_for_streaming
+
+    assert split_for_streaming("Yes! I went to a cafe and read for hours.") == [
+        "Yes! I went to a cafe and read for hours."
+    ]
 
 
 def test_split_handles_a_single_sentence_and_empty_text():
@@ -174,3 +188,20 @@ def test_split_handles_a_single_sentence_and_empty_text():
     assert split_for_streaming("Just the one sentence here.") == ["Just the one sentence here."]
     assert split_for_streaming("") == []
     assert split_for_streaming("   ") == []
+
+
+def test_target_words_are_matched_as_words_not_substrings():
+    """A substring test credits a learner with "cat" for saying "category",
+    and points the report's evidence link at a turn where the word never
+    appeared."""
+    from app.services.conversation_report import says_word
+
+    assert says_word("I have a cat", "cat") is True
+    assert says_word("Cats everywhere!", "cat") is True
+    assert says_word("She goes there often", "go") is True
+    assert says_word("He walked home", "walk") is True
+
+    assert says_word("I have a category of books", "cat") is False
+    assert says_word("Let us start now", "art") is False
+    assert says_word("a classy dress", "class") is False
+    assert says_word("", "cat") is False

@@ -161,15 +161,29 @@ export function ConversationLive() {
     const fetchChunk = (index: number) =>
       index < total ? turnAudioUrl(turnId, index).catch(() => null) : Promise.resolve(null);
 
+    // Each chunk arrives as an object URL holding a whole WAV in memory, and
+    // the browser frees one only when it is explicitly revoked — closing the
+    // page is otherwise the only thing that reclaims it. A voice conversation
+    // fetches two per reply, so leaving them was a steady leak of a few
+    // hundred KB per turn for as long as the app stayed open. Every URL this
+    // run creates is tracked and released when the run ends, including the
+    // prefetched one that barge-in means we never play.
+    const created: string[] = [];
+    const trackedFetch = async (index: number) => {
+      const url = await fetchChunk(index);
+      if (url) created.push(url);
+      return url;
+    };
+
+    let pending = trackedFetch(0);
     try {
-      let pending = fetchChunk(0);
       for (let i = 0; i < total; i += 1) {
         const url = await pending;
         if (runId !== playbackIdRef.current) return; // superseded
         if (!url) break;
         // Kick off the next sentence's synthesis before playing this one, so
         // the gap between sentences is as small as the hardware allows.
-        pending = fetchChunk(i + 1);
+        pending = trackedFetch(i + 1);
         await new Promise<void>((resolve) => {
           const audio = new Audio(url);
           currentAudioRef.current = audio;
@@ -180,6 +194,10 @@ export function ConversationLive() {
         if (runId !== playbackIdRef.current) return;
       }
     } finally {
+      // Awaited, not fire-and-forget: the in-flight prefetch has to land
+      // before its URL can be revoked, or it leaks exactly in the barge-in
+      // case this is here to cover.
+      void pending.finally(() => created.forEach((url) => URL.revokeObjectURL(url)));
       if (runId === playbackIdRef.current) {
         currentAudioRef.current = null;
         setMicState('idle');
@@ -299,6 +317,12 @@ export function ConversationLive() {
       }
     } catch (err) {
       setPendingUserText(null);
+      // Put the message back in the box. The input is cleared optimistically
+      // so the conversation feels responsive, but a turn can genuinely fail
+      // (AI not launched, quota gone, model still loading) and losing what
+      // someone just typed makes a recoverable error feel like data loss —
+      // they have to retype it to retry.
+      setTextInput((current) => (current ? current : text));
       setError(err instanceof Error ? err.message : 'Something went wrong');
       void fetchEngineGlobalStatus();
     }

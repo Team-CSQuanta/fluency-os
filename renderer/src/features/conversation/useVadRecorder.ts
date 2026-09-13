@@ -24,7 +24,7 @@ const SPEECH_FRAMES = 2;
 // How long a pause has to last before the utterance counts as finished. Every
 // millisecond here is dead air the learner feels, so it is kept just long
 // enough that a normal mid-sentence breath doesn't cut them off.
-const SILENCE_MS = 600;
+const SILENCE_MS = 400;
 // Matches the backend's own too-short guard, so a blip never round-trips.
 const MIN_UTTERANCE_MS = 400;
 const MAX_UTTERANCE_MS = 30000;

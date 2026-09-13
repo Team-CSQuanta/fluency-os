@@ -168,6 +168,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       `/conversation/sessions/${sessionId}/end?user_id=${encodeURIComponent(userId)}`,
     );
     set({ report, reportStatus: 'idle', reportError: null });
+    // Ending is what sets ended_at and has_report server-side, so without
+    // this the history list keeps showing the conversation as unfinished and
+    // offers no way into the report that was just generated.
+    await get().fetchSessions();
   },
 
   fetchReport: async (sessionId) => {
@@ -225,6 +229,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     set((s) => ({
       sessions: s.sessions.filter((sess) => sess.id !== sessionId),
       activeSession: s.activeSession?.id === sessionId ? null : s.activeSession,
+      // The report belongs to the session that just stopped existing —
+      // leaving it loaded would show a deleted conversation's numbers on the
+      // next visit to the Report screen.
+      report: s.activeSession?.id === sessionId ? null : s.report,
     }));
   },
 }));

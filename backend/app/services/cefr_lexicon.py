@@ -133,6 +133,21 @@ def _candidates(word: str) -> list[str]:
 
 
 @lru_cache(maxsize=8192)
+def base_forms(word: str) -> set[str]:
+    """Every base form a surface word might reduce to, including itself.
+
+    The same candidate rules `lookup` uses, exposed because deciding whether a
+    learner actually said a target word is the same question as which lemma a
+    surface form belongs to — "cats" is "cat", "goes" is "go". Unlike lookup
+    this does not require the result to be a real dictionary word: the caller
+    is comparing two surface forms against each other, not against the
+    lexicon."""
+    base = normalise(word)
+    if not base:
+        return set()
+    return {base, *_candidates(base)}
+
+
 def lookup(word: str) -> LexiconEntry | None:
     """The lexicon entry for a surface form, via its lemma. Cached because a
     page of prose asks about the same function words over and over."""

@@ -1,7 +1,14 @@
 import { create } from 'zustand';
 import { api } from '@/lib/apiClient';
 import { useAppStore } from '@/store/appStore';
-import type { EngineStatusOut, LlmProvider, LlmProviderOut, ModelsCatalogOut, ReadinessOut } from '@/types/api';
+import type {
+  EngineStatusOut,
+  LlmProvider,
+  LlmProviderOut,
+  ModelsCatalogOut,
+  ReadinessOut,
+  TtsEngine,
+} from '@/types/api';
 
 interface EngineState {
   catalog: ModelsCatalogOut | null;
@@ -31,10 +38,14 @@ interface EngineState {
   deleteLlm: (key: string) => Promise<void>;
   deleteStt: () => Promise<void>;
   deleteTts: () => Promise<void>;
+  downloadPocketTts: () => Promise<void>;
+  deletePocketTts: () => Promise<void>;
+  selectTtsEngine: (engine: TtsEngine) => Promise<void>;
   selectModel: (key: string) => Promise<void>;
   fetchReadiness: (channel: 'voice' | 'text') => Promise<void>;
   fetchStatus: () => Promise<void>;
   launchAi: () => Promise<void>;
+  unloadAi: () => Promise<void>;
   fetchLlmProvider: () => Promise<void>;
   setLlmProvider: (
     provider: LlmProvider,
@@ -58,7 +69,7 @@ function reportDownloadActive(catalog: ModelsCatalogOut | null): void {
     !!catalog &&
     (catalog.llm.some((o) => o.download.status === 'downloading') ||
       catalog.stt.download.status === 'downloading' ||
-      catalog.tts.download.status === 'downloading');
+      catalog.tts_options.some((o) => o.download.status === 'downloading'));
   if (active === lastReportedActive) return;
   lastReportedActive = active;
   window.fluencyos?.setDownloadActive(active);
@@ -85,7 +96,10 @@ export const useEngineStore = create<EngineState>((set, get) => {
       await get().fetchCatalog();
       const c = get().catalog;
       const stillGoing =
-        c && (c.llm.some((o) => o.download.status === 'downloading') || c.stt.download.status === 'downloading' || c.tts.download.status === 'downloading');
+        c &&
+        (c.llm.some((o) => o.download.status === 'downloading') ||
+          c.stt.download.status === 'downloading' ||
+          c.tts_options.some((o) => o.download.status === 'downloading'));
       if (!stillGoing && pollHandle) {
         clearInterval(pollHandle);
         pollHandle = null;
@@ -157,6 +171,31 @@ export const useEngineStore = create<EngineState>((set, get) => {
       await refreshReadiness();
     },
 
+    downloadPocketTts: async () => {
+      await api.post('/engine/models/pocket-tts/download');
+      await get().fetchCatalog();
+      ensurePolling();
+    },
+
+    deletePocketTts: async () => {
+      await api.delete('/engine/models/pocket-tts');
+      await get().fetchCatalog();
+      await get().fetchStatus();
+      await refreshReadiness();
+    },
+
+    selectTtsEngine: async (engine) => {
+      const userId = requireUserId();
+      await api.post('/engine/models/tts-engine', { user_id: userId, engine });
+      await get().fetchCatalog();
+      // Switching unloads both voices server-side, and readiness now asks
+      // about a different engine — which may not be downloaded at all, so
+      // Conversation's gate has to re-evaluate before the learner starts a
+      // session that could not speak.
+      await get().fetchStatus();
+      await refreshReadiness();
+    },
+
     selectModel: async (key) => {
       const userId = requireUserId();
       await api.post('/engine/models/select', { user_id: userId, model_key: key });
@@ -205,6 +244,16 @@ export const useEngineStore = create<EngineState>((set, get) => {
       } finally {
         clearInterval(pollId);
       }
+    },
+
+    unloadAi: async () => {
+      // The counterpart to launchAi. Each engine's unload() takes the same
+      // lock generation holds, so this waits for an in-flight turn rather than
+      // pulling a model out from under it.
+      const userId = requireUserId();
+      set({ launchError: null });
+      const status = await api.post<EngineStatusOut>(`/engine/unload?user_id=${encodeURIComponent(userId)}`);
+      set({ status });
     },
 
     fetchLlmProvider: async () => {

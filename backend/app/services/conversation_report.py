@@ -114,6 +114,20 @@ def _words(text: str) -> list[str]:
     return _WORD_RE.findall(text.lower())
 
 
+def says_word(text: str, word: str) -> bool:
+    """Whether `text` actually contains `word` as a word.
+
+    A plain substring test finds "cat" inside "category" and "art" inside
+    "start", which is enough to credit a learner with a target word they
+    never said — and to point the report's evidence link at the wrong turn.
+    Matched on the same normalised lemmas the other lexical metrics use, so
+    "goes" counts as "go" here exactly as it does there."""
+    wanted = cefr_lexicon.base_forms(word)
+    if not wanted:
+        return False
+    return any(wanted & cefr_lexicon.base_forms(w) for w in _words(text))
+
+
 def resolve_cefr(level: str | None) -> str:
     """A learner who hasn't been placed yet still gets a usable comparison
     band rather than an above-level count that silently reads zero."""

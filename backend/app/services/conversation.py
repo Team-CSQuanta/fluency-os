@@ -9,6 +9,7 @@ recently saved.
 """
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 
@@ -25,7 +26,7 @@ from app.services.voice import (
     model_catalog,
     model_manager,
     stt_engine,
-    tts_engine,
+    tts,
 )
 from app.services.voice.errors import EngineUnavailable
 from app.utils.ids import uuid7
@@ -189,14 +190,18 @@ def _generate_analysis(
         return conversation_report.LlmReportAnalysis()
 
 
-def _readiness_for_target(target: dict, channel: str) -> dict:
+def _readiness_for_target(target: dict, channel: str, tts_name: str = tts.DEFAULT_ENGINE) -> dict:
     if target["provider"] == "local":
         llm_ready = model_catalog.llm_is_downloaded(target["option"])
     else:
         llm_ready = bool(target["api_key"])
     if channel == "voice":
         stt_ready = model_catalog.stt_is_downloaded()
-        tts_ready = model_catalog.tts_is_downloaded()
+        # Only the *selected* voice engine has to be downloaded. Having
+        # Kokoro on disk says nothing about whether Pocket TTS is, and a
+        # session that would fail on the engine it will actually use should
+        # say so up front rather than at the first attempt to speak.
+        tts_ready = tts.is_downloaded(tts_name)
     else:
         stt_ready = tts_ready = True
     return {
@@ -216,11 +221,11 @@ def readiness(conn: sqlite3.Connection, user_id: str, channel: str) -> dict:
     "ready" means a real API key is configured — there's no download step.
     Reflects the user's *current* Settings preference — see
     _ensure_ready_for_target for the session-pinned equivalent."""
-    return _readiness_for_target(llm_target(conn, user_id), channel)
+    return _readiness_for_target(llm_target(conn, user_id), channel, tts.selected_name(conn, user_id))
 
 
-def _ensure_ready_for_target(target: dict, channel: str) -> None:
-    r = _readiness_for_target(target, channel)
+def _ensure_ready_for_target(target: dict, channel: str, tts_name: str = tts.DEFAULT_ENGINE) -> None:
+    r = _readiness_for_target(target, channel, tts_name)
     if r["ready"]:
         return
     missing = [name for name, ok in (("LLM", r["llm"]), ("STT", r["stt"]), ("TTS", r["tts"])) if not ok]
@@ -237,7 +242,7 @@ def _ensure_ready(conn: sqlite3.Connection, user_id: str, channel: str) -> None:
     so switching Settings mid-conversation (e.g. back to local with nothing
     downloaded) can't block turns in a session that's still perfectly able
     to run on what it was actually started with."""
-    _ensure_ready_for_target(llm_target(conn, user_id), channel)
+    _ensure_ready_for_target(llm_target(conn, user_id), channel, tts.selected_name(conn, user_id))
 
 
 def full_engine_status(conn: sqlite3.Connection, user_id: str) -> dict:
@@ -262,7 +267,7 @@ def full_engine_status(conn: sqlite3.Connection, user_id: str) -> dict:
     return engine_status.status(str(model_manager.llm_model_path(option.repo_id, option.filename)))
 
 
-def _ensure_launched(needs: set[str], *, llm_target: dict) -> None:
+def _ensure_launched(needs: set[str], *, llm_target: dict, tts_name: str | None = None) -> None:
     """Distinct from _ensure_ready: that checks a model is *downloaded*/
     *configured*, this checks it's actually *loaded into memory* — a check
     that only applies to the local provider, since a cloud API call has no
@@ -280,7 +285,7 @@ def _ensure_launched(needs: set[str], *, llm_target: dict) -> None:
     else:
         option = llm_target["option"]
         llm_path = str(model_manager.llm_model_path(option.repo_id, option.filename))
-    st = engine_status.status(llm_path)
+    st = engine_status.status(llm_path, tts_name)
     missing = sorted(n.upper() for n in effective_needs if st.get(n) != "ready")
     if missing:
         raise EngineUnavailable(
@@ -321,7 +326,50 @@ def _words_by_ids(conn: sqlite3.Connection, user_id: str, word_ids: list[str]) -
     ).fetchall()
 
 
-def _system_prompt(scenario: str, target_words: list[sqlite3.Row]) -> str:
+def normalise_for_chat(pairs: list[tuple[str, str]]) -> tuple[list[str], list[tuple[str, str]]]:
+    """Reshape a transcript into something every provider will accept.
+
+    Returns (assistant_opening_lines, history), where history begins with a
+    'user' message and strictly alternates user/assistant.
+
+    Two real failures make this necessary, both observed in production:
+
+    1. **A session opens with the AI speaking.** Gemma's chat template rejects
+       that outright — measured against gemma-3-1b, ``system + assistant +
+       user`` raises "Conversation roles must alternate
+       user/assistant/user/assistant/...", while ``system + user + assistant +
+       user`` is fine. So every reply after the AI greeting failed on any
+       Gemma model. Leading assistant turns are lifted out here and handed to
+       the caller to fold into the system prompt, which keeps their content
+       without breaking the alternation rule. Gemini requires the same shape.
+
+    2. **Consecutive turns from one speaker.** A failed generation used to
+       leave the learner's turn committed with no reply, so the next attempt
+       saw two user turns in a row and hit the same template error — the
+       error then masked whatever had actually gone wrong. Orphans are no
+       longer created (see submit_user_turn), but sessions already in that
+       state still have to work, so same-role runs are merged into one
+       message rather than dropped.
+    """
+    merged: list[tuple[str, str]] = []
+    for role, text in pairs:
+        clean = (text or "").strip()
+        if not clean:
+            continue
+        if merged and merged[-1][0] == role:
+            merged[-1] = (role, f"{merged[-1][1]} {clean}")
+        else:
+            merged.append((role, clean))
+
+    opening: list[str] = []
+    while merged and merged[0][0] == "assistant":
+        opening.append(merged.pop(0)[1])
+    return opening, merged
+
+
+def _system_prompt(
+    scenario: str, target_words: list[sqlite3.Row], opening: list[str] | None = None
+) -> str:
     scenario_cfg = SCENARIOS[scenario]
     words_block = (
         "\n".join(f"- {w['word']}: {w['definition'] or 'no definition on file'}" for w in target_words)
@@ -335,6 +383,10 @@ def _system_prompt(scenario: str, target_words: list[sqlite3.Row]) -> str:
         "short sentences — real spoken conversation, not an essay. Speaking them aloud takes longer "
         "than generating them, so length is what the learner waits on. Ask a follow-up question to "
         "keep the conversation going."
+        # Whatever the AI already said cannot stay in the message list without
+        # breaking alternation (see normalise_for_chat), so it is given back
+        # here instead — the model still knows how it opened.
+        + (f"\n\nYou have already said this to the learner: {' '.join(opening)}" if opening else "")
     )
 
 
@@ -359,8 +411,26 @@ def launch_engines(conn: sqlite3.Connection, user_id: str) -> dict:
         _cloud_engine(target["provider"]).verify(api_key=target["api_key"], model=target["model"])
     if model_catalog.stt_is_downloaded():
         stt_engine.warm_up()
-    if model_catalog.tts_is_downloaded():
-        tts_engine.warm_up()
+    tts_name = tts.selected_name(conn, user_id)
+    if tts.is_downloaded(tts_name):
+        # Whichever engine this user has picked — warming the other one would
+        # hold a few hundred MB for a voice that is never going to be called.
+        tts.engine_for(tts_name).warm_up()
+    return full_engine_status(conn, user_id)
+
+
+def unload_engines(conn: sqlite3.Connection, user_id: str) -> dict:
+    """The opposite of launch_engines: hands the memory back.
+
+    Each engine's own unload() takes the same lock generation holds, so this
+    waits for any in-flight turn rather than pulling a model out from under
+    it. A cloud LLM has nothing resident to free — its key stays verified, so
+    the conversation can carry on while the local speech models are released."""
+    target = llm_target(conn, user_id)
+    if target["provider"] == "local":
+        llm_chat_engine.unload()
+    stt_engine.unload()
+    tts.unload_all()
     return full_engine_status(conn, user_id)
 
 
@@ -377,32 +447,44 @@ def start_session(
     words that just went badly are the ones that come straight back."""
     _ensure_ready(conn, user_id, channel)
     target = llm_target(conn, user_id)
-    _ensure_launched({"llm"} | ({"tts"} if channel == "voice" else set()), llm_target=target)
+    _ensure_launched(
+        {"llm"} | ({"tts"} if channel == "voice" else set()),
+        llm_target=target,
+        tts_name=tts.selected_name(conn, user_id),
+    )
 
     target_words = _words_by_ids(conn, user_id, seed_word_ids) if seed_word_ids else []
     if not target_words:
         target_words = _select_target_words(conn, user_id)
-    session_id = uuid7()
-    now = iso8601_utc_now()
+    # Generate the opening BEFORE writing anything, for two reasons. It keeps
+    # a failure from leaving a session row with no turns behind — one that
+    # would then sit in the learner's history forever as an empty
+    # conversation, and which "resume" could only ever reopen empty. And it
+    # means no write transaction is held open across a call that can take
+    # minutes on a cold model load, which would block every other writer.
+    opening = _generate_reply(
+        target,
+        _system_prompt(scenario, target_words),
+        [("user", "(The learner has just joined. Greet them and open the conversation.)")],
+    )
 
+    session_id = uuid7()
     conn.execute(
         """
         INSERT INTO conversation_sessions (id, user_id, scenario, channel, target_word_ids, model_id, started_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (session_id, user_id, scenario, channel, json.dumps([w["id"] for w in target_words]), _session_model_id(target), now),
+        (
+            session_id,
+            user_id,
+            scenario,
+            channel,
+            json.dumps([w["id"] for w in target_words]),
+            _session_model_id(target),
+            iso8601_utc_now(),
+        ),
     )
-    # Commit before the slow LLM call below — otherwise this write
-    # transaction stays open (blocking every other writer) for however long
-    # the model takes to reply, which can be minutes on a cold first load.
     conn.commit()
-
-    system_prompt = _system_prompt(scenario, target_words)
-    opening = _generate_reply(
-        target,
-        system_prompt,
-        [("user", "(The learner has just joined. Greet them and open the conversation.)")],
-    )
     _insert_turn(conn, session_id, 0, "ai", opening, channel)
     return session_id
 
@@ -446,29 +528,49 @@ def _insert_turn(
     return conn.execute("SELECT * FROM conversation_turns WHERE id = ?", (turn_id,)).fetchone()
 
 
-def audio_chunk_path(turn_id: str, index: int) -> Path:
-    return _audio_dir() / f"{turn_id}.{index}.wav"
+def audio_chunk_path(turn_id: str, index: int, engine: str = tts.DEFAULT_ENGINE) -> Path:
+    """The engine is part of the filename because the audio is that engine's
+    voice. Without it, switching engines would keep serving whatever the
+    previous one had already cached for a turn, so the change would appear to
+    do nothing on every reply already on screen. It also leaves the two free
+    to split replies differently without one's chunk 0 being served as the
+    other's."""
+    return _audio_dir() / f"{turn_id}.{engine}.{index}.wav"
 
 
-def ensure_audio_chunk(turn_id: str, text: str, index: int) -> Path:
+def ensure_audio_chunk(turn_id: str, text: str, index: int, engine: str = tts.DEFAULT_ENGINE) -> Path:
     """Synthesizes one sentence of a reply, cached on disk after the first
     request. Called when that sentence is about to be played rather than while
     the learner is still waiting to read the reply."""
-    chunks = tts_engine.split_for_streaming(text)
+    name = tts.normalise(engine)
+    chunks = tts.engine_for(name).split_for_streaming(text)
     if index < 0 or index >= len(chunks):
         raise IndexError(f"chunk {index} out of range for {len(chunks)} chunks")
-    path = audio_chunk_path(turn_id, index)
+    path = audio_chunk_path(turn_id, index, name)
     if not path.exists():
-        path.write_bytes(tts_engine.synthesize(chunks[index]))
+        audio = tts.engine_for(name).synthesize(chunks[index])
+        # Written to a private temp file and moved into place, never straight
+        # to `path`. The player fetches chunk N+1 while N is still audible, so
+        # two requests for the same chunk really can overlap (a replay, a
+        # retry, a second window) — and a FileResponse reading a path that
+        # another thread is still writing serves a truncated WAV, which plays
+        # as a click or as silence. os.replace is atomic, so a reader sees
+        # either the whole file or no file.
+        tmp = path.with_suffix(f".{uuid7()}.part")
+        try:
+            tmp.write_bytes(audio)
+            os.replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)
     return path
 
 
-def audio_chunk_count(turn: sqlite3.Row, channel: str) -> int:
+def audio_chunk_count(turn: sqlite3.Row, channel: str, engine: str = tts.DEFAULT_ENGINE) -> int:
     """How many audio pieces this turn can produce. Only the AI speaks aloud,
     and only on the voice channel."""
     if channel != "voice" or turn["speaker"] != "ai":
         return 0
-    return len(tts_engine.split_for_streaming(turn["text"]))
+    return len(tts.engine_for(engine).split_for_streaming(turn["text"]))
 
 
 def get_session_row(conn: sqlite3.Connection, session_id: str, user_id: str) -> sqlite3.Row | None:
@@ -492,7 +594,7 @@ def submit_user_turn(
 ) -> tuple[sqlite3.Row, sqlite3.Row]:
     channel = session["channel"]
     target = _session_llm_target(conn, session)
-    _ensure_ready_for_target(target, channel)
+    _ensure_ready_for_target(target, channel, tts.selected_name(conn, session["user_id"]))
     # Record what is actually answering now, so the session's engine label
     # reflects reality after a mid-conversation switch.
     model_id = _session_model_id(target)
@@ -502,6 +604,7 @@ def submit_user_turn(
     _ensure_launched(
         {"llm"} | ({"stt"} if audio_bytes is not None else set()) | ({"tts"} if channel == "voice" else set()),
         llm_target=target,
+        tts_name=tts.selected_name(conn, session["user_id"]),
     )
     stt_confidence = None
     speech_seconds = None
@@ -521,19 +624,28 @@ def submit_user_turn(
     turns = get_turns(conn, session["id"])
     next_index = turns[-1]["turn_index"] + 1 if turns else 0
 
-    user_turn = _insert_turn(
-        conn, session["id"], next_index, "user", text, channel, stt_confidence, speech_seconds
-    )
-
     target_words = conn.execute(
         f"SELECT id, word, definition FROM vocab_words WHERE id IN "
         f"({','.join('?' for _ in json.loads(session['target_word_ids']))})",
         json.loads(session["target_word_ids"]),
     ).fetchall() if json.loads(session["target_word_ids"]) else []
 
-    system_prompt = _system_prompt(session["scenario"], target_words)
-    history = [("assistant" if t["speaker"] == "ai" else "user", t["text"]) for t in [*turns, user_turn]]
+    pairs = [("assistant" if t["speaker"] == "ai" else "user", t["text"]) for t in turns]
+    pairs.append(("user", text))
+    opening, history = normalise_for_chat(pairs)
+    system_prompt = _system_prompt(session["scenario"], target_words, opening)
+
+    # Generate BEFORE writing anything. A failure here used to leave the
+    # learner's turn committed with no reply, and the next attempt then saw
+    # two user turns in a row — which Gemma's template rejects, so the session
+    # was permanently stuck behind an alternation error that said nothing
+    # about the original failure. Nothing is persisted unless there is a
+    # reply to persist alongside it.
     reply = _generate_reply(target, system_prompt, history)
+
+    user_turn = _insert_turn(
+        conn, session["id"], next_index, "user", text, channel, stt_confidence, speech_seconds
+    )
     ai_turn = _insert_turn(conn, session["id"], next_index + 1, "ai", reply, channel)
 
     return user_turn, ai_turn
@@ -568,7 +680,8 @@ def end_session(conn: sqlite3.Connection, session: sqlite3.Row) -> dict:
         if outcome not in ("spontaneous", "prompted", "incorrect", "avoided"):
             outcome = "avoided"
         evidence_turn = next(
-            (t["turn_index"] for t in user_turns if w["word"].lower() in t["text"].lower()), None
+            (t["turn_index"] for t in user_turns if conversation_report.says_word(t["text"], w["word"])),
+            None,
         )
         routing.append({"word": w["word"], "outcome": outcome, "evidence_turn": evidence_turn})
         outcomes_for_logs.append((w["id"], outcome))
