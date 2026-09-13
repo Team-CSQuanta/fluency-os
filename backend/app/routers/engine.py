@@ -8,6 +8,8 @@ from app.models.conversation import EngineStatusOut
 from app.models.engine import (
     DownloadStatusOut,
     LlmOptionOut,
+    LlmProviderIn,
+    LlmProviderOut,
     ModelsCatalogOut,
     ReadinessOut,
     SelectLlmModelIn,
@@ -15,7 +17,7 @@ from app.models.engine import (
 )
 from app.security import require_token
 from app.services import conversation
-from app.services.voice import download_manager, engine_status, llm_chat_engine, model_catalog, model_manager, stt_engine, tts_engine
+from app.services.voice import cloud_llm_engine, download_manager, llm_chat_engine, model_catalog, model_manager, stt_engine, tts_engine
 from app.services.voice.errors import EngineUnavailable
 
 router = APIRouter(prefix="/engine", dependencies=[Depends(require_token)])
@@ -27,7 +29,11 @@ def _download_status_out(kind: str, key: str = "") -> DownloadStatusOut:
 
 @router.get("/models", response_model=ModelsCatalogOut)
 def list_models(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> ModelsCatalogOut:
-    selected = conversation.selected_llm_option(conn, user_id)
+    target = conversation.llm_target(conn, user_id)
+    # No local option is "selected" while the cloud provider is active —
+    # avoids the radio list showing a stale local pick that isn't what's
+    # actually being used for generation right now.
+    selected_key = target["option"].key if target["provider"] == "local" else None
     llm = [
         LlmOptionOut(
             key=o.key,
@@ -35,7 +41,7 @@ def list_models(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> Mod
             note=o.note,
             approx_size_mb=o.approx_size_mb,
             downloaded=model_catalog.llm_is_downloaded(o),
-            selected=o.key == selected.key,
+            selected=o.key == selected_key,
             download=_download_status_out("llm", o.key),
         )
         for o in model_catalog.LLM_OPTIONS
@@ -112,14 +118,54 @@ def delete_tts() -> None:
 
 @router.post("/models/select", status_code=204)
 def select_llm_model(payload: SelectLlmModelIn, conn: sqlite3.Connection = Depends(get_db)) -> None:
+    # Explicitly picking a local model also switches the provider back to
+    # 'local' — otherwise choosing one while the cloud provider is active
+    # would silently do nothing (Conversation would keep using OpenRouter).
     conn.execute(
         """
-        INSERT INTO user_settings (user_id, llm_model_id)
-        VALUES (?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET llm_model_id = excluded.llm_model_id
+        INSERT INTO user_settings (user_id, llm_model_id, llm_mode)
+        VALUES (?, ?, 'local')
+        ON CONFLICT(user_id) DO UPDATE SET llm_model_id = excluded.llm_model_id, llm_mode = 'local'
         """,
         (payload.user_id, payload.model_key),
     )
+
+
+@router.get("/llm-provider", response_model=LlmProviderOut)
+def get_llm_provider(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> LlmProviderOut:
+    row = conn.execute(
+        "SELECT llm_mode, openrouter_api_key, openrouter_model FROM user_settings WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    provider = "cloud" if row and row["llm_mode"] == "api" else "local"
+    api_key = row["openrouter_api_key"] if row else None
+    return LlmProviderOut(
+        provider=provider,
+        openrouter_model=(row["openrouter_model"] if row and row["openrouter_model"] else cloud_llm_engine.DEFAULT_MODEL),
+        has_api_key=bool(api_key),
+        api_key_preview=f"…{api_key[-4:]}" if api_key and len(api_key) >= 4 else None,
+    )
+
+
+@router.post("/llm-provider", status_code=status.HTTP_204_NO_CONTENT)
+def set_llm_provider(payload: LlmProviderIn, conn: sqlite3.Connection = Depends(get_db)) -> None:
+    conn.execute(
+        """
+        INSERT INTO user_settings (user_id, llm_mode, api_provider)
+        VALUES (?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET llm_mode = excluded.llm_mode, api_provider = excluded.api_provider
+        """,
+        (payload.user_id, "api" if payload.provider == "cloud" else "local", "openrouter" if payload.provider == "cloud" else None),
+    )
+    if payload.openrouter_api_key is not None:
+        conn.execute(
+            "UPDATE user_settings SET openrouter_api_key = ? WHERE user_id = ?",
+            (payload.openrouter_api_key.strip() or None, payload.user_id),
+        )
+    if payload.openrouter_model is not None:
+        conn.execute(
+            "UPDATE user_settings SET openrouter_model = ? WHERE user_id = ?",
+            (payload.openrouter_model.strip() or None, payload.user_id),
+        )
 
 
 @router.get("/readiness", response_model=ReadinessOut)
@@ -130,16 +176,15 @@ def readiness(user_id: str, channel: str = "voice", conn: sqlite3.Connection = D
 @router.get("/status", response_model=EngineStatusOut)
 def get_status(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> EngineStatusOut:
     """Whether each engine is actually loaded into memory right now — distinct
-    from /readiness, which only reports what's downloaded to disk. Polled by
-    the global "Launch AI" indicator while a launch is in progress.
+    from /readiness, which only reports what's downloaded/configured. Polled
+    by the global "Launch AI" indicator while a launch is in progress.
 
-    "llm" is specific to whichever model is *currently selected* for this
-    user — switching to a different downloaded model in Settings correctly
-    flips this back to not-ready until Launch AI is used again, rather than
-    reading as still-ready off whatever was previously loaded."""
-    option = conversation.selected_llm_option(conn, user_id)
-    llm_path = str(model_manager.llm_model_path(option.repo_id, option.filename))
-    return EngineStatusOut(**engine_status.status(llm_path))
+    "llm" is specific to whichever model/provider is *currently selected*
+    for this user — switching to a different downloaded local model, or
+    between local and cloud, correctly flips this back to not-ready until
+    Launch AI is used again, rather than reading as still-ready off
+    whatever was previously active."""
+    return EngineStatusOut(**conversation.full_engine_status(conn, user_id))
 
 
 @router.post("/launch", response_model=EngineStatusOut)

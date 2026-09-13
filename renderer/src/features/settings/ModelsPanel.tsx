@@ -97,6 +97,127 @@ function DownloadButton({
   );
 }
 
+function ProviderToggle({
+  provider,
+  onChange,
+  disabled,
+}: {
+  provider: 'local' | 'cloud';
+  onChange: (p: 'local' | 'cloud') => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="inline-flex overflow-hidden rounded-field border border-line2">
+      {(['local', 'cloud'] as const).map((p) => (
+        <button
+          key={p}
+          onClick={() => onChange(p)}
+          disabled={disabled || provider === p}
+          className="px-[13px] py-[7px] font-mono text-[10.5px] font-medium disabled:cursor-default"
+          style={{
+            background: provider === p ? 'var(--accSoft)' : 'transparent',
+            color: provider === p ? 'var(--acc)' : 'var(--tx2)',
+          }}
+        >
+          {p === 'local' ? 'Local (this device)' : 'Cloud (OpenRouter)'}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function CloudProviderCard({ active }: { active: boolean }) {
+  const llmProvider = useEngineStore((s) => s.llmProvider);
+  const setLlmProvider = useEngineStore((s) => s.setLlmProvider);
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [modelInput, setModelInput] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (llmProvider) setModelInput(llmProvider.openrouter_model);
+  }, [llmProvider]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await setLlmProvider('cloud', {
+        apiKey: apiKeyInput.trim() || undefined,
+        model: modelInput.trim() || undefined,
+      });
+      setApiKeyInput('');
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="rounded-panel border p-4"
+      style={{ borderColor: active ? 'var(--accLine)' : 'var(--line2)', background: active ? 'var(--accSoft)' : 'var(--panel)' }}
+    >
+      <div className="mb-[10px] flex items-center gap-[8px] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
+        Cloud (OpenRouter)
+        {active && (
+          <span className="rounded-full bg-accSoft px-[7px] py-[2px] font-mono text-[8.5px] font-semibold normal-case tracking-normal text-acc">
+            active
+          </span>
+        )}
+      </div>
+      <div className="mb-[10px] font-sans text-[12px] leading-[1.6] text-tx2">
+        Uses any model available on{' '}
+        <span className="font-medium text-tx">openrouter.ai</span> instead of a local download — real API calls
+        leave the machine, unlike the local option. Nothing here is stored anywhere but this device's own local
+        database.
+      </div>
+      <div className="flex flex-col gap-[8px]">
+        <div>
+          <div className="mb-1 font-mono text-[9px] font-semibold uppercase tracking-[0.1em] text-tx3">
+            OpenRouter API key
+          </div>
+          <input
+            type="password"
+            value={apiKeyInput}
+            onChange={(e) => setApiKeyInput(e.target.value)}
+            placeholder={llmProvider?.has_api_key ? `saved (${llmProvider.api_key_preview}) — enter a new key to replace` : 'sk-or-v1-…'}
+            className="w-full rounded-field border border-line2 bg-panel2 px-3 py-[8px] font-mono text-[11.5px] text-tx placeholder:text-tx3 focus:border-acc focus:outline-none"
+          />
+        </div>
+        <div>
+          <div className="mb-1 font-mono text-[9px] font-semibold uppercase tracking-[0.1em] text-tx3">Model</div>
+          <input
+            value={modelInput}
+            onChange={(e) => setModelInput(e.target.value)}
+            placeholder="openai/gpt-4o-mini"
+            className="w-full rounded-field border border-line2 bg-panel2 px-3 py-[8px] font-mono text-[11.5px] text-tx placeholder:text-tx3 focus:border-acc focus:outline-none"
+          />
+          <div className="mt-1 font-mono text-[9.5px] text-tx3">
+            any OpenRouter model id — e.g. openai/gpt-4o-mini, anthropic/claude-3.5-haiku, meta-llama/llama-3.1-8b-instruct:free
+          </div>
+        </div>
+        <div className="mt-1 flex items-center gap-[10px]">
+          <button
+            onClick={() => void handleSave()}
+            disabled={saving}
+            className="rounded-field bg-accSolid px-[14px] py-[8px] font-sans text-[11px] font-semibold text-white hover:brightness-110 disabled:opacity-50"
+          >
+            {saving ? 'saving…' : 'save & use cloud'}
+          </button>
+          {saved && <span className="font-mono text-[10.5px] font-medium text-acc">✓ saved</span>}
+          {error && <span className="font-mono text-[10.5px] text-[#c0563f]">{error}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ModelsPanel() {
   const catalog = useEngineStore((s) => s.catalog);
   const catalogStatus = useEngineStore((s) => s.catalogStatus);
@@ -108,10 +229,15 @@ export function ModelsPanel() {
   const deleteStt = useEngineStore((s) => s.deleteStt);
   const deleteTts = useEngineStore((s) => s.deleteTts);
   const selectModel = useEngineStore((s) => s.selectModel);
+  const llmProvider = useEngineStore((s) => s.llmProvider);
+  const fetchLlmProvider = useEngineStore((s) => s.fetchLlmProvider);
+  const setLlmProvider = useEngineStore((s) => s.setLlmProvider);
+  const [switchingProvider, setSwitchingProvider] = useState(false);
 
   useEffect(() => {
     void fetchCatalog();
-  }, [fetchCatalog]);
+    void fetchLlmProvider();
+  }, [fetchCatalog, fetchLlmProvider]);
 
   if (catalogStatus === 'loading' && !catalog) {
     return <div className="mt-5 font-mono text-[11px] text-tx3">loading…</div>;
@@ -125,13 +251,41 @@ export function ModelsPanel() {
     catalog.stt.download.error ||
     catalog.tts.download.error;
 
+  const handleToggleProvider = async (p: 'local' | 'cloud') => {
+    setSwitchingProvider(true);
+    try {
+      await setLlmProvider(p);
+    } finally {
+      setSwitchingProvider(false);
+    }
+  };
+
   return (
     <div className="mt-5 flex max-w-[660px] flex-col gap-5">
-      <div>
-        <div className="mb-2 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
-          Conversation model — pick one, download it, then it's used automatically
+      {llmProvider && (
+        <div>
+          <div className="mb-2 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
+            AI provider — which engine Conversation and Vocabulary's AI features actually use
+          </div>
+          <ProviderToggle provider={llmProvider.provider} onChange={(p) => void handleToggleProvider(p)} disabled={switchingProvider} />
         </div>
-        <div className="flex flex-col gap-[1px] overflow-hidden rounded-panel border border-line2 bg-panel">
+      )}
+
+      <CloudProviderCard active={llmProvider?.provider === 'cloud'} />
+
+      <div>
+        <div className="mb-2 flex items-center gap-[8px] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
+          Conversation model — pick one, download it, then it's used automatically
+          {llmProvider?.provider === 'local' && (
+            <span className="rounded-full bg-accSoft px-[7px] py-[2px] font-mono text-[8.5px] font-semibold normal-case tracking-normal text-acc">
+              active
+            </span>
+          )}
+        </div>
+        <div
+          className="flex flex-col gap-[1px] overflow-hidden rounded-panel border bg-panel"
+          style={{ borderColor: llmProvider?.provider === 'local' ? 'var(--accLine)' : 'var(--line2)' }}
+        >
           {catalog.llm.map((o) => (
             <div key={o.key} className="flex items-center justify-between gap-4 border-b border-line2 px-4 py-[13px] last:border-b-0">
               <div className="flex min-w-0 items-center gap-[10px]">

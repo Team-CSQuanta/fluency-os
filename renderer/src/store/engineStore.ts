@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { api } from '@/lib/apiClient';
 import { useAppStore } from '@/store/appStore';
-import type { EngineStatusOut, ModelsCatalogOut, ReadinessOut } from '@/types/api';
+import type { EngineStatusOut, LlmProvider, LlmProviderOut, ModelsCatalogOut, ReadinessOut } from '@/types/api';
 
 interface EngineState {
   catalog: ModelsCatalogOut | null;
@@ -16,6 +16,10 @@ interface EngineState {
   launching: boolean;
   launchError: string | null;
 
+  // local (llama.cpp) vs cloud (OpenRouter) — which one Conversation and
+  // Vocabulary's AI features actually call.
+  llmProvider: LlmProviderOut | null;
+
   fetchCatalog: () => Promise<void>;
   downloadLlm: (key: string) => Promise<void>;
   downloadStt: () => Promise<void>;
@@ -27,6 +31,8 @@ interface EngineState {
   fetchReadiness: (channel: 'voice' | 'text') => Promise<void>;
   fetchStatus: () => Promise<void>;
   launchAi: () => Promise<void>;
+  fetchLlmProvider: () => Promise<void>;
+  setLlmProvider: (provider: LlmProvider, opts?: { apiKey?: string; model?: string }) => Promise<void>;
 }
 
 function requireUserId(): string {
@@ -79,6 +85,7 @@ export const useEngineStore = create<EngineState>((set, get) => {
     status: null,
     launching: false,
     launchError: null,
+    llmProvider: null,
 
     fetchCatalog: async () => {
       set({ catalogStatus: 'loading' });
@@ -139,6 +146,9 @@ export const useEngineStore = create<EngineState>((set, get) => {
       // Conversation gate) reflects that immediately instead of still
       // showing "launched" off whatever was previously loaded.
       await get().fetchStatus();
+      // Picking a local model also switches the provider back to 'local'
+      // server-side (see /engine/models/select) — reflect that here too.
+      await get().fetchLlmProvider();
     },
 
     fetchReadiness: async (channel) => {
@@ -174,6 +184,27 @@ export const useEngineStore = create<EngineState>((set, get) => {
       } finally {
         clearInterval(pollId);
       }
+    },
+
+    fetchLlmProvider: async () => {
+      const userId = requireUserId();
+      const llmProvider = await api.get<LlmProviderOut>(`/engine/llm-provider?user_id=${encodeURIComponent(userId)}`);
+      set({ llmProvider });
+    },
+
+    setLlmProvider: async (provider, opts) => {
+      const userId = requireUserId();
+      await api.post('/engine/llm-provider', {
+        user_id: userId,
+        provider,
+        openrouter_api_key: opts?.apiKey ? opts.apiKey : undefined,
+        openrouter_model: opts?.model ? opts.model : undefined,
+      });
+      await get().fetchLlmProvider();
+      // The active engine may have just changed entirely — refresh
+      // readiness/status/catalog so every dependent view (AppNav, the
+      // Conversation gate) reflects it immediately.
+      await Promise.all([get().fetchCatalog(), get().fetchStatus()]);
     },
   };
 });

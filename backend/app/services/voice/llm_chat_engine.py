@@ -8,13 +8,12 @@ and cached at module level (loading a ~1GB GGUF per request would be
 unusable), reloaded only if the pinned model path changes.
 """
 
-import json
 import os
-import re
 import threading
 
 from app.services.voice import model_manager
 from app.services.voice.errors import EngineUnavailable
+from app.services.voice.json_utils import parse_json_object
 
 _lock = threading.Lock()
 _llm = None
@@ -169,23 +168,7 @@ def generate_json(
             raise EngineUnavailable(f"Local LLM generation failed: {err}") from err
 
     raw = result["choices"][0]["message"]["content"].strip()
-    parsed = _parse_json_object(raw)
+    parsed = parse_json_object(raw)
     if parsed is None:
         raise EngineUnavailable("The local LLM's response wasn't valid JSON")
     return parsed
-
-
-def _parse_json_object(raw: str) -> dict | None:
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-    # Small models sometimes wrap JSON in prose or a markdown fence despite
-    # instructions — salvage the first {...} block rather than failing outright.
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if match:
-        try:
-            return json.loads(match.group(0))
-        except json.JSONDecodeError:
-            return None
-    return None

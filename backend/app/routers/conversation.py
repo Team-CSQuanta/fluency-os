@@ -19,7 +19,6 @@ from app.models.conversation import (
 )
 from app.security import require_token
 from app.services import conversation
-from app.services.voice import engine_status
 from app.services.voice.errors import EngineUnavailable
 
 router = APIRouter(prefix="/conversation", dependencies=[Depends(require_token)])
@@ -75,11 +74,9 @@ def _get_owned_session(conn: sqlite3.Connection, session_id: str, user_id: str) 
 
 @router.get("/engine-status", response_model=EngineStatusOut)
 def get_engine_status(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> EngineStatusOut:
-    # "llm" is pinned to whichever model this user currently has selected —
-    # see engine_status.status()'s docstring for why that matters.
-    option = conversation.selected_llm_option(conn, user_id)
-    llm_path = str(conversation.model_manager.llm_model_path(option.repo_id, option.filename))
-    return EngineStatusOut(**engine_status.status(llm_path))
+    # "llm" is pinned to whichever model/provider this user currently has
+    # selected — see conversation.full_engine_status()'s docstring.
+    return EngineStatusOut(**conversation.full_engine_status(conn, user_id))
 
 
 @router.get("/sessions", response_model=list[ConversationSessionOut])

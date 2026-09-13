@@ -565,6 +565,15 @@ export interface ReadinessOut {
   llm_model_label: string;
 }
 
+export type LlmProvider = 'local' | 'cloud';
+
+export interface LlmProviderOut {
+  provider: LlmProvider;
+  openrouter_model: string;
+  has_api_key: boolean;
+  api_key_preview: string | null;
+}
+
 export interface VocabWordManualCreate {
   user_id: string;
   word: string;
