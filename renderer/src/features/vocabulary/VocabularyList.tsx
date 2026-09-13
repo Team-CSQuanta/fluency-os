@@ -52,9 +52,6 @@ export function VocabularyList() {
         >
           ＋ add word
         </button>
-        <button className="rounded-field border border-line px-3 py-[7px] font-mono text-[11px] text-tx2 hover:border-acc hover:text-acc">
-          export APKG
-        </button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">

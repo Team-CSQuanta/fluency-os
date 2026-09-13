@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { AiStatusButton } from '@/features/shell/AiStatusButton';
 import { SCREEN_TITLES } from '@/features/shell/navConfig';
 import { useAppStore } from '@/store/appStore';
 import { useBookshelfStore } from '@/store/bookshelfStore';
@@ -45,6 +46,7 @@ export function ScreenHeader() {
         <div className="truncate font-sans text-[11px] text-tx3">{sub}</div>
       </div>
       <div className="flex flex-none items-center gap-2">
+        <AiStatusButton />
         <div
           className="flex items-center gap-[6px] rounded-field border border-line2 px-[10px] py-[5px] font-mono text-[10.5px] font-medium text-tx2"
           title={stats ? `${stats.pages_today} of ${stats.goal_pages} pages read today` : undefined}

@@ -51,18 +51,24 @@ class ReadinessOut(BaseModel):
 
 class LlmProviderIn(BaseModel):
     user_id: str
-    provider: Literal["local", "cloud"]
+    provider: Literal["local", "openrouter", "gemini"]
     # Only updates the stored value when given (so switching provider back
-    # and forth doesn't require re-typing the key each time); an explicit
-    # empty string clears it.
+    # and forth doesn't require re-typing the key each time, and each cloud
+    # provider's saved credentials survive switching to the other one); an
+    # explicit empty string clears it.
     openrouter_api_key: str | None = None
     openrouter_model: str | None = None
+    gemini_api_key: str | None = None
+    gemini_model: str | None = None
 
 
 class LlmProviderOut(BaseModel):
-    provider: Literal["local", "cloud"]
+    provider: Literal["local", "openrouter", "gemini"]
     openrouter_model: str
-    has_api_key: bool
+    has_openrouter_key: bool
     # Last 4 characters only, e.g. "sk-…d2dd" — enough to recognize which
     # key is saved without ever re-exposing the real value to the renderer.
-    api_key_preview: str | None
+    openrouter_key_preview: str | None
+    gemini_model: str
+    has_gemini_key: bool
+    gemini_key_preview: str | None

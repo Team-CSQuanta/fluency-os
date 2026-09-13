@@ -28,10 +28,15 @@ export function ConversationList() {
   const deleteSession = useConversationStore((s) => s.deleteSession);
   const fetchEngineStatus = useConversationStore((s) => s.fetchEngineStatus);
   const engineStatus = useConversationStore((s) => s.engineStatus);
-  const readiness = useEngineStore((s) => s.readiness);
+  // Every scenario below starts a voice session, so this screen must gate on
+  // voice readiness specifically — text readiness always reports STT/TTS as
+  // ready and would wave through a session that can't actually run.
+  const readiness = useEngineStore((s) => s.readiness.voice);
   const fetchReadiness = useEngineStore((s) => s.fetchReadiness);
   const engineGlobalStatus = useEngineStore((s) => s.status);
   const fetchEngineGlobalStatus = useEngineStore((s) => s.fetchStatus);
+  const llmProvider = useEngineStore((s) => s.llmProvider);
+  const fetchLlmProvider = useEngineStore((s) => s.fetchLlmProvider);
   const aiLaunching = useEngineStore((s) => s.launching);
   const aiLaunchError = useEngineStore((s) => s.launchError);
   const launchAi = useEngineStore((s) => s.launchAi);
@@ -44,9 +49,13 @@ export function ConversationList() {
     void fetchSessions();
     void fetchReadiness('voice');
     void fetchEngineGlobalStatus();
-  }, [fetchSessions, fetchReadiness, fetchEngineGlobalStatus]);
+    void fetchLlmProvider();
+  }, [fetchSessions, fetchReadiness, fetchEngineGlobalStatus, fetchLlmProvider]);
 
   const notReady = readiness !== null && !readiness.ready;
+  // A cloud provider has nothing to download for the LLM — what it's missing
+  // is an API key, so "go download a model" would be the wrong instruction.
+  const usingCloud = llmProvider !== null && llmProvider.provider !== 'local';
   // Every scenario here runs on the voice channel, so all three engines
   // (LLM/STT/TTS) need to be actually loaded, not just downloaded, before a
   // session can start — see backend's _ensure_launched.
@@ -133,7 +142,9 @@ export function ConversationList() {
               <div className="font-sans text-[13.5px] font-semibold text-tx">Start a new conversation</div>
               <div className="mt-1 font-sans text-[11px] leading-[1.6] text-tx2">
                 {notReady
-                  ? "You'll need to download a model before you can start."
+                  ? usingCloud && !readiness!.llm
+                    ? 'Your cloud provider needs an API key before you can start.'
+                    : "You'll need to download a model before you can start."
                   : needsLaunch
                     ? 'Models are downloaded, but the AI needs to be launched before a conversation can use it.'
                     : 'Runs a real local model — the first message may take a while to warm up.'}
@@ -144,7 +155,11 @@ export function ConversationList() {
           {notReady ? (
             <div className="mt-[14px] flex flex-wrap items-center gap-[10px] border-t border-accLine pt-[13px]">
               <span className="font-mono text-[10.5px] leading-[1.6] text-tx2">
-                Missing: {[!readiness!.llm && 'AI model', !readiness!.stt && 'speech-to-text', !readiness!.tts && 'text-to-speech']
+                Missing: {[
+                  !readiness!.llm && (usingCloud ? 'a cloud API key' : 'AI model'),
+                  !readiness!.stt && 'speech-to-text',
+                  !readiness!.tts && 'text-to-speech',
+                ]
                   .filter(Boolean)
                   .join(', ')}
               </span>
@@ -152,7 +167,7 @@ export function ConversationList() {
                 onClick={() => goSettings('AI')}
                 className="rounded-field bg-acc px-[13px] py-[7px] font-sans text-[11px] font-semibold text-white hover:brightness-110"
               >
-                Go to Settings to download
+                Go to Settings
               </button>
             </div>
           ) : needsLaunch ? (
@@ -215,6 +230,11 @@ export function ConversationList() {
                 </span>
                 <span className="mt-1 block font-mono text-[10px] text-tx3">
                   {new Date(c.started_at).toLocaleDateString()} · {formatDuration(c.started_at, c.ended_at)}
+                </span>
+                {/* Resuming keeps the engine it started on, so name it here
+                    rather than letting the global indicator imply otherwise. */}
+                <span className="mt-[3px] block truncate font-mono text-[9.5px] text-tx3" title={c.engine_label}>
+                  {c.engine_provider === 'local' ? 'local' : 'cloud'} · {c.engine_label}
                 </span>
               </span>
               <span className="min-w-[96px] flex-none">

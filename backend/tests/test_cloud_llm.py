@@ -148,7 +148,7 @@ def test_llm_target_resolves_cloud_when_mode_is_api(tmp_path):
     _set_cloud_provider(conn, user_id, api_key="sk-or-v1-xyz", model="anthropic/claude-3.5-haiku")
 
     target = conversation.llm_target(conn, user_id)
-    assert target == {"provider": "cloud", "model": "anthropic/claude-3.5-haiku", "api_key": "sk-or-v1-xyz"}
+    assert target == {"provider": "openrouter", "model": "anthropic/claude-3.5-haiku", "api_key": "sk-or-v1-xyz"}
 
 
 def test_llm_target_defaults_to_local_with_no_settings_row(tmp_path):
@@ -176,23 +176,52 @@ def test_ensure_launched_never_blocks_cloud_on_local_load_state(tmp_path):
     with nothing loaded locally, a cloud target with an API key must pass."""
     conn = _fresh_conn(tmp_path)
     user_id = _make_user(conn)
-    target = {"provider": "cloud", "model": "openai/gpt-4o-mini", "api_key": "sk-or-v1-real"}
+    target = {"provider": "openrouter", "model": "openai/gpt-4o-mini", "api_key": "sk-or-v1-real"}
     conversation._ensure_launched({"llm"}, llm_target=target)  # must not raise
 
 
-def test_full_engine_status_reports_cloud_llm_ready_from_api_key_alone(tmp_path, monkeypatch):
+def test_cloud_llm_is_only_ready_once_a_real_request_has_succeeded(tmp_path, monkeypatch):
+    """A saved key proves nothing — it can be revoked, mistyped, or out of
+    quota. "ready" has to mean the service actually answered."""
+    from app.services.voice import engine_health
+
     conn = _fresh_conn(tmp_path)
     user_id = _make_user(conn)
     monkeypatch.setattr(engine_status, "status", lambda *a, **kw: {"llm": "not_loaded", "stt": "ready", "tts": "ready"})
+    engine_health.forget_all()
 
     _set_cloud_provider(conn, user_id, api_key="", model="openai/gpt-4o-mini")
-    st = conversation.full_engine_status(conn, user_id)
-    assert st["llm"] == "not_loaded"  # no key yet
+    assert conversation.full_engine_status(conn, user_id)["llm"] == "not_loaded"  # no key yet
 
+    # A key alone is still not enough.
     _set_cloud_provider(conn, user_id, api_key="sk-or-v1-real", model="openai/gpt-4o-mini")
-    st2 = conversation.full_engine_status(conn, user_id)
-    assert st2["llm"] == "ready"
-    assert st2["stt"] == "ready" and st2["tts"] == "ready"  # untouched, still real local status
+    assert conversation.full_engine_status(conn, user_id)["llm"] == "not_loaded"
+
+    # A request that really succeeded is.
+    engine_health.record_success("openrouter", "openai/gpt-4o-mini")
+    st = conversation.full_engine_status(conn, user_id)
+    assert st["llm"] == "ready"
+    assert st["stt"] == "ready" and st["tts"] == "ready"  # untouched, still real local status
+
+    # ...and one that really failed takes it back.
+    engine_health.record_failure("openrouter", "openai/gpt-4o-mini", "429 quota exceeded")
+    assert conversation.full_engine_status(conn, user_id)["llm"] == "not_loaded"
+
+
+def test_a_bad_reply_does_not_mark_the_key_broken(monkeypatch):
+    """Verification tracks whether the service answered, not whether we liked
+    the answer — unparseable JSON is a model quirk, not a dead key."""
+    from app.services.voice import engine_health
+
+    engine_health.forget_all()
+
+    def fake_urlopen(request, timeout=60):
+        return _FakeResponse({"choices": [{"message": {"content": "not json at all"}}]})
+
+    monkeypatch.setattr(cloud_llm_engine.urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(EngineUnavailable):
+        cloud_llm_engine.generate_json("sp", "up", api_key="k", model="m")
+    assert engine_health.is_verified("openrouter", "m") is True
 
 
 def test_start_session_uses_cloud_engine_and_freezes_model_id(tmp_path, monkeypatch):
@@ -217,32 +246,42 @@ def test_start_session_uses_cloud_engine_and_freezes_model_id(tmp_path, monkeypa
     assert turns[0]["text"] == "Hi! Welcome."
 
 
-def test_session_keeps_using_cloud_even_after_switching_back_to_local(tmp_path, monkeypatch):
-    """Consistent history matters more than switching engines mid-conversation
-    — same guarantee the local-only version of this already had."""
+def test_switching_engine_mid_conversation_takes_effect_on_the_open_session(tmp_path, monkeypatch):
+    """Sessions follow the current engine choice rather than staying pinned to
+    the one they started on — otherwise a conversation whose engine became
+    unusable (quota spent, key revoked) could never continue."""
     conn = _fresh_conn(tmp_path)
     user_id = _make_user(conn)
     _set_cloud_provider(conn, user_id, api_key="sk-or-v1-real", model="openai/gpt-4o-mini")
     monkeypatch.setattr(cloud_llm_engine, "generate_reply", lambda *a, **kw: "opening")
     session_id = conversation.start_session(conn, user_id=user_id, scenario="free", channel="text")
     session = conversation.get_session_row(conn, session_id, user_id)
+    assert session["model_id"] == "cloud:openai/gpt-4o-mini"
 
-    # Switch the user back to local mid-conversation.
-    conn.execute("UPDATE user_settings SET llm_mode = 'local' WHERE user_id = ?", (user_id,))
+    # Switch the user back to a local model mid-conversation.
+    conn.execute(
+        "UPDATE user_settings SET llm_mode = 'local', llm_model_id = 'qwen2.5-0.5b' WHERE user_id = ?", (user_id,)
+    )
     conn.commit()
 
-    called = {}
+    monkeypatch.setattr(conversation, "_ensure_ready_for_target", lambda *a, **kw: None)
+    monkeypatch.setattr(conversation, "_ensure_launched", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        conversation.llm_chat_engine,
+        "generate_reply",
+        lambda system_prompt, history, *, repo_id, filename, max_tokens=220: "now local",
+    )
 
-    def fake_cloud_reply(system_prompt, history, *, api_key, model, max_tokens=220):
-        called["cloud"] = True
-        return "still cloud"
+    def fail_if_called(*a, **kw):
+        raise AssertionError("the session should have moved off the cloud engine")
 
-    monkeypatch.setattr(cloud_llm_engine, "generate_reply", fake_cloud_reply)
-    # If this session incorrectly re-resolved to local now, this would blow
-    # up trying to load a local model that was never downloaded.
-    user_turn, ai_turn = conversation.submit_user_turn(conn, session, text="hello", audio_bytes=None)
-    assert called == {"cloud": True}
-    assert ai_turn["text"] == "still cloud"
+    monkeypatch.setattr(cloud_llm_engine, "generate_reply", fail_if_called)
+
+    _user_turn, ai_turn = conversation.submit_user_turn(conn, session, text="hello", audio_bytes=None)
+    assert ai_turn["text"] == "now local"
+    # The session records what actually answered, so its label stays honest.
+    moved = conversation.get_session_row(conn, session_id, user_id)
+    assert moved["model_id"] == "qwen2.5-0.5b"
 
 
 def test_end_session_uses_cloud_report_generation(tmp_path, monkeypatch):
@@ -253,19 +292,17 @@ def test_end_session_uses_cloud_report_generation(tmp_path, monkeypatch):
     session_id = conversation.start_session(conn, user_id=user_id, scenario="free", channel="text")
     session = conversation.get_session_row(conn, session_id, user_id)
 
-    def fake_generate_report(transcript, target_words, *, api_key, model):
-        return {
-            "word_usage": {},
-            "fluency_score": 70,
-            "vocabulary_reach_score": 60,
-            "self_corrections": 0,
-            "errors": [],
-            "summary": "Cloud-generated summary.",
-        }
+    from tests.test_conversation import fake_analysis
 
-    monkeypatch.setattr(cloud_llm_engine, "generate_report", fake_generate_report)
+    monkeypatch.setattr(
+        cloud_llm_engine,
+        "generate_json",
+        lambda sp, up, **kw: {**fake_analysis([]), "summary": "Cloud-generated summary."},
+    )
     report = conversation.end_session(conn, session)
     assert report["summary"] == "Cloud-generated summary."
+    # The cloud path must produce a fully-populated report, not just a summary.
+    assert report["grammatical_precision"] == 80
 
 
 # ---------------------------------------------------------------- /engine/llm-provider routes
@@ -282,8 +319,10 @@ def test_llm_provider_defaults_to_local(client, auth_headers):
     assert res.status_code == 200
     body = res.json()
     assert body["provider"] == "local"
-    assert body["has_api_key"] is False
-    assert body["api_key_preview"] is None
+    assert body["has_openrouter_key"] is False
+    assert body["openrouter_key_preview"] is None
+    assert body["has_gemini_key"] is False
+    assert body["gemini_key_preview"] is None
 
 
 def test_set_llm_provider_persists_and_masks_key_on_read(client, auth_headers):
@@ -294,7 +333,7 @@ def test_set_llm_provider_persists_and_masks_key_on_read(client, auth_headers):
         headers=auth_headers,
         json={
             "user_id": user_id,
-            "provider": "cloud",
+            "provider": "openrouter",
             "openrouter_api_key": fake_key,
             "openrouter_model": "openai/gpt-4o-mini",
         },
@@ -302,10 +341,10 @@ def test_set_llm_provider_persists_and_masks_key_on_read(client, auth_headers):
     assert res.status_code == 204
 
     got = client.get("/engine/llm-provider", headers=auth_headers, params={"user_id": user_id}).json()
-    assert got["provider"] == "cloud"
+    assert got["provider"] == "openrouter"
     assert got["openrouter_model"] == "openai/gpt-4o-mini"
-    assert got["has_api_key"] is True
-    assert got["api_key_preview"] == f"…{fake_key[-4:]}"
+    assert got["has_openrouter_key"] is True
+    assert got["openrouter_key_preview"] == f"…{fake_key[-4:]}"
     # The raw key is never echoed back.
     assert fake_key not in json.dumps(got)
 
@@ -317,13 +356,13 @@ def test_set_llm_provider_switch_to_local_without_touching_saved_key(client, aut
     client.post(
         "/engine/llm-provider",
         headers=auth_headers,
-        json={"user_id": user_id, "provider": "cloud", "openrouter_api_key": "sk-or-v1-keepme"},
+        json={"user_id": user_id, "provider": "openrouter", "openrouter_api_key": "sk-or-v1-keepme"},
     )
     res = client.post("/engine/llm-provider", headers=auth_headers, json={"user_id": user_id, "provider": "local"})
     assert res.status_code == 204
     got = client.get("/engine/llm-provider", headers=auth_headers, params={"user_id": user_id}).json()
     assert got["provider"] == "local"
-    assert got["has_api_key"] is True  # key preserved, just not the active provider
+    assert got["has_openrouter_key"] is True  # key preserved, just not the active provider
 
 
 def test_selecting_a_local_model_switches_provider_back_to_local(client, auth_headers):
@@ -331,7 +370,7 @@ def test_selecting_a_local_model_switches_provider_back_to_local(client, auth_he
     client.post(
         "/engine/llm-provider",
         headers=auth_headers,
-        json={"user_id": user_id, "provider": "cloud", "openrouter_api_key": "sk-or-v1-x"},
+        json={"user_id": user_id, "provider": "openrouter", "openrouter_api_key": "sk-or-v1-x"},
     )
     res = client.post(
         "/engine/models/select", headers=auth_headers, json={"user_id": user_id, "model_key": "qwen2.5-0.5b"}
@@ -346,7 +385,28 @@ def test_engine_models_route_shows_no_local_selection_while_cloud_active(client,
     client.post(
         "/engine/llm-provider",
         headers=auth_headers,
-        json={"user_id": user_id, "provider": "cloud", "openrouter_api_key": "sk-or-v1-x"},
+        json={"user_id": user_id, "provider": "openrouter", "openrouter_api_key": "sk-or-v1-x"},
     )
     body = client.get("/engine/models", headers=auth_headers, params={"user_id": user_id}).json()
     assert all(o["selected"] is False for o in body["llm"])
+
+
+def test_switching_between_two_cloud_providers_keeps_both_keys(client, auth_headers):
+    """Each cloud provider gets its own saved key/model — flipping the active
+    provider must never clobber the other's saved credentials."""
+    user_id = _create_user(client, auth_headers)
+    client.post(
+        "/engine/llm-provider",
+        headers=auth_headers,
+        json={"user_id": user_id, "provider": "openrouter", "openrouter_api_key": "sk-or-v1-x"},
+    )
+    client.post(
+        "/engine/llm-provider",
+        headers=auth_headers,
+        json={"user_id": user_id, "provider": "gemini", "gemini_api_key": "gm-test-key", "gemini_model": "gemini-2.0-flash"},
+    )
+    got = client.get("/engine/llm-provider", headers=auth_headers, params={"user_id": user_id}).json()
+    assert got["provider"] == "gemini"
+    assert got["has_gemini_key"] is True
+    assert got["gemini_model"] == "gemini-2.0-flash"
+    assert got["has_openrouter_key"] is True  # untouched by the gemini save

@@ -7,7 +7,11 @@ interface EngineState {
   catalog: ModelsCatalogOut | null;
   catalogStatus: 'idle' | 'loading' | 'error';
 
-  readiness: ReadinessOut | null;
+  // Keyed by channel: 'text' readiness deliberately reports STT/TTS as ready
+  // (a text turn needs neither), so storing both in one slot let AppNav's
+  // 'text' fetch clobber Conversation's 'voice' one and hide genuinely
+  // missing speech models behind a Launch AI button that could never succeed.
+  readiness: Record<'voice' | 'text', ReadinessOut | null>;
 
   // Whether each engine is actually loaded into memory right now (distinct
   // from readiness, which only reflects what's downloaded to disk) — driven
@@ -32,7 +36,10 @@ interface EngineState {
   fetchStatus: () => Promise<void>;
   launchAi: () => Promise<void>;
   fetchLlmProvider: () => Promise<void>;
-  setLlmProvider: (provider: LlmProvider, opts?: { apiKey?: string; model?: string }) => Promise<void>;
+  setLlmProvider: (
+    provider: LlmProvider,
+    opts?: { openrouterApiKey?: string; openrouterModel?: string; geminiApiKey?: string; geminiModel?: string },
+  ) => Promise<void>;
 }
 
 function requireUserId(): string {
@@ -64,6 +71,14 @@ const POLL_MS = 1200;
 let pollHandle: ReturnType<typeof setInterval> | null = null;
 
 export const useEngineStore = create<EngineState>((set, get) => {
+  // Anything that changes what's downloaded, selected, or which provider is
+  // active also changes readiness — refreshed for both channels here so the
+  // nav's AI indicator and Conversation's gate update while the learner is
+  // still sitting in Settings, rather than only after a screen change.
+  const refreshReadiness = async () => {
+    await Promise.all([get().fetchReadiness('voice'), get().fetchReadiness('text')]).catch(() => {});
+  };
+
   const ensurePolling = () => {
     if (pollHandle) return;
     pollHandle = setInterval(async () => {
@@ -74,6 +89,8 @@ export const useEngineStore = create<EngineState>((set, get) => {
       if (!stillGoing && pollHandle) {
         clearInterval(pollHandle);
         pollHandle = null;
+        // A download that just finished is exactly when readiness flips.
+        void refreshReadiness();
       }
     }, POLL_MS);
   };
@@ -81,7 +98,7 @@ export const useEngineStore = create<EngineState>((set, get) => {
   return {
     catalog: null,
     catalogStatus: 'idle',
-    readiness: null,
+    readiness: { voice: null, text: null },
     status: null,
     launching: false,
     launchError: null,
@@ -123,18 +140,21 @@ export const useEngineStore = create<EngineState>((set, get) => {
       // Deleting the model currently loaded in memory unloads it
       // server-side too — refresh status so Launch AI reflects that.
       await get().fetchStatus();
+      await refreshReadiness();
     },
 
     deleteStt: async () => {
       await api.delete('/engine/models/stt');
       await get().fetchCatalog();
       await get().fetchStatus();
+      await refreshReadiness();
     },
 
     deleteTts: async () => {
       await api.delete('/engine/models/tts');
       await get().fetchCatalog();
       await get().fetchStatus();
+      await refreshReadiness();
     },
 
     selectModel: async (key) => {
@@ -149,14 +169,15 @@ export const useEngineStore = create<EngineState>((set, get) => {
       // Picking a local model also switches the provider back to 'local'
       // server-side (see /engine/models/select) — reflect that here too.
       await get().fetchLlmProvider();
+      await refreshReadiness();
     },
 
     fetchReadiness: async (channel) => {
       const userId = requireUserId();
-      const readiness = await api.get<ReadinessOut>(
+      const result = await api.get<ReadinessOut>(
         `/engine/readiness?user_id=${encodeURIComponent(userId)}&channel=${channel}`,
       );
-      set({ readiness });
+      set((s) => ({ readiness: { ...s.readiness, [channel]: result } }));
     },
 
     fetchStatus: async () => {
@@ -197,14 +218,16 @@ export const useEngineStore = create<EngineState>((set, get) => {
       await api.post('/engine/llm-provider', {
         user_id: userId,
         provider,
-        openrouter_api_key: opts?.apiKey ? opts.apiKey : undefined,
-        openrouter_model: opts?.model ? opts.model : undefined,
+        openrouter_api_key: opts?.openrouterApiKey ? opts.openrouterApiKey : undefined,
+        openrouter_model: opts?.openrouterModel ? opts.openrouterModel : undefined,
+        gemini_api_key: opts?.geminiApiKey ? opts.geminiApiKey : undefined,
+        gemini_model: opts?.geminiModel ? opts.geminiModel : undefined,
       });
       await get().fetchLlmProvider();
       // The active engine may have just changed entirely — refresh
       // readiness/status/catalog so every dependent view (AppNav, the
       // Conversation gate) reflects it immediately.
-      await Promise.all([get().fetchCatalog(), get().fetchStatus()]);
+      await Promise.all([get().fetchCatalog(), get().fetchStatus(), refreshReadiness()]);
     },
   };
 });

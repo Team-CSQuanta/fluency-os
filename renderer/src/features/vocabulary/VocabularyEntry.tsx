@@ -20,8 +20,6 @@ export function VocabularyEntry() {
   const fetchAiExamples = useVocabularyStore((s) => s.fetchAiExamples);
   const fetchAiPractice = useVocabularyStore((s) => s.fetchAiPractice);
 
-  const [voice, setVoice] = useState<'us' | 'uk'>('us');
-  const [slow, setSlow] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [toast, setToast] = useState('');
   const [noteDraft, setNoteDraft] = useState('');
@@ -51,12 +49,6 @@ export function VocabularyEntry() {
   const flashToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(''), 2200);
-  };
-
-  const play = (v: 'us' | 'uk') => {
-    setVoice(v);
-    setPlaying(true);
-    setTimeout(() => setPlaying(false), 900);
   };
 
   const handleGenerateMnemonic = async (vocabWordId: string) => {
@@ -181,52 +173,11 @@ export function VocabularyEntry() {
                 </button>
                 <span className="font-mono text-[9.5px] text-tx3">from dictionaryapi.dev</span>
               </div>
-            ) : !hasAudio ? (
-              <div className="mt-[14px] rounded-field border border-dashed border-line px-[11px] py-2 font-mono text-[10.5px] text-tx3">
-                no single pronunciation — multi-word phrase · say it in context
-              </div>
             ) : (
-              <div className="mt-[14px] flex flex-wrap items-center gap-[6px]">
-                {(['us', 'uk'] as const).map((v) => {
-                  const on = voice === v;
-                  return (
-                    <button
-                      key={v}
-                      onClick={() => play(v)}
-                      className="flex items-center gap-[7px] rounded-full border px-3 py-[7px] font-sans text-[11px] font-medium"
-                      style={{
-                        borderColor: on ? 'var(--accLine)' : 'var(--line)',
-                        background: on ? 'var(--accSoft)' : 'transparent',
-                        color: on ? 'var(--acc)' : 'var(--tx2)',
-                      }}
-                    >
-                      {v === 'us' ? 'US · Kokoro' : 'UK · Piper'}
-                    </button>
-                  );
-                })}
-                <button
-                  onClick={() => setSlow((s) => !s)}
-                  className="rounded-full border px-[11px] py-[7px] font-mono text-[10.5px] font-medium"
-                  style={{
-                    borderColor: slow ? 'var(--accLine)' : 'var(--line)',
-                    background: slow ? 'var(--accSoft)' : 'transparent',
-                    color: slow ? 'var(--acc)' : 'var(--tx3)',
-                  }}
-                >
-                  0.6× slow
-                </button>
-                <span className="flex h-[22px] items-center gap-[3px] pl-1">
-                  {Array.from({ length: 14 }, (_, i) => (
-                    <span
-                      key={i}
-                      className="w-[2px] rounded-[2px]"
-                      style={{ height: 4 + ((i * 5) % 7) * 2.4, background: playing ? 'var(--acc)' : 'var(--line)' }}
-                    />
-                  ))}
-                </span>
-                <span className="font-mono text-[9.5px] text-tx3">
-                  {playing ? `playing · ${voice === 'us' ? 'en-US' : 'en-GB'}${slow ? ' · 0.6×' : ''}` : 'tap a voice to hear it'}
-                </span>
+              <div className="mt-[14px] rounded-field border border-dashed border-line px-[11px] py-2 font-mono text-[10.5px] leading-[1.6] text-tx3">
+                {hasAudio
+                  ? 'no pronunciation audio for this word — words added via “add word” dictionary search come with one when the dictionary has it'
+                  : 'no single pronunciation — multi-word phrase · say it in context'}
               </div>
             )}
           </div>

@@ -50,6 +50,30 @@ LLM_OPTIONS: tuple[LlmOption, ...] = (
         approx_size_mb=2105,
         note="best quality — needs more RAM and is slower per reply",
     ),
+    LlmOption(
+        key="gemma-3-1b",
+        label="Gemma 3 1B",
+        repo_id="ggml-org/gemma-3-1b-it-GGUF",
+        filename="gemma-3-1b-it-Q4_K_M.gguf",
+        approx_size_mb=769,
+        note="smallest Gemma — the one that fits where Gemma 4 won't",
+    ),
+    LlmOption(
+        key="gemma-4-e2b",
+        label="Gemma 4 E2B",
+        repo_id="unsloth/gemma-4-E2B-it-GGUF",
+        filename="gemma-4-E2B-it-Q4_K_M.gguf",
+        approx_size_mb=2963,
+        note="needs ~3 GB of free RAM to load, on top of the download",
+    ),
+    LlmOption(
+        key="gemma-4-e4b",
+        label="Gemma 4 E4B",
+        repo_id="unsloth/gemma-4-E4B-it-GGUF",
+        filename="gemma-4-E4B-it-Q4_K_M.gguf",
+        approx_size_mb=4747,
+        note="strongest local option — needs ~5 GB of free RAM, well beyond a light machine",
+    ),
 )
 
 _LLM_BY_KEY = {o.key: o for o in LLM_OPTIONS}

@@ -6,13 +6,15 @@ type RecorderStatus = 'idle' | 'recording' | 'error';
  * renderer is a full Chromium context, so no native module is needed. */
 export function useMicRecorder() {
   const [status, setStatus] = useState<RecorderStatus>('idle');
-  const [error, setError] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
 
-  const start = useCallback(async () => {
-    setError(null);
+  /** Resolves to null on success, or the failure message — returned rather
+   * than only stored in state because a caller awaiting start() still holds
+   * its own render's closure, where a just-set error state is not yet
+   * visible (that read silently showed "Recording…" after a denied mic). */
+  const start = useCallback(async (): Promise<string | null> => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -24,9 +26,10 @@ export function useMicRecorder() {
       mediaRecorderRef.current = recorder;
       recorder.start();
       setStatus('recording');
+      return null;
     } catch (err) {
       setStatus('error');
-      setError(err instanceof Error ? err.message : 'Microphone access was denied');
+      return err instanceof Error ? err.message : 'Microphone access was denied';
     }
   }, []);
 
@@ -49,5 +52,5 @@ export function useMicRecorder() {
     });
   }, []);
 
-  return { status, error, start, stop };
+  return { status, start, stop };
 }

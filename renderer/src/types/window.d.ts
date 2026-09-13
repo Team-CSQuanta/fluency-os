@@ -19,6 +19,9 @@ export interface FluencyOSBridge {
   maximizeWindow: () => void;
   closeWindow: () => void;
   setDownloadActive: (active: boolean) => void;
+  /** Registers the close-confirmation handler; returns an unsubscribe. */
+  onConfirmClose: (handler: () => void) => () => void;
+  forceClose: () => void;
 }
 
 declare global {

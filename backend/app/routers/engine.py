@@ -17,7 +17,17 @@ from app.models.engine import (
 )
 from app.security import require_token
 from app.services import conversation
-from app.services.voice import cloud_llm_engine, download_manager, llm_chat_engine, model_catalog, model_manager, stt_engine, tts_engine
+from app.services.voice import (
+    cloud_llm_engine,
+    download_manager,
+    engine_health,
+    gemini_llm_engine,
+    llm_chat_engine,
+    model_catalog,
+    model_manager,
+    stt_engine,
+    tts_engine,
+)
 from app.services.voice.errors import EngineUnavailable
 
 router = APIRouter(prefix="/engine", dependencies=[Depends(require_token)])
@@ -129,32 +139,53 @@ def select_llm_model(payload: SelectLlmModelIn, conn: sqlite3.Connection = Depen
         """,
         (payload.user_id, payload.model_key),
     )
+    # Evict the outgoing model now rather than leaving it resident until the
+    # next load: its RAM is exactly what the incoming one needs.
+    option = model_catalog.llm_option(payload.model_key)
+    selected_path = str(model_manager.llm_model_path(option.repo_id, option.filename))
+    if llm_chat_engine.loaded_path() not in (None, selected_path):
+        llm_chat_engine.unload()
+
+
+def _key_preview(key: str | None) -> str | None:
+    return f"…{key[-4:]}" if key and len(key) >= 4 else None
 
 
 @router.get("/llm-provider", response_model=LlmProviderOut)
 def get_llm_provider(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> LlmProviderOut:
     row = conn.execute(
-        "SELECT llm_mode, openrouter_api_key, openrouter_model FROM user_settings WHERE user_id = ?", (user_id,)
+        "SELECT llm_mode, api_provider, openrouter_api_key, openrouter_model, gemini_api_key, gemini_model "
+        "FROM user_settings WHERE user_id = ?",
+        (user_id,),
     ).fetchone()
-    provider = "cloud" if row and row["llm_mode"] == "api" else "local"
-    api_key = row["openrouter_api_key"] if row else None
+    if row and row["llm_mode"] == "api":
+        provider = "gemini" if row["api_provider"] == "gemini" else "openrouter"
+    else:
+        provider = "local"
+    openrouter_key = row["openrouter_api_key"] if row else None
+    gemini_key = row["gemini_api_key"] if row else None
     return LlmProviderOut(
         provider=provider,
         openrouter_model=(row["openrouter_model"] if row and row["openrouter_model"] else cloud_llm_engine.DEFAULT_MODEL),
-        has_api_key=bool(api_key),
-        api_key_preview=f"…{api_key[-4:]}" if api_key and len(api_key) >= 4 else None,
+        has_openrouter_key=bool(openrouter_key),
+        openrouter_key_preview=_key_preview(openrouter_key),
+        gemini_model=(row["gemini_model"] if row and row["gemini_model"] else gemini_llm_engine.DEFAULT_MODEL),
+        has_gemini_key=bool(gemini_key),
+        gemini_key_preview=_key_preview(gemini_key),
     )
 
 
 @router.post("/llm-provider", status_code=status.HTTP_204_NO_CONTENT)
 def set_llm_provider(payload: LlmProviderIn, conn: sqlite3.Connection = Depends(get_db)) -> None:
+    llm_mode = "local" if payload.provider == "local" else "api"
+    api_provider = None if payload.provider == "local" else payload.provider
     conn.execute(
         """
         INSERT INTO user_settings (user_id, llm_mode, api_provider)
         VALUES (?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET llm_mode = excluded.llm_mode, api_provider = excluded.api_provider
         """,
-        (payload.user_id, "api" if payload.provider == "cloud" else "local", "openrouter" if payload.provider == "cloud" else None),
+        (payload.user_id, llm_mode, api_provider),
     )
     if payload.openrouter_api_key is not None:
         conn.execute(
@@ -166,6 +197,23 @@ def set_llm_provider(payload: LlmProviderIn, conn: sqlite3.Connection = Depends(
             "UPDATE user_settings SET openrouter_model = ? WHERE user_id = ?",
             (payload.openrouter_model.strip() or None, payload.user_id),
         )
+    if payload.gemini_api_key is not None:
+        conn.execute(
+            "UPDATE user_settings SET gemini_api_key = ? WHERE user_id = ?",
+            (payload.gemini_api_key.strip() or None, payload.user_id),
+        )
+    if payload.gemini_model is not None:
+        conn.execute(
+            "UPDATE user_settings SET gemini_model = ? WHERE user_id = ?",
+            (payload.gemini_model.strip() or None, payload.user_id),
+        )
+    # Whatever was proven about the previous credentials says nothing about
+    # these, so the cloud engine has to earn "verified" again.
+    engine_health.forget_all()
+    # Moving to a cloud provider leaves the local model resident but unused —
+    # a gigabyte-plus of RAM held for an engine nothing will call.
+    if payload.provider != "local":
+        llm_chat_engine.unload()
 
 
 @router.get("/readiness", response_model=ReadinessOut)

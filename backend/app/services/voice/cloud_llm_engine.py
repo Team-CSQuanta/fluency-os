@@ -13,6 +13,7 @@ import json
 import urllib.error
 import urllib.request
 
+from app.services.voice import engine_health
 from app.services.voice.errors import EngineUnavailable
 from app.services.voice.json_utils import parse_json_object
 
@@ -45,14 +46,30 @@ def _chat(messages: list[dict], *, api_key: str | None, model: str, max_tokens: 
             data = json.loads(res.read().decode("utf-8"))
     except urllib.error.HTTPError as err:
         detail = err.read().decode("utf-8", errors="ignore")[:300]
-        raise EngineUnavailable(f"OpenRouter request failed ({err.code}): {detail}") from err
+        message = f"OpenRouter request failed ({err.code}): {detail}"
+        engine_health.record_failure("openrouter", model, message)
+        raise EngineUnavailable(message) from err
     except urllib.error.URLError as err:
-        raise EngineUnavailable(f"Couldn't reach OpenRouter: {err.reason}") from err
+        message = f"Couldn't reach OpenRouter: {err.reason}"
+        engine_health.record_failure("openrouter", model, message)
+        raise EngineUnavailable(message) from err
+    # The service answered — that, and only that, is what a verified key means.
+    engine_health.record_success("openrouter", model)
 
     try:
-        return str(data["choices"][0]["message"]["content"]).strip()
+        choice = data["choices"][0]
+        text = str(choice["message"]["content"]).strip()
     except (KeyError, IndexError, TypeError) as err:
         raise EngineUnavailable("OpenRouter returned an unexpected response shape") from err
+
+    if choice.get("finish_reason") == "length":
+        # See gemini_llm_engine for why a truncated reply is refused rather
+        # than stored: it would become part of the conversation history.
+        raise EngineUnavailable(
+            f"{model} ran out of output budget before finishing its reply — if it reasons before "
+            "answering, that reasoning spends the same budget. Try a non-reasoning model in Settings."
+        )
+    return text
 
 
 def generate_reply(
@@ -66,6 +83,18 @@ def generate_reply(
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend({"role": role, "content": text} for role, text in history)
     return _chat(messages, api_key=api_key, model=model, max_tokens=max_tokens, temperature=0.7)
+
+
+def verify(*, api_key: str | None, model: str) -> None:
+    """One real, minimal request — the only thing that can actually establish
+    that a key works. Raises EngineUnavailable with the real reason if not."""
+    _chat(
+        [{"role": "user", "content": "ping"}],
+        api_key=api_key,
+        model=model,
+        max_tokens=8,
+        temperature=0.0,
+    )
 
 
 def generate_json(
@@ -89,24 +118,3 @@ def generate_json(
         raise EngineUnavailable("OpenRouter's response wasn't valid JSON")
     return parsed
 
-
-def generate_report(
-    transcript: list[tuple[str, str]], target_words: list[str], *, api_key: str | None, model: str
-) -> dict:
-    """Mirrors llm_chat_engine.generate_report's prompt exactly, so the
-    Conversation report shape is identical regardless of which LLM produced
-    it — only the underlying call differs."""
-    transcript_text = "\n".join(f"{role}: {text}" for role, text in transcript)
-    words_list = ", ".join(target_words) if target_words else "(none)"
-    system_prompt = (
-        "You are a strict, structured language-learning analyst. Given a conversation "
-        "transcript and a list of target vocabulary words the learner was meant to "
-        "practice, respond with ONLY a JSON object (no prose, no markdown fences) of "
-        'the shape: {"word_usage": {"<word>": "spontaneous"|"prompted"|"incorrect"|"avoided"}, '
-        '"accuracy_notes": [string, ...], "summary": string}. '
-        '"spontaneous" = the learner used the word correctly and unprompted. '
-        '"prompted" = used correctly only after the AI said or hinted the word. '
-        '"incorrect" = attempted but used wrongly. "avoided" = never used at all.'
-    )
-    user_prompt = f"Target words: {words_list}\n\nTranscript:\n{transcript_text}"
-    return generate_json(system_prompt, user_prompt, api_key=api_key, model=model, max_tokens=600, temperature=0.2)

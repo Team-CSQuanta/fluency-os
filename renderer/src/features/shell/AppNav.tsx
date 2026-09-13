@@ -1,8 +1,6 @@
-import { useEffect } from 'react';
 import { ICONS } from '@/features/shell/icons';
 import { NAV_GROUPS } from '@/features/shell/navConfig';
 import { useAppStore } from '@/store/appStore';
-import { useEngineStore } from '@/store/engineStore';
 import { useShellStore } from '@/store/shellStore';
 
 // Mock profile stats — no gamification backend yet (spec §8, Foyez's ownership per §12).
@@ -20,36 +18,6 @@ export function AppNav() {
   const goScreen = useShellStore((s) => s.goScreen);
   const toggleNav = useShellStore((s) => s.toggleNav);
   const currentUser = useAppStore((s) => s.currentUser);
-  const readiness = useEngineStore((s) => s.readiness);
-  const fetchReadiness = useEngineStore((s) => s.fetchReadiness);
-  const status = useEngineStore((s) => s.status);
-  const launching = useEngineStore((s) => s.launching);
-  const launchError = useEngineStore((s) => s.launchError);
-  const fetchStatus = useEngineStore((s) => s.fetchStatus);
-  const launchAi = useEngineStore((s) => s.launchAi);
-  const goSettings = useShellStore((s) => s.goSettings);
-
-  // Re-checked on every screen change (cheap GETs) so this reflects whatever
-  // was just picked/downloaded/launched in Settings' AI panel without a
-  // manual reload.
-  useEffect(() => {
-    if (currentUser) {
-      void fetchReadiness('text');
-      void fetchStatus();
-    }
-  }, [currentUser, fetchReadiness, fetchStatus, screen]);
-
-  const downloaded = readiness?.llm ?? false;
-  const launched = status?.llm === 'ready';
-
-  const handleLaunchClick = () => {
-    if (!downloaded) {
-      goSettings('AI');
-      return;
-    }
-    if (launched || launching) return;
-    void launchAi().catch(() => {});
-  };
 
   const navW = collapsed ? '62px' : '224px';
   const avatarSize = collapsed ? 34 : 48;
@@ -172,47 +140,12 @@ export function AppNav() {
       </div>
 
       <div className="flex flex-col gap-1 border-t border-line2 p-[10px]">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={toggleNav}
-            className="grid h-[26px] w-[26px] flex-none place-items-center rounded-field border border-line2 font-mono text-[11px] text-tx2 hover:bg-line2"
-          >
-            {collapsed ? '»' : '«'}
-          </button>
-          {!collapsed && (
-            <button
-              onClick={handleLaunchClick}
-              disabled={launching}
-              title={
-                !downloaded
-                  ? 'No AI model downloaded yet — click to go to Settings'
-                  : launched
-                    ? `local · ${readiness?.llm_model_label} — AI is launched and ready`
-                    : launching
-                      ? 'Launching AI — loading the local model into memory…'
-                      : 'AI isn’t launched yet — click to launch it'
-              }
-              className="flex min-w-0 flex-1 items-center gap-[6px] overflow-hidden whitespace-nowrap rounded-field px-1 py-1 text-left font-mono text-[9.5px] text-tx3 hover:bg-line2 disabled:cursor-default"
-            >
-              <span
-                className="h-[6px] w-[6px] flex-none rounded-full"
-                style={{ background: launched ? 'var(--acc)' : launching ? '#d9a441' : downloaded ? '#c0563f' : 'var(--tx3)' }}
-              />
-              <span className="truncate">
-                {!downloaded
-                  ? 'local · not yet configured'
-                  : launching
-                    ? 'launching AI…'
-                    : launched
-                      ? `local · ${readiness?.llm_model_label}`
-                      : 'AI not launched · tap to launch'}
-              </span>
-            </button>
-          )}
-        </div>
-        {!collapsed && launchError && (
-          <div className="font-mono text-[9px] leading-[1.5] text-[#c0563f]">{launchError}</div>
-        )}
+        <button
+          onClick={toggleNav}
+          className="grid h-[26px] w-[26px] flex-none place-items-center rounded-field border border-line2 font-mono text-[11px] text-tx2 hover:bg-line2"
+        >
+          {collapsed ? '»' : '«'}
+        </button>
       </div>
     </nav>
   );

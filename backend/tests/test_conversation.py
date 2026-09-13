@@ -13,7 +13,7 @@ from app.config import settings
 from app.db import get_connection
 from app.migrations.runner import run_migrations
 from app.routers import conversation as conversation_router
-from app.services import conversation, vocabulary
+from app.services import conversation, conversation_report, vocabulary
 from app.services.voice import (
     download_manager,
     engine_status,
@@ -60,6 +60,38 @@ def _save_word(conn, user_id, word, definition="a test definition"):
     return row["id"]
 
 
+def _target_words_from_prompt(system_prompt: str) -> list[str]:
+    """The fake reads the target words out of the prompt, the same place a real
+    model reads them from — so it can't be handed data the model wouldn't have."""
+    marker = "Target words: "
+    if marker not in system_prompt:
+        return []
+    tail = system_prompt.rsplit(marker, 1)[1].rstrip(".")
+    return [] if tail == "(none)" else [w.strip() for w in tail.split(",") if w.strip()]
+
+
+def fake_analysis(target_words: list[str]) -> dict:
+    """Built from LlmReportAnalysis's own fields, so a fake can never quietly
+    disagree with the schema the production path parses. Returning a
+    hand-written reader-shaped dict is exactly how four permanently-zero report
+    fields stayed green in CI — see docs/conversation-report-design.md."""
+    payload: dict = {}
+    for name in conversation_report.LlmReportAnalysis.model_fields:
+        if name == "word_usage":
+            payload[name] = {w: "spontaneous" for w in target_words}
+        elif name == "errors":
+            payload[name] = [{"bad": "bad sentence", "good": "good sentence", "why": "grammar"}]
+        elif name == "summary":
+            payload[name] = "Solid session."
+        elif name == "grammatical_precision":
+            payload[name] = 80
+        elif name == "self_corrections":
+            payload[name] = 1
+        else:  # a field was added to the schema without a sentinel here
+            raise AssertionError(f"fake_analysis has no value for new field {name!r}")
+    return payload
+
+
 @pytest.fixture()
 def fake_llm(monkeypatch):
     calls = {"replies": [], "reports": []}
@@ -68,19 +100,12 @@ def fake_llm(monkeypatch):
         calls["replies"].append((system_prompt, history))
         return f"AI reply #{len(calls['replies'])}"
 
-    def fake_generate_report(transcript, target_words, *, repo_id, filename):
-        calls["reports"].append((transcript, target_words))
-        return {
-            "word_usage": {w: "spontaneous" for w in target_words},
-            "fluency_score": 80,
-            "vocabulary_reach_score": 70,
-            "self_corrections": 1,
-            "errors": [{"bad": "bad sentence", "good": "good sentence", "why": "grammar"}],
-            "summary": "Solid session.",
-        }
+    def fake_generate_json(system_prompt, user_prompt, *, repo_id, filename, max_tokens=300, temperature=0.4):
+        calls["reports"].append((system_prompt, user_prompt))
+        return fake_analysis(_target_words_from_prompt(system_prompt))
 
     monkeypatch.setattr(conversation.llm_chat_engine, "generate_reply", fake_generate_reply)
-    monkeypatch.setattr(conversation.llm_chat_engine, "generate_report", fake_generate_report)
+    monkeypatch.setattr(conversation.llm_chat_engine, "generate_json", fake_generate_json)
     # These tests exercise chat orchestration, not the "is a model actually
     # downloaded" gate or the "is it actually loaded into memory" gate —
     # those have their own dedicated tests below.
@@ -130,6 +155,29 @@ def test_start_session_prefers_words_never_used_in_conversation(tmp_path, fake_l
     target_ids = json.loads(session["target_word_ids"])
     # both fit within TARGET_WORD_COUNT, but the never-used word sorts first
     assert target_ids[0] == unused_id
+
+
+def test_avoided_words_are_not_treated_as_practised(tmp_path, fake_llm):
+    """'avoided' means the word was offered but never actually said — it still
+    needs practice, so it must not sort behind a word the learner really
+    used."""
+    conn = _fresh_conn(tmp_path)
+    user_id = _make_user(conn)
+    avoided_id = _save_word(conn, user_id, "mitigate")
+    used_id = _save_word(conn, user_id, "headway")
+    conn.executemany(
+        "INSERT INTO review_logs (id, user_id, vocab_word_id, session_id, source, outcome, created_at) "
+        "VALUES (?, ?, ?, NULL, 'conversation', ?, '2026-01-01T00:00:00Z')",
+        [
+            ("rl1", user_id, avoided_id, "avoided"),
+            ("rl2", user_id, used_id, "spontaneous"),
+        ],
+    )
+    conn.commit()
+
+    session_id = conversation.start_session(conn, user_id=user_id, scenario="free", channel="text")
+    session = conversation.get_session_row(conn, session_id, user_id)
+    assert json.loads(session["target_word_ids"])[0] == avoided_id
 
 
 def test_start_session_with_no_saved_words_still_works(tmp_path, fake_llm):
@@ -184,7 +232,7 @@ def test_submit_user_turn_on_a_legacy_session_uses_current_preference_not_fixed_
 
 
 def test_submit_user_turn_voice_channel_transcribes_and_synthesizes(tmp_path, fake_llm, monkeypatch):
-    monkeypatch.setattr(conversation.stt_engine, "transcribe", lambda audio_bytes: ("transcribed text", 0.87))
+    monkeypatch.setattr(conversation.stt_engine, "transcribe", lambda audio_bytes: ("transcribed text", 0.87, 3.5))
     monkeypatch.setattr(conversation.tts_engine, "synthesize", lambda text: b"RIFF-fake-wav-bytes")
 
     conn = _fresh_conn(tmp_path)
@@ -195,7 +243,60 @@ def test_submit_user_turn_voice_channel_transcribes_and_synthesizes(tmp_path, fa
     user_turn, ai_turn = conversation.submit_user_turn(conn, session, text=None, audio_bytes=b"fake-audio")
     assert user_turn["text"] == "transcribed text"
     assert user_turn["stt_confidence"] == 0.87
-    assert ai_turn["audio_path"] is not None
+    assert user_turn["speech_seconds"] == 3.5
+    # Nothing is synthesized during the turn any more — that used to make the
+    # learner wait tens of seconds before seeing a reply at all.
+    assert ai_turn["audio_path"] is None
+    assert conversation.audio_chunk_count(ai_turn, "voice") >= 1
+    # The audio is still really available, just made when it's asked for.
+    path = conversation.ensure_audio_chunk(ai_turn["id"], ai_turn["text"], 0)
+    assert path.exists()
+
+
+def test_stt_rejects_silent_and_too_short_clips_with_their_own_message(monkeypatch):
+    """A muted mic and a mistimed double-tap both used to land on the generic
+    "nothing was recognised" message, which points at the wrong fix. The real
+    decode path is exercised here with synthesised samples; only the model
+    itself is stubbed, since it must never be reached for either case."""
+    import numpy as np
+
+    from app.services.voice import stt_engine
+
+    monkeypatch.setattr(stt_engine, "_model", object())
+    monkeypatch.setattr(stt_engine, "_load_model_locked", lambda: stt_engine._model)
+
+    silent = np.zeros(16000 * 3, dtype=np.float32)
+    too_short = (np.random.rand(int(16000 * 0.2)).astype(np.float32) - 0.5)
+
+    def fake_decode(_buf, sampling_rate):
+        return fake_decode.audio
+
+    monkeypatch.setattr("faster_whisper.audio.decode_audio", fake_decode)
+
+    fake_decode.audio = silent
+    with pytest.raises(ValueError, match="silent"):
+        stt_engine.transcribe(b"ignored")
+
+    fake_decode.audio = too_short
+    with pytest.raises(ValueError, match="0.2s"):
+        stt_engine.transcribe(b"ignored")
+
+
+def test_submit_user_turn_raises_clear_error_when_transcript_is_empty(tmp_path, fake_llm, monkeypatch):
+    """Silence or a too-short clip can transcribe to "" — sending that on to
+    the LLM isn't meaningful for any provider, and some (Gemini) reject it
+    outright with a confusing unrelated-looking error. Fail honestly here
+    instead of ever calling the LLM with an empty turn."""
+    monkeypatch.setattr(conversation.stt_engine, "transcribe", lambda audio_bytes: ("   ", 0.2, 1.0))
+    monkeypatch.setattr(conversation.tts_engine, "synthesize", lambda text: b"RIFF-fake-wav-bytes")
+
+    conn = _fresh_conn(tmp_path)
+    user_id = _make_user(conn)
+    session_id = conversation.start_session(conn, user_id=user_id, scenario="free", channel="voice")
+    session = conversation.get_session_row(conn, session_id, user_id)
+
+    with pytest.raises(ValueError, match="Didn't catch"):
+        conversation.submit_user_turn(conn, session, text=None, audio_bytes=b"fake-audio")
 
 
 # ---------------------------------------------------------------- service: end_session
@@ -212,7 +313,7 @@ def test_end_session_computes_report_and_writes_review_logs(tmp_path, fake_llm):
 
     report = conversation.end_session(conn, session)
     assert report["contextual_accuracy_pct"] == 100
-    assert report["fluency_score"] == 80
+    assert report["grammatical_precision"] == 80
     assert report["turn_count"] == 3
     assert report["routing"][0]["word"] == "reticent"
     assert report["routing"][0]["outcome"] == "spontaneous"
@@ -225,6 +326,28 @@ def test_end_session_computes_report_and_writes_review_logs(tmp_path, fake_llm):
     row = conn.execute("SELECT report_json, ended_at FROM conversation_sessions WHERE id = ?", (session_id,)).fetchone()
     assert row["ended_at"] is not None
     assert json.loads(row["report_json"])["session_id"] == session_id
+
+
+def test_re_ending_a_session_replaces_its_usage_logs_instead_of_appending(tmp_path, fake_llm):
+    """Each end recomputes over the whole transcript, so a re-end supersedes
+    the previous logs — appending would make one conversation count twice in
+    a word's usage history and in target-word selection."""
+    conn = _fresh_conn(tmp_path)
+    user_id = _make_user(conn)
+    word_id = _save_word(conn, user_id, "reticent")
+    session_id = conversation.start_session(conn, user_id=user_id, scenario="free", channel="text")
+    session = conversation.get_session_row(conn, session_id, user_id)
+    conversation.submit_user_turn(conn, session, text="I was reticent about it.", audio_bytes=None)
+
+    session = conversation.get_session_row(conn, session_id, user_id)
+    conversation.end_session(conn, session)
+    conversation.submit_user_turn(conn, session, text="Still reticent, honestly.", audio_bytes=None)
+    session = conversation.get_session_row(conn, session_id, user_id)
+    conversation.end_session(conn, session)
+
+    logs = conn.execute("SELECT * FROM review_logs WHERE vocab_word_id = ?", (word_id,)).fetchall()
+    assert len(logs) == 1
+    assert conversation.word_usage_counts(conn, word_id) == {"spontaneous": 1}
 
 
 def test_can_continue_a_session_after_it_was_ended(tmp_path, fake_llm):
@@ -254,16 +377,17 @@ def test_delete_session_removes_row_turns_and_audio_files(tmp_path, fake_llm, mo
     user_id = _make_user(conn)
     session_id = conversation.start_session(conn, user_id=user_id, scenario="free", channel="voice")
     session = conversation.get_session_row(conn, session_id, user_id)
-    audio_path = conn.execute(
-        "SELECT audio_path FROM conversation_turns WHERE session_id = ?", (session_id,)
-    ).fetchone()["audio_path"]
-    assert audio_path and Path(audio_path).exists()
+    turn = conn.execute("SELECT id, text FROM conversation_turns WHERE session_id = ?", (session_id,)).fetchone()
+    # Per-sentence audio is written lazily and named off the turn id, so it is
+    # not reachable through audio_path — deletion has to find it anyway.
+    chunk = conversation.ensure_audio_chunk(turn["id"], turn["text"], 0)
+    assert chunk.exists()
 
     assert conversation.delete_session(conn, user_id, session_id) is True
 
     assert conversation.get_session_row(conn, session_id, user_id) is None
     assert conn.execute("SELECT COUNT(*) AS n FROM conversation_turns WHERE session_id = ?", (session_id,)).fetchone()["n"] == 0
-    assert not Path(audio_path).exists()
+    assert not chunk.exists()
 
 
 def test_delete_session_returns_false_for_unknown_or_other_users_session(tmp_path, fake_llm):
@@ -327,15 +451,8 @@ def test_full_session_lifecycle_via_http(client, auth_headers, monkeypatch):
     )
     monkeypatch.setattr(
         conversation_router.conversation.llm_chat_engine,
-        "generate_report",
-        lambda transcript, target_words, *, repo_id, filename: {
-            "word_usage": {},
-            "fluency_score": 75,
-            "vocabulary_reach_score": 60,
-            "self_corrections": 0,
-            "errors": [],
-            "summary": "Fine.",
-        },
+        "generate_json",
+        lambda sp, up, **kw: {**fake_analysis([]), "summary": "Fine."},
     )
 
     user_id = _create_user(client, auth_headers)
@@ -390,6 +507,160 @@ def test_full_session_lifecycle_via_http(client, auth_headers, monkeypatch):
     assert gone.status_code == 404
 
 
+def test_submit_turn_route_returns_400_when_transcript_is_empty(client, auth_headers, monkeypatch):
+    monkeypatch.setattr(conversation_router.conversation, "_ensure_ready", lambda *a, **kw: None)
+    monkeypatch.setattr(conversation_router.conversation, "_ensure_ready_for_target", lambda *a, **kw: None)
+    monkeypatch.setattr(conversation_router.conversation, "_ensure_launched", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        conversation_router.conversation.llm_chat_engine,
+        "generate_reply",
+        lambda system_prompt, history, *, repo_id, filename, max_tokens=220: "Hi!",
+    )
+    monkeypatch.setattr(conversation_router.conversation.stt_engine, "transcribe", lambda audio_bytes: ("  ", 0.1, 1.0))
+    monkeypatch.setattr(conversation_router.conversation.tts_engine, "synthesize", lambda text: b"RIFF-fake-wav-bytes")
+
+    user_id = _create_user(client, auth_headers)
+    start = client.post(
+        "/conversation/sessions", headers=auth_headers, json={"user_id": user_id, "scenario": "free", "channel": "voice"}
+    )
+    session_id = start.json()["id"]
+
+    turn = client.post(
+        f"/conversation/sessions/{session_id}/turns",
+        headers=auth_headers,
+        params={"user_id": user_id},
+        files={"audio": ("clip.wav", b"fake-audio-bytes", "audio/wav")},
+    )
+    assert turn.status_code == 400
+    assert "Didn't catch" in turn.json()["detail"]
+
+
+def test_a_report_from_an_older_version_still_opens(client, auth_headers, monkeypatch):
+    """Old reports lack every field added since they were written. Defaults
+    keep them readable, and report_version lets the UI say "not measured"
+    instead of drawing a zero dial for something never computed."""
+    monkeypatch.setattr(conversation_router.conversation, "_ensure_ready", lambda *a, **kw: None)
+    monkeypatch.setattr(conversation_router.conversation, "_ensure_ready_for_target", lambda *a, **kw: None)
+    monkeypatch.setattr(conversation_router.conversation, "_ensure_launched", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        conversation_router.conversation.llm_chat_engine,
+        "generate_reply",
+        lambda sp, h, *, repo_id, filename, max_tokens=220: "hi",
+    )
+    user_id = _create_user(client, auth_headers)
+    start = client.post(
+        "/conversation/sessions", headers=auth_headers, json={"user_id": user_id, "scenario": "free", "channel": "text"}
+    )
+    session_id = start.json()["id"]
+
+    # Exactly the v1 shape, as written before any of the new fields existed.
+    legacy = {
+        "session_id": session_id,
+        "contextual_accuracy_pct": 50,
+        "fluency_score": 0,
+        "vocabulary_reach_score": 0,
+        "pronunciation_score": None,
+        "words_per_minute": 42,
+        "avg_pause_seconds": 3.0,
+        "self_corrections": 0,
+        "turn_count": 3,
+        "routing": [],
+        "errors": [],
+        "summary": "An older report.",
+    }
+    conn = get_connection()
+    conn.execute(
+        "UPDATE conversation_sessions SET report_json = ?, ended_at = '2026-01-01T00:00:00Z' WHERE id = ?",
+        (json.dumps(legacy), session_id),
+    )
+    conn.commit()
+    conn.close()
+
+    res = client.get(f"/conversation/sessions/{session_id}/report", headers=auth_headers, params={"user_id": user_id})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["report_version"] == 1
+    assert body["summary"] == "An older report."
+    # Never measured back then — reported as absent, not as a real zero.
+    assert body["grammatical_precision"] is None
+    assert body["filler_rate_per_100w"] is None
+
+
+def test_regenerating_brings_an_old_report_up_to_the_current_shape(client, auth_headers, monkeypatch):
+    monkeypatch.setattr(conversation_router.conversation, "_ensure_ready", lambda *a, **kw: None)
+    monkeypatch.setattr(conversation_router.conversation, "_ensure_ready_for_target", lambda *a, **kw: None)
+    monkeypatch.setattr(conversation_router.conversation, "_ensure_launched", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        conversation_router.conversation.llm_chat_engine,
+        "generate_reply",
+        lambda sp, h, *, repo_id, filename, max_tokens=220: "hi",
+    )
+    monkeypatch.setattr(
+        conversation_router.conversation.llm_chat_engine,
+        "generate_json",
+        lambda sp, up, **kw: fake_analysis(_target_words_from_prompt(sp)),
+    )
+    user_id = _create_user(client, auth_headers)
+    start = client.post(
+        "/conversation/sessions", headers=auth_headers, json={"user_id": user_id, "scenario": "free", "channel": "text"}
+    )
+    session_id = start.json()["id"]
+
+    res = client.post(
+        f"/conversation/sessions/{session_id}/report/regenerate", headers=auth_headers, params={"user_id": user_id}
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["report_version"] == conversation_report.REPORT_VERSION
+    assert body["grammatical_precision"] == 80
+
+
+def test_every_judged_field_is_actually_populated_in_a_generated_report(tmp_path, fake_llm):
+    """The assertion that fails against the original code: the prompt asked for
+    three keys, so four of these were permanently zero on every real session."""
+    conn = _fresh_conn(tmp_path)
+    user_id = _make_user(conn)
+    _save_word(conn, user_id, "reticent")
+    session_id = conversation.start_session(conn, user_id=user_id, scenario="free", channel="text")
+    session = conversation.get_session_row(conn, session_id, user_id)
+    conversation.submit_user_turn(conn, session, text="I was reticent about it.", audio_bytes=None)
+    session = conversation.get_session_row(conn, session_id, user_id)
+
+    report = conversation.end_session(conn, session)
+    assert report["grammatical_precision"] == 80
+    assert report["self_corrections"] == 1
+    assert report["errors"] != []
+    assert report["summary"] != ""
+    assert report["routing"][0]["outcome"] == "spontaneous"
+
+
+def test_practise_again_reuses_the_previous_sessions_target_words(tmp_path, fake_llm):
+    conn = _fresh_conn(tmp_path)
+    user_id = _make_user(conn)
+    keep = _save_word(conn, user_id, "reticent")
+    _save_word(conn, user_id, "stark")
+
+    repeated = conversation.start_session(
+        conn, user_id=user_id, scenario="free", channel="text", seed_word_ids=[keep]
+    )
+    session = conversation.get_session_row(conn, repeated, user_id)
+    assert json.loads(session["target_word_ids"]) == [keep]
+
+
+def test_seeding_cannot_pull_in_another_users_word(tmp_path, fake_llm):
+    conn = _fresh_conn(tmp_path)
+    mine = _make_user(conn, "u1")
+    theirs = _make_user(conn, "u2")
+    _save_word(conn, mine, "reticent")
+    other_word = _save_word(conn, theirs, "clandestine")
+
+    session_id = conversation.start_session(
+        conn, user_id=mine, scenario="free", channel="text", seed_word_ids=[other_word]
+    )
+    session = conversation.get_session_row(conn, session_id, mine)
+    assert other_word not in json.loads(session["target_word_ids"])
+
+
 def test_delete_unknown_session_route_returns_404(client, auth_headers):
     user_id = _create_user(client, auth_headers)
     res = client.delete("/conversation/sessions/not-a-real-id", headers=auth_headers, params={"user_id": user_id})
@@ -424,15 +695,8 @@ def test_vocabulary_detail_surfaces_conversation_usage(client, auth_headers, mon
     )
     monkeypatch.setattr(
         conversation_router.conversation.llm_chat_engine,
-        "generate_report",
-        lambda transcript, target_words, *, repo_id, filename: {
-            "word_usage": {w: "spontaneous" for w in target_words},
-            "fluency_score": 80,
-            "vocabulary_reach_score": 70,
-            "self_corrections": 0,
-            "errors": [],
-            "summary": "ok",
-        },
+        "generate_json",
+        lambda sp, up, **kw: fake_analysis(_target_words_from_prompt(sp)),
     )
     user_id = _create_user(client, auth_headers)
     client.post(
@@ -790,8 +1054,11 @@ def test_engine_models_lists_catalog_with_default_selected(client, auth_headers)
     res = client.get("/engine/models", headers=auth_headers, params={"user_id": user_id})
     assert res.status_code == 200
     body = res.json()
-    assert [o["key"] for o in body["llm"]] == ["qwen2.5-0.5b", "qwen2.5-1.5b", "qwen2.5-3b"]
-    assert [o["selected"] for o in body["llm"]] == [False, True, False]
+    # Asserted against the catalog rather than a hardcoded list, so adding an
+    # option is a one-line change instead of a test failure.
+    assert [o["key"] for o in body["llm"]] == [o.key for o in model_catalog.LLM_OPTIONS]
+    selected = [o["key"] for o in body["llm"] if o["selected"]]
+    assert selected == [model_catalog.DEFAULT_LLM_KEY]
     assert all(o["downloaded"] is False for o in body["llm"])
     assert body["stt"]["downloaded"] is False
     assert body["tts"]["downloaded"] is False
@@ -818,7 +1085,52 @@ def test_engine_select_model_persists_and_reflects_in_list(client, auth_headers)
     assert res.status_code == 204
 
     listed = client.get("/engine/models", headers=auth_headers, params={"user_id": user_id}).json()
-    assert [o["selected"] for o in listed["llm"]] == [True, False, False]
+    assert [o["key"] for o in listed["llm"] if o["selected"]] == ["qwen2.5-0.5b"]
+
+
+def _resident_path(key: str) -> str:
+    option = model_catalog.llm_option(key)
+    return str(model_manager.llm_model_path(option.repo_id, option.filename))
+
+
+def test_switching_model_evicts_the_previous_one_from_memory(client, auth_headers, monkeypatch):
+    """Its RAM is exactly what the incoming model needs, so it has to go now
+    rather than whenever the next load happens to run."""
+    user_id = _create_user(client, auth_headers)
+    monkeypatch.setattr(llm_chat_engine, "loaded_path", lambda: _resident_path("qwen2.5-1.5b"))
+    unloaded = []
+    monkeypatch.setattr(llm_chat_engine, "unload", lambda *a, **kw: unloaded.append(True))
+
+    res = client.post(
+        "/engine/models/select", headers=auth_headers, json={"user_id": user_id, "model_key": "qwen2.5-0.5b"}
+    )
+    assert res.status_code == 204
+    assert unloaded == [True]
+
+
+def test_reselecting_the_already_loaded_model_keeps_it_resident(client, auth_headers, monkeypatch):
+    user_id = _create_user(client, auth_headers)
+    monkeypatch.setattr(llm_chat_engine, "loaded_path", lambda: _resident_path("qwen2.5-0.5b"))
+    unloaded = []
+    monkeypatch.setattr(llm_chat_engine, "unload", lambda *a, **kw: unloaded.append(True))
+
+    client.post(
+        "/engine/models/select", headers=auth_headers, json={"user_id": user_id, "model_key": "qwen2.5-0.5b"}
+    )
+    assert unloaded == []
+
+
+def test_switching_to_a_cloud_provider_frees_the_local_model(client, auth_headers, monkeypatch):
+    user_id = _create_user(client, auth_headers)
+    unloaded = []
+    monkeypatch.setattr(llm_chat_engine, "unload", lambda *a, **kw: unloaded.append(True))
+
+    client.post(
+        "/engine/llm-provider",
+        headers=auth_headers,
+        json={"user_id": user_id, "provider": "gemini", "gemini_api_key": "gm-x"},
+    )
+    assert unloaded == [True]
 
 
 def test_engine_download_route_triggers_background_download(client, auth_headers, monkeypatch):
