@@ -13,7 +13,9 @@ from app.models.engine import (
     ModelsCatalogOut,
     ReadinessOut,
     SelectLlmModelIn,
+    SelectTtsEngineIn,
     SingleModelOut,
+    TtsOptionOut,
 )
 from app.security import require_token
 from app.services import conversation
@@ -25,7 +27,9 @@ from app.services.voice import (
     llm_chat_engine,
     model_catalog,
     model_manager,
+    pocket_tts_engine,
     stt_engine,
+    tts,
     tts_engine,
 )
 from app.services.voice.errors import EngineUnavailable
@@ -61,15 +65,39 @@ def list_models(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> Mod
         downloaded=model_catalog.stt_is_downloaded(),
         download=_download_status_out("stt"),
     )
-    tts = SingleModelOut(
-        label="Kokoro af_heart",
-        downloaded=model_catalog.tts_is_downloaded(),
-        download=_download_status_out("tts"),
-    )
+    selected_tts = tts.selected_name(conn, user_id)
+    # Default first — rendered in order, so the engine the app actually
+    # speaks with is the one at the top of the list.
+    tts_options = [
+        TtsOptionOut(
+            key="pocket",
+            label=tts.ENGINE_LABELS["pocket"],
+            note="recommended default — about twice as fast to start speaking",
+            approx_size_mb=model_catalog.POCKET_TTS_SIZE_MB,
+            downloaded=model_catalog.pocket_tts_is_downloaded(),
+            selected=selected_tts == "pocket",
+            installed=tts.is_installed("pocket"),
+            download=_download_status_out("pocket_tts"),
+        ),
+        TtsOptionOut(
+            key="kokoro",
+            label=tts.ENGINE_LABELS["kokoro"],
+            note="fallback — lighter on memory, but slower and can gap on long replies",
+            approx_size_mb=243,
+            downloaded=model_catalog.tts_is_downloaded(),
+            selected=selected_tts == "kokoro",
+            installed=True,
+            download=_download_status_out("tts"),
+        ),
+    ]
+    current = next(o for o in tts_options if o.selected)
     return ModelsCatalogOut(
         llm=llm,
         stt=stt,
-        tts=tts,
+        tts=SingleModelOut(
+            label=current.label, downloaded=current.downloaded, download=current.download
+        ),
+        tts_options=tts_options,
         models_dir=str(model_manager.models_dir()),
         disk_usage_bytes=model_manager.disk_usage_bytes(),
     )
@@ -91,6 +119,12 @@ def download_stt() -> DownloadStatusOut:
 def download_tts() -> DownloadStatusOut:
     download_manager.start_download("tts", "")
     return _download_status_out("tts")
+
+
+@router.post("/models/pocket-tts/download", response_model=DownloadStatusOut)
+def download_pocket_tts() -> DownloadStatusOut:
+    download_manager.start_download("pocket_tts", "")
+    return _download_status_out("pocket_tts")
 
 
 def _reject_if_downloading(kind: str, key: str = "") -> None:
@@ -124,6 +158,41 @@ def delete_tts() -> None:
     if not model_catalog.tts_delete():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Text-to-speech isn't downloaded")
     tts_engine.unload()
+
+
+@router.delete("/models/pocket-tts", status_code=status.HTTP_204_NO_CONTENT)
+def delete_pocket_tts() -> None:
+    _reject_if_downloading("pocket_tts")
+    if not model_catalog.pocket_tts_delete():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pocket TTS isn't downloaded")
+    pocket_tts_engine.unload()
+
+
+@router.post("/models/tts-engine", status_code=status.HTTP_204_NO_CONTENT)
+def select_tts_engine(payload: SelectTtsEngineIn, conn: sqlite3.Connection = Depends(get_db)) -> None:
+    """Picks which voice speaks. Switching frees the outgoing engine — its
+    memory is exactly what the incoming one needs, and on a machine where
+    Pocket TTS is the interesting option at all, holding both is the thing
+    that pushes it into swap."""
+    if not tts.is_installed(payload.engine):
+        # Selecting a voice whose runtime is absent would leave the learner
+        # with a setting that looks applied and a conversation that cannot
+        # speak. Refuse here, where there is somewhere to put the reason.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Pocket TTS needs the optional 'pocket' extra installed "
+                "(uv pip install -e \".[pocket]\"). Restart the app afterwards."
+            ),
+        )
+    conn.execute(
+        """
+        INSERT INTO user_settings (user_id, tts_engine) VALUES (?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET tts_engine = excluded.tts_engine
+        """,
+        (payload.user_id, payload.engine),
+    )
+    tts.unload_all()
 
 
 @router.post("/models/select", status_code=204)
@@ -233,6 +302,15 @@ def get_status(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> Engi
     Launch AI is used again, rather than reading as still-ready off
     whatever was previously active."""
     return EngineStatusOut(**conversation.full_engine_status(conn, user_id))
+
+
+@router.post("/unload", response_model=EngineStatusOut)
+async def unload(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> EngineStatusOut:
+    """Frees the models from RAM. Reversible at the cost of another load, which
+    is why it needs no confirmation — and on a machine tight on memory, being
+    able to hand a gigabyte back without quitting the app is worth having."""
+    result = await run_in_threadpool(conversation.unload_engines, conn, user_id)
+    return EngineStatusOut(**result)
 
 
 @router.post("/launch", response_model=EngineStatusOut)

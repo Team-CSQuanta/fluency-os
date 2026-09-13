@@ -24,6 +24,7 @@ export function AiStatusButton() {
   const launching = useEngineStore((s) => s.launching);
   const launchError = useEngineStore((s) => s.launchError);
   const launchAi = useEngineStore((s) => s.launchAi);
+  const unloadAi = useEngineStore((s) => s.unloadAi);
 
   // Re-checked on every screen change (cheap local GETs) so this reflects
   // whatever was just picked, downloaded or launched in Settings without
@@ -43,6 +44,11 @@ export function AiStatusButton() {
   // succeeded — a saved key that's revoked or out of quota is not ready.
   const ready = status?.llm === 'ready';
   const engineLabel = readiness?.llm_model_label ?? '—';
+
+  // Anything actually occupying RAM right now. A cloud LLM holds none, but the
+  // local speech models still do, so they stay worth freeing either way.
+  const loadedInMemory =
+    (runsLocally && status?.llm === 'ready') || status?.stt === 'ready' || status?.tts === 'ready';
 
   const colour = ready ? GREEN : launching ? AMBER : RED;
   const label = !configured
@@ -65,8 +71,10 @@ export function AiStatusButton() {
         : 'Checking your API key with a real request…'
       : ready
         ? runsLocally
-          ? `${engineLabel} — loaded and running on this device`
-          : `${engineLabel} — key checked and answering; requests leave this device`
+          ? `${engineLabel} — loaded and running on this device. Click to unload and free the memory.`
+          : loadedInMemory
+            ? `${engineLabel} — key checked and answering. Click to free the local speech models.`
+            : `${engineLabel} — key checked and answering; requests leave this device`
         : runsLocally
           ? 'AI is not loaded — click to start it'
           : 'Cloud AI is unverified or last request failed — click to check the key';
@@ -76,7 +84,15 @@ export function AiStatusButton() {
       goSettings('AI');
       return;
     }
-    if (ready || launching) return;
+    if (launching) return;
+    // Toggle: the button that loads the models is also the one that hands the
+    // memory back, which on a machine short of RAM is worth having without
+    // quitting the app. Reversible at the cost of another load, so no prompt.
+    if (loadedInMemory) {
+      void unloadAi().catch(() => {});
+      return;
+    }
+    if (ready) return;
     void launchAi().catch(() => {});
   };
 

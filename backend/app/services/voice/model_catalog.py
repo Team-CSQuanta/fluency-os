@@ -115,7 +115,32 @@ def tts_delete() -> bool:
         if path.exists():
             path.unlink()
             deleted = True
+    # Older builds of the voice (the int8 one this app used to ship) are stale
+    # once the voice is gone — leaving one behind would waste ~114MB.
+    for stale in model_manager.models_dir().glob("kokoro-v1.0*.onnx"):
+        stale.unlink(missing_ok=True)
+        deleted = True
     return deleted
+
+
+POCKET_TTS_SIZE_MB = 225
+
+
+def pocket_tts_is_downloaded() -> bool:
+    return all(path.exists() for path in model_manager.pocket_tts_paths())
+
+
+def pocket_tts_delete() -> bool:
+    """Removes the whole pocket-tts folder, including the config.yaml the
+    engine writes there — that file names absolute paths to weights that are
+    about to stop existing, so leaving it behind would only be a trap on the
+    next download."""
+    weights, _, _ = model_manager.pocket_tts_paths()
+    folder = weights.parent
+    if not folder.exists():
+        return False
+    shutil.rmtree(folder, ignore_errors=True)
+    return True
 
 
 # faster-whisper's own on-disk cache layout — not importing stt_engine here

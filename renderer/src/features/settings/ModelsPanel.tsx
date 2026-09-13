@@ -241,6 +241,9 @@ export function ModelsPanel() {
   const deleteLlm = useEngineStore((s) => s.deleteLlm);
   const deleteStt = useEngineStore((s) => s.deleteStt);
   const deleteTts = useEngineStore((s) => s.deleteTts);
+  const downloadPocketTts = useEngineStore((s) => s.downloadPocketTts);
+  const deletePocketTts = useEngineStore((s) => s.deletePocketTts);
+  const selectTtsEngine = useEngineStore((s) => s.selectTtsEngine);
   const selectModel = useEngineStore((s) => s.selectModel);
   const llmProvider = useEngineStore((s) => s.llmProvider);
   const fetchLlmProvider = useEngineStore((s) => s.fetchLlmProvider);
@@ -262,7 +265,7 @@ export function ModelsPanel() {
   const downloadError =
     catalog.llm.find((o) => o.download.status === 'error')?.download.error ||
     catalog.stt.download.error ||
-    catalog.tts.download.error;
+    catalog.tts_options.find((o) => o.download.status === 'error')?.download.error;
 
   const handleToggleProvider = async (p: 'local' | 'openrouter' | 'gemini') => {
     setSwitchingProvider(true);
@@ -378,7 +381,7 @@ export function ModelsPanel() {
 
       <div>
         <div className="mb-2 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
-          Speech-to-text and text-to-speech — needed for voice conversations
+          Speech-to-text and text-to-speech — needed for voice conversations · pick one voice
         </div>
         <div className="flex flex-col gap-[1px] overflow-hidden rounded-panel border border-line2 bg-panel">
           <div className="flex items-center justify-between gap-4 border-b border-line2 px-4 py-[13px]">
@@ -390,15 +393,41 @@ export function ModelsPanel() {
               onDelete={deleteStt}
             />
           </div>
-          <div className="flex items-center justify-between gap-4 px-4 py-[13px]">
-            <div className="font-sans text-[12.5px] font-medium text-tx">{catalog.tts.label}</div>
-            <DownloadButton
-              downloaded={catalog.tts.downloaded}
-              download={catalog.tts.download}
-              onDownload={() => void downloadTts()}
-              onDelete={deleteTts}
-            />
-          </div>
+          {catalog.tts_options.map((o) => (
+            <div key={o.key} className="flex items-center justify-between gap-4 border-b border-line2 px-4 py-[13px] last:border-b-0">
+              <div className="flex min-w-0 items-center gap-[10px]">
+                <input
+                  type="radio"
+                  name="tts-engine"
+                  checked={o.selected}
+                  onChange={() => void selectTtsEngine(o.key)}
+                  disabled={!o.downloaded || !o.installed}
+                  className="h-[13px] w-[13px] accent-[var(--acc)] disabled:opacity-40"
+                  title={
+                    !o.installed
+                      ? 'this voice needs the optional "pocket" extra installed'
+                      : o.downloaded
+                        ? 'use this voice'
+                        : 'download it first to select it'
+                  }
+                />
+                <div className="min-w-0">
+                  <div className="font-sans text-[12.5px] font-medium text-tx">
+                    {o.label} <span className="font-mono text-[10px] text-tx3">· ~{o.approx_size_mb} MB</span>
+                  </div>
+                  <div className="mt-[3px] font-mono text-[10.5px] leading-[1.6] text-tx3">
+                    {o.installed ? o.note : 'not installed — needs the optional "pocket" extra (PyTorch)'}
+                  </div>
+                </div>
+              </div>
+              <DownloadButton
+                downloaded={o.downloaded}
+                download={o.download}
+                onDownload={() => void (o.key === 'pocket' ? downloadPocketTts() : downloadTts())}
+                onDelete={o.key === 'pocket' ? deletePocketTts : deleteTts}
+              />
+            </div>
+          ))}
         </div>
       </div>
 

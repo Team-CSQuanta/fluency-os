@@ -26,10 +26,23 @@ class SingleModelOut(BaseModel):
     download: DownloadStatusOut
 
 
+class TtsOptionOut(SingleModelOut):
+    key: Literal["kokoro", "pocket"]
+    note: str
+    approx_size_mb: int
+    selected: bool
+    # Whether this engine's runtime is present at all. Pocket TTS lives behind
+    # an optional extra, so it can be listed without being installable.
+    installed: bool
+
+
 class ModelsCatalogOut(BaseModel):
     llm: list[LlmOptionOut]
     stt: SingleModelOut
+    # The engine the user has selected, kept for clients that only know about
+    # one voice; `tts_options` is the full list.
     tts: SingleModelOut
+    tts_options: list[TtsOptionOut]
     # Real, actual on-disk location and usage — not user-configurable, but
     # worth surfacing since nothing else in the app ever showed it.
     models_dir: str
@@ -39,6 +52,11 @@ class ModelsCatalogOut(BaseModel):
 class SelectLlmModelIn(BaseModel):
     user_id: str
     model_key: str
+
+
+class SelectTtsEngineIn(BaseModel):
+    user_id: str
+    engine: Literal["kokoro", "pocket"]
 
 
 class ReadinessOut(BaseModel):

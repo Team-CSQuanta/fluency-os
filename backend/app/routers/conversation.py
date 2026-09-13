@@ -19,13 +19,19 @@ from app.models.conversation import (
 )
 from app.security import require_token
 from app.services import conversation
+from app.services.voice import tts
 from app.services.voice.errors import EngineUnavailable
 
 router = APIRouter(prefix="/conversation", dependencies=[Depends(require_token)])
 
 
-def _turn_out(row: sqlite3.Row, channel: str = "text") -> ConversationTurnOut:
-    chunks = conversation.audio_chunk_count(row, channel)
+def _turn_out(
+    row: sqlite3.Row, channel: str = "text", engine: str = tts.DEFAULT_ENGINE
+) -> ConversationTurnOut:
+    # How many pieces a reply comes in depends on the engine — Kokoro splits
+    # in two, Pocket TTS streams one — and the client asks for exactly this
+    # many chunks, so it has to be the engine the audio endpoint will use.
+    chunks = conversation.audio_chunk_count(row, channel, engine)
     # Legacy turns still carry a single pre-rendered wav in audio_path; newer
     # ones are synthesized per sentence on request.
     has_audio = chunks > 0 or bool(row["audio_path"])
@@ -117,7 +123,11 @@ def get_session_detail(
     row = _get_owned_session(conn, session_id, user_id)
     base = _session_out(conn, row)
     return ConversationSessionDetailOut(
-        **base.model_dump(), turns=[_turn_out(t, row["channel"]) for t in conversation.get_turns(conn, session_id)]
+        **base.model_dump(),
+        turns=[
+            _turn_out(t, row["channel"], tts.selected_name(conn, user_id))
+            for t in conversation.get_turns(conn, session_id)
+        ],
     )
 
 
@@ -130,6 +140,7 @@ async def submit_turn(
     conn: sqlite3.Connection = Depends(get_db),
 ) -> TurnSubmitOut:
     session = _get_owned_session(conn, session_id, user_id)
+    engine = tts.selected_name(conn, user_id)
     # A session with a report already isn't "closed" — ending just produces a
     # checkpoint report; the learner can keep talking afterward and re-end
     # later for an updated one (see end_session below).
@@ -153,8 +164,8 @@ async def submit_turn(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err)) from err
 
     return TurnSubmitOut(
-        user_turn=_turn_out(user_turn, session["channel"]),
-        ai_turn=_turn_out(ai_turn, session["channel"]),
+        user_turn=_turn_out(user_turn, session["channel"], engine),
+        ai_turn=_turn_out(ai_turn, session["channel"], engine),
     )
 
 
@@ -232,11 +243,14 @@ async def get_turn_audio(
     if row["audio_path"] and chunk == 0 and Path(row["audio_path"]).exists():
         return FileResponse(row["audio_path"], media_type="audio/wav")
 
-    if conversation.audio_chunk_count(row, row["channel"]) == 0:
+    engine = tts.selected_name(conn, user_id)
+    if conversation.audio_chunk_count(row, row["channel"], engine) == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No audio for this turn")
 
     try:
-        path = await run_in_threadpool(conversation.ensure_audio_chunk, turn_id, row["text"], chunk)
+        path = await run_in_threadpool(
+            conversation.ensure_audio_chunk, turn_id, row["text"], chunk, engine
+        )
     except IndexError as err:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such audio chunk") from err
     except EngineUnavailable as err:

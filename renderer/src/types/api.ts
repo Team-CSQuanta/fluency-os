@@ -567,10 +567,24 @@ export interface SingleModelOut {
   download: DownloadStatusOut;
 }
 
+export type TtsEngine = 'kokoro' | 'pocket';
+
+export interface TtsOptionOut extends SingleModelOut {
+  key: TtsEngine;
+  note: string;
+  approx_size_mb: number;
+  selected: boolean;
+  /** Whether this engine's runtime is present. Pocket TTS is an optional
+   * extra, so it can be listed and downloadable without being runnable. */
+  installed: boolean;
+}
+
 export interface ModelsCatalogOut {
   llm: LlmOptionOut[];
   stt: SingleModelOut;
+  /** Mirrors whichever entry of `tts_options` is selected. */
   tts: SingleModelOut;
+  tts_options: TtsOptionOut[];
   models_dir: string;
   disk_usage_bytes: number;
 }
