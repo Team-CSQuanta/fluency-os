@@ -85,6 +85,7 @@ def fake_llm(monkeypatch):
     # downloaded" gate or the "is it actually loaded into memory" gate —
     # those have their own dedicated tests below.
     monkeypatch.setattr(conversation, "_ensure_ready", lambda *a, **kw: None)
+    monkeypatch.setattr(conversation, "_ensure_ready_for_target", lambda *a, **kw: None)
     monkeypatch.setattr(conversation, "_ensure_launched", lambda *a, **kw: None)
     return calls
 
@@ -317,6 +318,7 @@ def test_conversation_engine_status_route(client, auth_headers):
 
 def test_full_session_lifecycle_via_http(client, auth_headers, monkeypatch):
     monkeypatch.setattr(conversation_router.conversation, "_ensure_ready", lambda *a, **kw: None)
+    monkeypatch.setattr(conversation_router.conversation, "_ensure_ready_for_target", lambda *a, **kw: None)
     monkeypatch.setattr(conversation_router.conversation, "_ensure_launched", lambda *a, **kw: None)
     monkeypatch.setattr(
         conversation_router.conversation.llm_chat_engine,
@@ -413,6 +415,7 @@ def test_engine_unavailable_maps_to_503(client, auth_headers, monkeypatch):
 
 def test_vocabulary_detail_surfaces_conversation_usage(client, auth_headers, monkeypatch):
     monkeypatch.setattr(conversation_router.conversation, "_ensure_ready", lambda *a, **kw: None)
+    monkeypatch.setattr(conversation_router.conversation, "_ensure_ready_for_target", lambda *a, **kw: None)
     monkeypatch.setattr(conversation_router.conversation, "_ensure_launched", lambda *a, **kw: None)
     monkeypatch.setattr(
         conversation_router.conversation.llm_chat_engine,

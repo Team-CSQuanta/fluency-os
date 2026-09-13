@@ -14,7 +14,15 @@ from datetime import datetime
 from pathlib import Path
 
 from app.config import settings
-from app.services.voice import engine_status, llm_chat_engine, model_catalog, model_manager, stt_engine, tts_engine
+from app.services.voice import (
+    cloud_llm_engine,
+    engine_status,
+    llm_chat_engine,
+    model_catalog,
+    model_manager,
+    stt_engine,
+    tts_engine,
+)
 from app.services.voice.errors import EngineUnavailable
 from app.utils.ids import uuid7
 from app.utils.time import iso8601_utc_now
@@ -64,30 +72,87 @@ def selected_llm_option(conn: sqlite3.Connection, user_id: str) -> model_catalog
     return model_catalog.llm_option(None)
 
 
-def _session_llm_option(conn: sqlite3.Connection, session: sqlite3.Row) -> model_catalog.LlmOption:
-    """The model a session should keep using for the rest of its turns.
+def llm_target(conn: sqlite3.Connection, user_id: str) -> dict:
+    """Resolves what a real LLM call should actually hit right now: either a
+    local catalog option (llama.cpp, loaded via Launch AI) or a cloud model
+    over OpenRouter (no local load step — a live API call every time).
 
-    A session frozen with a real model_id at start_session time keeps using
-    exactly that model, even if the user's Settings selection changes mid-
-    conversation — consistent history matters more than switching engines
-    partway through. A session with no model_id (either genuinely old, from
-    before this was tracked, or interrupted before start_session finished)
-    falls back to the user's *current* preference rather than the fixed
-    catalog default, so a stale row can't silently ignore a model the user
-    has actually downloaded and selected.
-    """
-    if session["model_id"]:
-        return model_catalog.llm_option(session["model_id"])
-    return selected_llm_option(conn, session["user_id"])
+    Shape: {"provider": "local", "option": LlmOption} or
+           {"provider": "cloud", "model": str, "api_key": str | None}.
+    `llm_model_id` is intentionally NOT reused for the OpenRouter model
+    string — it stays local-catalog-key-only, so a cloud model id can never
+    be misread as a local one (see 0010_openrouter_llm.sql)."""
+    row = conn.execute(
+        "SELECT llm_mode, openrouter_api_key, openrouter_model FROM user_settings WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    if row is not None and row["llm_mode"] == "api":
+        return {
+            "provider": "cloud",
+            "model": row["openrouter_model"] or cloud_llm_engine.DEFAULT_MODEL,
+            "api_key": row["openrouter_api_key"],
+        }
+    return {"provider": "local", "option": selected_llm_option(conn, user_id)}
 
 
-def readiness(conn: sqlite3.Connection, user_id: str, channel: str) -> dict:
-    """What a session needs before it can actually run — checked up front so
-    Conversation can refuse to start with a clear message instead of the old
-    behavior of silently kicking off a multi-minute implicit download (or
-    now, failing deep inside an HTTP request)."""
-    option = selected_llm_option(conn, user_id)
-    llm_ready = model_catalog.llm_is_downloaded(option)
+def llm_target_label(target: dict) -> str:
+    if target["provider"] == "cloud":
+        return f"{target['model']} (OpenRouter)"
+    return target["option"].label
+
+
+def _session_llm_target(conn: sqlite3.Connection, session: sqlite3.Row) -> dict:
+    """The model/provider a session should keep using for the rest of its
+    turns — consistent history matters more than switching engines partway
+    through a conversation, same reasoning as the old local-only version of
+    this function. `model_id` encodes provider: a local catalog key as
+    before, or "cloud:<openrouter model>" for a session started on the
+    cloud provider. A session with no model_id (genuinely old, or
+    interrupted before start_session finished) falls back to the user's
+    *current* preference rather than a fixed default."""
+    model_id = session["model_id"]
+    if model_id and model_id.startswith("cloud:"):
+        row = conn.execute(
+            "SELECT openrouter_api_key FROM user_settings WHERE user_id = ?", (session["user_id"],)
+        ).fetchone()
+        return {
+            "provider": "cloud",
+            "model": model_id[len("cloud:") :],
+            "api_key": row["openrouter_api_key"] if row else None,
+        }
+    if model_id:
+        return {"provider": "local", "option": model_catalog.llm_option(model_id)}
+    return llm_target(conn, session["user_id"])
+
+
+def _session_model_id(target: dict) -> str:
+    return f"cloud:{target['model']}" if target["provider"] == "cloud" else target["option"].key
+
+
+def _generate_reply(target: dict, system_prompt: str, history: list[tuple[str, str]], max_tokens: int = 220) -> str:
+    if target["provider"] == "cloud":
+        return cloud_llm_engine.generate_reply(
+            system_prompt, history, api_key=target["api_key"], model=target["model"], max_tokens=max_tokens
+        )
+    option = target["option"]
+    return llm_chat_engine.generate_reply(
+        system_prompt, history, repo_id=option.repo_id, filename=option.filename, max_tokens=max_tokens
+    )
+
+
+def _generate_report(target: dict, transcript: list[tuple[str, str]], target_words: list[str]) -> dict:
+    if target["provider"] == "cloud":
+        return cloud_llm_engine.generate_report(
+            transcript, target_words, api_key=target["api_key"], model=target["model"]
+        )
+    option = target["option"]
+    return llm_chat_engine.generate_report(transcript, target_words, repo_id=option.repo_id, filename=option.filename)
+
+
+def _readiness_for_target(target: dict, channel: str) -> dict:
+    if target["provider"] == "cloud":
+        llm_ready = bool(target["api_key"])
+    else:
+        llm_ready = model_catalog.llm_is_downloaded(target["option"])
     if channel == "voice":
         stt_ready = model_catalog.stt_is_downloaded()
         tts_ready = model_catalog.tts_is_downloaded()
@@ -98,12 +163,23 @@ def readiness(conn: sqlite3.Connection, user_id: str, channel: str) -> dict:
         "llm": llm_ready,
         "stt": stt_ready,
         "tts": tts_ready,
-        "llm_model_label": option.label,
+        "llm_model_label": llm_target_label(target),
     }
 
 
-def _ensure_ready(conn: sqlite3.Connection, user_id: str, channel: str) -> None:
-    r = readiness(conn, user_id, channel)
+def readiness(conn: sqlite3.Connection, user_id: str, channel: str) -> dict:
+    """What a session needs before it can actually run — checked up front so
+    Conversation can refuse to start with a clear message instead of the old
+    behavior of silently kicking off a multi-minute implicit download (or
+    now, failing deep inside an HTTP request). For the cloud provider,
+    "ready" means a real API key is configured — there's no download step.
+    Reflects the user's *current* Settings preference — see
+    _ensure_ready_for_target for the session-pinned equivalent."""
+    return _readiness_for_target(llm_target(conn, user_id), channel)
+
+
+def _ensure_ready_for_target(target: dict, channel: str) -> None:
+    r = _readiness_for_target(target, channel)
     if r["ready"]:
         return
     missing = [name for name, ok in (("LLM", r["llm"]), ("STT", r["stt"]), ("TTS", r["tts"])) if not ok]
@@ -113,21 +189,50 @@ def _ensure_ready(conn: sqlite3.Connection, user_id: str, channel: str) -> None:
     )
 
 
-def _ensure_launched(needs: set[str], *, llm_option: model_catalog.LlmOption | None = None) -> None:
-    """Distinct from _ensure_ready: that checks a model is *downloaded*,
-    this checks it's actually *loaded into memory* — and specifically,
-    whichever model `llm_option` says is actually selected right now.
-    Without pinning to that exact model, switching to a different
-    (downloaded) model in Settings would still read as "ready" off
-    whatever was previously loaded, and the next turn would silently pay a
-    reload mid-conversation instead of the learner choosing when via
-    Launch AI. Loading is real, sometimes multi-minute work on this
-    hardware tier — gated behind that explicit action so the learner
-    controls when the cost is paid, with a clear message if they haven't
-    done it (yet, or again after switching models)."""
-    llm_path = str(model_manager.llm_model_path(llm_option.repo_id, llm_option.filename)) if llm_option else None
+def _ensure_ready(conn: sqlite3.Connection, user_id: str, channel: str) -> None:
+    """Checks the user's *current* Settings preference — right for
+    start_session (no session exists yet). submit_user_turn/end_session use
+    _ensure_ready_for_target with the session's own pinned target instead,
+    so switching Settings mid-conversation (e.g. back to local with nothing
+    downloaded) can't block turns in a session that's still perfectly able
+    to run on what it was actually started with."""
+    _ensure_ready_for_target(llm_target(conn, user_id), channel)
+
+
+def full_engine_status(conn: sqlite3.Connection, user_id: str) -> dict:
+    """Like engine_status.status(), but provider-aware: the cloud LLM has no
+    local "loaded into memory" concept, so it reads as ready the instant an
+    API key is configured, rather than through the local model-residency
+    check (which would otherwise always show not_loaded for it)."""
+    target = llm_target(conn, user_id)
+    if target["provider"] == "cloud":
+        st = engine_status.status(None)
+        st["llm"] = "ready" if target["api_key"] else "not_loaded"
+        return st
+    option = target["option"]
+    return engine_status.status(str(model_manager.llm_model_path(option.repo_id, option.filename)))
+
+
+def _ensure_launched(needs: set[str], *, llm_target: dict) -> None:
+    """Distinct from _ensure_ready: that checks a model is *downloaded*/
+    *configured*, this checks it's actually *loaded into memory* — a check
+    that only applies to the local provider, since a cloud API call has no
+    load step at all (once _ensure_ready confirmed a key exists, it's
+    already "launched"). For local, this is pinned to whichever model
+    `llm_target` says is actually selected right now — without that,
+    switching to a different (downloaded) model in Settings would still
+    read as "ready" off whatever was previously loaded, and the next turn
+    would silently pay a reload mid-conversation instead of the learner
+    choosing when via Launch AI."""
+    effective_needs = set(needs)
+    llm_path = None
+    if llm_target["provider"] == "cloud":
+        effective_needs.discard("llm")
+    else:
+        option = llm_target["option"]
+        llm_path = str(model_manager.llm_model_path(option.repo_id, option.filename))
     st = engine_status.status(llm_path)
-    missing = sorted(n.upper() for n in needs if st.get(n) != "ready")
+    missing = sorted(n.upper() for n in effective_needs if st.get(n) != "ready")
     if missing:
         raise EngineUnavailable(
             f"AI isn't launched yet ({'/'.join(missing)} not loaded) — "
@@ -168,22 +273,27 @@ def _system_prompt(scenario: str, target_words: list[sqlite3.Row]) -> str:
 def launch_engines(conn: sqlite3.Connection, user_id: str) -> dict:
     """The "Launch AI" action: explicitly loads whatever's downloaded into
     memory right now, instead of leaving that to happen (or be refused, per
-    _ensure_launched) at first real use."""
-    option = selected_llm_option(conn, user_id)
-    if not model_catalog.llm_is_downloaded(option):
-        raise EngineUnavailable("No AI model downloaded yet — download one in Settings before launching AI.")
-    llm_chat_engine.warm_up(option.repo_id, option.filename)
+    _ensure_launched) at first real use. The cloud provider has nothing to
+    load for the LLM itself — just needs a configured key — but voice's
+    local STT/TTS still get warmed up either way."""
+    target = llm_target(conn, user_id)
+    if target["provider"] == "local":
+        if not model_catalog.llm_is_downloaded(target["option"]):
+            raise EngineUnavailable("No AI model downloaded yet — download one in Settings before launching AI.")
+        llm_chat_engine.warm_up(target["option"].repo_id, target["option"].filename)
+    elif not target["api_key"]:
+        raise EngineUnavailable("No OpenRouter API key configured — add one in Settings before launching AI.")
     if model_catalog.stt_is_downloaded():
         stt_engine.warm_up()
     if model_catalog.tts_is_downloaded():
         tts_engine.warm_up()
-    return engine_status.status(str(model_manager.llm_model_path(option.repo_id, option.filename)))
+    return full_engine_status(conn, user_id)
 
 
 def start_session(conn: sqlite3.Connection, *, user_id: str, scenario: str, channel: str) -> str:
     _ensure_ready(conn, user_id, channel)
-    option = selected_llm_option(conn, user_id)
-    _ensure_launched({"llm"} | ({"tts"} if channel == "voice" else set()), llm_option=option)
+    target = llm_target(conn, user_id)
+    _ensure_launched({"llm"} | ({"tts"} if channel == "voice" else set()), llm_target=target)
 
     target_words = _select_target_words(conn, user_id)
     session_id = uuid7()
@@ -194,7 +304,7 @@ def start_session(conn: sqlite3.Connection, *, user_id: str, scenario: str, chan
         INSERT INTO conversation_sessions (id, user_id, scenario, channel, target_word_ids, model_id, started_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (session_id, user_id, scenario, channel, json.dumps([w["id"] for w in target_words]), option.key, now),
+        (session_id, user_id, scenario, channel, json.dumps([w["id"] for w in target_words]), _session_model_id(target), now),
     )
     # Commit before the slow LLM call below — otherwise this write
     # transaction stays open (blocking every other writer) for however long
@@ -202,11 +312,10 @@ def start_session(conn: sqlite3.Connection, *, user_id: str, scenario: str, chan
     conn.commit()
 
     system_prompt = _system_prompt(scenario, target_words)
-    opening = llm_chat_engine.generate_reply(
+    opening = _generate_reply(
+        target,
         system_prompt,
         [("user", "(The learner has just joined. Greet them and open the conversation.)")],
-        repo_id=option.repo_id,
-        filename=option.filename,
     )
     _insert_turn(conn, session_id, 0, "ai", opening, channel)
     return session_id
@@ -259,11 +368,11 @@ def submit_user_turn(
     audio_bytes: bytes | None,
 ) -> tuple[sqlite3.Row, sqlite3.Row]:
     channel = session["channel"]
-    _ensure_ready(conn, session["user_id"], channel)
-    option = _session_llm_option(conn, session)
+    target = _session_llm_target(conn, session)
+    _ensure_ready_for_target(target, channel)
     _ensure_launched(
         {"llm"} | ({"stt"} if audio_bytes is not None else set()) | ({"tts"} if channel == "voice" else set()),
-        llm_option=option,
+        llm_target=target,
     )
     stt_confidence = None
     if audio_bytes is not None:
@@ -283,7 +392,7 @@ def submit_user_turn(
 
     system_prompt = _system_prompt(session["scenario"], target_words)
     history = [("assistant" if t["speaker"] == "ai" else "user", t["text"]) for t in [*turns, user_turn]]
-    reply = llm_chat_engine.generate_reply(system_prompt, history, repo_id=option.repo_id, filename=option.filename)
+    reply = _generate_reply(target, system_prompt, history)
     ai_turn = _insert_turn(conn, session["id"], next_index + 1, "ai", reply, channel)
 
     return user_turn, ai_turn
@@ -294,8 +403,8 @@ def _parse_ts(ts: str) -> datetime:
 
 
 def end_session(conn: sqlite3.Connection, session: sqlite3.Row) -> dict:
-    option = _session_llm_option(conn, session)
-    _ensure_launched({"llm"}, llm_option=option)
+    target = _session_llm_target(conn, session)
+    _ensure_launched({"llm"}, llm_target=target)
     turns = get_turns(conn, session["id"])
     target_word_ids = json.loads(session["target_word_ids"])
     target_words = (
@@ -308,9 +417,7 @@ def end_session(conn: sqlite3.Connection, session: sqlite3.Row) -> dict:
     )
 
     transcript = [(t["speaker"], t["text"]) for t in turns]
-    analysis = llm_chat_engine.generate_report(
-        transcript, [w["word"] for w in target_words], repo_id=option.repo_id, filename=option.filename
-    )
+    analysis = _generate_report(target, transcript, [w["word"] for w in target_words])
 
     word_usage: dict[str, str] = analysis.get("word_usage", {}) or {}
     fluency_score = int(analysis.get("fluency_score", 0) or 0)
