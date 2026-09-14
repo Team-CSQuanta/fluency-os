@@ -565,12 +565,21 @@ def ensure_audio_chunk(turn_id: str, text: str, index: int, engine: str = tts.DE
     return path
 
 
-def audio_chunk_count(turn: sqlite3.Row, channel: str, engine: str = tts.DEFAULT_ENGINE) -> int:
-    """How many audio pieces this turn can produce. Only the AI speaks aloud,
-    and only on the voice channel."""
+def audio_chunk_texts(turn: sqlite3.Row, channel: str, engine: str = tts.DEFAULT_ENGINE) -> list[str]:
+    """The text of each audio piece this turn produces, in order. Only the AI
+    speaks aloud, and only on the voice channel.
+
+    The client highlights words in time with the voice, which means it needs
+    the same split the synthesizer used — not a guess at it. Returning the
+    text rather than only a count is what makes the two agree."""
     if channel != "voice" or turn["speaker"] != "ai":
-        return 0
-    return len(tts.engine_for(engine).split_for_streaming(turn["text"]))
+        return []
+    return tts.engine_for(engine).split_for_streaming(turn["text"])
+
+
+def audio_chunk_count(turn: sqlite3.Row, channel: str, engine: str = tts.DEFAULT_ENGINE) -> int:
+    """How many audio pieces this turn can produce."""
+    return len(audio_chunk_texts(turn, channel, engine))
 
 
 def get_session_row(conn: sqlite3.Connection, session_id: str, user_id: str) -> sqlite3.Row | None:
@@ -673,16 +682,38 @@ def end_session(conn: sqlite3.Connection, session: sqlite3.Row) -> dict:
     metrics = conversation_report.compute_metrics(turns, target_cefr)
 
     user_turns = [t for t in turns if t["speaker"] == "user"]
+    ai_turns = [t for t in turns if t["speaker"] == "ai"]
     routing = []
     outcomes_for_logs: list[tuple[str, str]] = []
     for w in target_words:
-        outcome = analysis.word_usage.get(w["word"], "avoided")
-        if outcome not in ("spontaneous", "prompted", "incorrect", "avoided"):
-            outcome = "avoided"
+        # Whether the learner said the word at all is a fact about the
+        # transcript, not a judgement — so it is established here, not asked.
         evidence_turn = next(
             (t["turn_index"] for t in user_turns if conversation_report.says_word(t["text"], w["word"])),
             None,
         )
+        outcome = conversation_report.match_word_usage(analysis.word_usage, w["word"]) or "avoided"
+
+        if evidence_turn is not None and outcome == "avoided":
+            # "avoided" means "never used at all", and the transcript shows
+            # otherwise — a claim the evidence disproves, so it does not
+            # stand. Observed with gemma-3-1b marking every word avoided in a
+            # session where the learner had plainly used all three; the report
+            # then read 0/3 and the words were logged as unpractised, pushing
+            # them back to the front of the queue they had just earned their
+            # way out of.
+            #
+            # Only this one outcome is corrected. "incorrect" is a judgement
+            # about *how* the word was used and nothing here can second-guess
+            # it; "avoided" is the only verdict that is checkable.
+            said_first = any(
+                t["turn_index"] < evidence_turn and conversation_report.says_word(t["text"], w["word"])
+                for t in ai_turns
+            )
+            # The spec's own distinction: prompted means used only after the
+            # AI said it. That much is visible in the transcript.
+            outcome = "prompted" if said_first else "spontaneous"
+
         routing.append({"word": w["word"], "outcome": outcome, "evidence_turn": evidence_turn})
         outcomes_for_logs.append((w["id"], outcome))
 

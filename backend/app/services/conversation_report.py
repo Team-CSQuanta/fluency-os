@@ -128,6 +128,28 @@ def says_word(text: str, word: str) -> bool:
     return any(wanted & cefr_lexicon.base_forms(w) for w in _words(text))
 
 
+VALID_OUTCOMES = ("spontaneous", "prompted", "incorrect", "avoided")
+
+
+def match_word_usage(word_usage: dict[str, str], word: str) -> str | None:
+    """The model's verdict for `word`, matched forgivingly.
+
+    The prompt lists the target words and asks for them back as JSON keys, and
+    a small model does not reliably echo them verbatim — it lowercases a
+    capitalised word, or answers about "wonders" when asked about "Wonder". An
+    exact dict lookup turns any of that into a silent miss that reads as
+    "avoided", which is indistinguishable from the learner never trying. Keys
+    are matched on shared base forms instead, the same way the transcript is
+    searched."""
+    wanted = cefr_lexicon.base_forms(word)
+    if not wanted:
+        return None
+    for key, outcome in word_usage.items():
+        if wanted & cefr_lexicon.base_forms(key) and outcome in VALID_OUTCOMES:
+            return outcome
+    return None
+
+
 def resolve_cefr(level: str | None) -> str:
     """A learner who hasn't been placed yet still gets a usable comparison
     band rather than an above-level count that silently reads zero."""

@@ -468,6 +468,9 @@ export interface ConversationTurnOut {
   /** Sentence-sized audio pieces, fetched one at a time so the first can play
    * while the rest are still being synthesized. */
   audio_chunk_count: number;
+  /** The exact text of each audio piece, in order — what the word-by-word
+   * highlighting is timed against. Empty for turns never spoken aloud. */
+  audio_chunks: string[];
   stt_confidence: number | null;
   created_at: string;
 }

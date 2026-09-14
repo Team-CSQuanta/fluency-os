@@ -1219,3 +1219,23 @@ def test_unload_leaves_a_verified_cloud_key_alone(client, auth_headers, monkeypa
     assert sorted(freed) == ["stt", "tts"]
     # ...and stays usable without re-verifying.
     assert res.json()["llm"] == "ready"
+
+
+def test_turn_output_carries_the_text_of_each_audio_chunk(tmp_path, monkeypatch):
+    """The client highlights words in time with the voice, so it needs the
+    same split the synthesizer used — not a rule it tries to reproduce. A
+    count alone cannot tell it which words belong to the clip now playing."""
+    conn = _fresh_conn(tmp_path, "chunktext.db")
+    turn = {"speaker": "ai", "text": "That sounds lovely. Where did you go afterwards?"}
+
+    parts = conversation.audio_chunk_texts(turn, "voice", "kokoro")
+    assert parts == ["That sounds lovely.", "Where did you go afterwards?"]
+    # Rejoining must reproduce the reply, or the highlight would skip or
+    # repeat words that were actually spoken.
+    assert " ".join(parts) == turn["text"]
+    assert conversation.audio_chunk_count(turn, "voice", "kokoro") == len(parts)
+
+    # Nobody speaks for the learner, and nothing speaks on the text channel.
+    assert conversation.audio_chunk_texts(turn, "text", "kokoro") == []
+    assert conversation.audio_chunk_texts({"speaker": "user", "text": "hi"}, "voice", "kokoro") == []
+    conn.close()

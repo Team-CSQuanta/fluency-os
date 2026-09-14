@@ -205,3 +205,19 @@ def test_target_words_are_matched_as_words_not_substrings():
     assert says_word("Let us start now", "art") is False
     assert says_word("a classy dress", "class") is False
     assert says_word("", "cat") is False
+
+
+def test_word_usage_keys_are_matched_forgivingly():
+    """The prompt lists target words and asks for them back as JSON keys, and
+    a small model does not reliably echo them verbatim. An exact lookup turns
+    a casing difference into a silent "avoided" — indistinguishable from the
+    learner never trying."""
+    from app.services.conversation_report import match_word_usage
+
+    assert match_word_usage({"wonder": "spontaneous"}, "Wonder") == "spontaneous"
+    assert match_word_usage({"Jack": "prompted"}, "jack") == "prompted"
+    assert match_word_usage({"wonders": "incorrect"}, "Wonder") == "incorrect"
+    # A value the schema doesn't define is not a verdict.
+    assert match_word_usage({"jack": "maybe?"}, "jack") is None
+    assert match_word_usage({}, "jack") is None
+    assert match_word_usage({"other": "spontaneous"}, "jack") is None

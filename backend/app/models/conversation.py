@@ -27,6 +27,12 @@ class ConversationTurnOut(BaseModel):
     # fetched (and synthesized) separately so the first can start playing
     # while the rest are still being made.
     audio_chunk_count: int = 0
+    # The exact text of each of those pieces, in order. The client needs this
+    # to highlight words in time with the voice: it has to know which words
+    # belong to the clip currently playing, and the split is decided here (by
+    # the selected TTS engine) rather than by any rule the client could
+    # reproduce. Empty for turns that are never spoken aloud.
+    audio_chunks: list[str] = []
     stt_confidence: float | None
     created_at: str
 
