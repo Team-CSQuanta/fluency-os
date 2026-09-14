@@ -25,6 +25,8 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, replace
 
+from app.services import cefr_lexicon
+
 API_BASE = "https://api.dictionaryapi.dev/api/v2/entries/en"
 FALLBACK_API_BASE = "https://freedictionaryapi.com/api/v1/entries/en"
 TIMEOUT_SECONDS = 6.0
@@ -86,6 +88,37 @@ def _common_senses_first(result: "DictionaryResult") -> "DictionaryResult":
     return replace(result, senses=tuple(ordered))
 
 
+# Below this share of learner-known words, a synonym list is not describing
+# the sense that was looked up. See _usable_synonyms.
+_SYNONYM_QUALITY_FLOOR = 0.25
+_MAX_SYNONYMS = 8
+
+
+def _usable_synonyms(synonyms: tuple[str, ...]) -> tuple[str, ...]:
+    """Wiktionary's synonym dumps are not written for learners, and for one
+    category of word they are actively harmful.
+
+    Measured on the live API: "Italian" returns 19 synonyms, of which all but
+    one are ethnic slurs, and nothing in the payload marks them as such — the
+    sense is tagged only "countable", so there is no flag to filter on.
+    "happy" returns 55, including `sonsy`, `blithen` and `chirk`. Meanwhile
+    `reticent`, `begin`, `difficult` and `woman` return none at all.
+
+    Two rules, because one is not enough. Keeping only words that carry a CEFR
+    band removes the slurs but also `joyful`, and still admits `spaghetti`,
+    which is banded as a food and listed here as a slur. So the proportion is
+    the real signal: if almost none of what a source offers is a word a
+    learner should know, the list is about something other than the meaning,
+    and the whole list goes rather than the part that happened to pass.
+    """
+    if not synonyms:
+        return ()
+    known = [s for s in synonyms if cefr_lexicon.band_of(s)]
+    if len(known) / len(synonyms) < _SYNONYM_QUALITY_FLOOR:
+        return ()
+    return tuple(known[:_MAX_SYNONYMS])
+
+
 def search(word: str, *, timeout: float = TIMEOUT_SECONDS) -> DictionaryResult:
     """Look up a word, preferring dictionaryapi.dev and falling back to
     freedictionaryapi.com if the primary source is unreachable or draws a
@@ -107,13 +140,18 @@ def search(word: str, *, timeout: float = TIMEOUT_SECONDS) -> DictionaryResult:
         try:
             lowered = _search_one(clean.lower(), timeout=timeout)
             if lowered.found and not _is_proper_noun_only(lowered):
-                return _common_senses_first(lowered)
+                return _clean_result(lowered)
         except DictionaryServiceUnavailable:
             # Fall through to the original spelling; if the service is really
             # down the attempt below reports it.
             pass
 
-    return _common_senses_first(_search_one(clean, timeout=timeout))
+    return _clean_result(_search_one(clean, timeout=timeout))
+
+
+def _clean_result(result: DictionaryResult) -> DictionaryResult:
+    """Everything applied between the raw source and the caller."""
+    return replace(_common_senses_first(result), synonyms=_usable_synonyms(result.synonyms))
 
 
 def _search_one(clean: str, *, timeout: float) -> DictionaryResult:

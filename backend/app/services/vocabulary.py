@@ -53,7 +53,7 @@ def save_word(
             word.strip(),
             entry.lemma,
             entry.pos or None,
-            entry.cefr,
+            entry.cefr or cefr_lexicon.band_of(word),
             entry.definition,
             entry.example,
             entry.simpler,
@@ -108,7 +108,12 @@ def save_manual_word(
     """
     local = cefr_lexicon.lookup(word)
     lemma = local.lemma if local is not None else cefr_lexicon.normalise(word)
-    cefr = local.cefr if local is not None else None
+    # band_of, not local.cefr. The curated lexicon holds about a thousand
+    # words; the band table behind it answers for eight thousand more, and
+    # reading the level off `local` alone is why a word saved from a video or
+    # added by hand showed "CEFR —" even when we knew its level perfectly
+    # well. band_of still prefers the curated entry where there is one.
+    cefr = cefr_lexicon.band_of(word)
     simpler = local.simpler if local is not None else None
 
     new_id = uuid7()
@@ -343,8 +348,22 @@ def get_word_row(conn: sqlite3.Connection, user_id: str, word: str) -> sqlite3.R
 
 
 def get_contexts(conn: sqlite3.Connection, vocab_word_id: str) -> list[sqlite3.Row]:
+    """Contexts, with the clip that belongs to each one where there is a clip.
+
+    The join is LEFT because a clip context is complete without its video:
+    extraction is queued behind the save (spec §4.1.3) and may still be
+    running, may have been declined by the storage policy, or may have failed
+    because the source moved. All three still show the line and the timecode.
+    """
     return conn.execute(
-        "SELECT * FROM vocab_contexts WHERE vocab_word_id = ? ORDER BY created_at", (vocab_word_id,)
+        """
+        SELECT c.*, k.id AS clip_id, k.status AS clip_status
+          FROM vocab_contexts c
+          LEFT JOIN media_clips k ON k.vocab_context_id = c.id
+         WHERE c.vocab_word_id = ?
+         ORDER BY c.created_at
+        """,
+        (vocab_word_id,),
     ).fetchall()
 
 
@@ -557,3 +576,155 @@ def _fill_missing_enrichment(
     conn.execute(
         f"UPDATE vocab_words SET {assignments} WHERE id = ?", [*updates.values(), row["id"]]
     )
+
+
+def timecode(ms: int) -> str:
+    """h:mm:ss for a source label. Hours are dropped below an hour so a
+    nine-minute video doesn't read "0:03:41"."""
+    total = max(0, ms) // 1000
+    hours, rest = divmod(total, 3600)
+    minutes, seconds = divmod(rest, 60)
+    return f"{hours}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes}:{seconds:02d}"
+
+
+def add_clip_context(
+    conn: sqlite3.Connection,
+    *,
+    vocab_word_id: str,
+    media_item_id: str,
+    media_title: str,
+    snippet: str,
+    start_ms: int,
+    end_ms: int,
+    media_file_hash: str | None = None,
+) -> str | None:
+    """A context captured while watching (spec §4.1.2 "save with context").
+
+    De-duped on the timecode, not just on the media item: the same word met
+    twice in one film is two genuinely different moments and deserves two
+    clips, but pressing save twice on one line is not.
+    """
+    existing = conn.execute(
+        "SELECT id FROM vocab_contexts WHERE vocab_word_id = ? AND media_item_id = ? AND start_ms = ?",
+        (vocab_word_id, media_item_id, start_ms),
+    ).fetchone()
+    if existing is not None:
+        return None
+    context_id = uuid7()
+    conn.execute(
+        """
+        INSERT INTO vocab_contexts (id, vocab_word_id, kind, snippet, source_label,
+                                    media_item_id, start_ms, end_ms, media_file_hash, created_at)
+        VALUES (?, ?, 'clip', ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            context_id,
+            vocab_word_id,
+            snippet,
+            f"{media_title} · {timecode(start_ms)}",
+            media_item_id,
+            start_ms,
+            end_ms,
+            media_file_hash,
+            iso8601_utc_now(),
+        ),
+    )
+    return context_id
+
+
+def backfill_missing_cefr(conn: sqlite3.Connection) -> int:
+    """Give already-saved words the level we can now work out for them.
+
+    Words saved before save_manual_word consulted the band table carry a NULL
+    cefr that no later edit would ever fill — the level is snapshotted at save
+    time by design, so nothing re-reads it. Runs at startup beside
+    ensure_fts_backfilled, and touches only rows that have no level at all, so
+    a hand-corrected band is never overwritten.
+    """
+    rows = conn.execute("SELECT id, word, lemma FROM vocab_words WHERE cefr IS NULL").fetchall()
+    updates = [
+        (band, row["id"])
+        for row in rows
+        if (band := cefr_lexicon.band_of(row["word"]) or cefr_lexicon.band_of(row["lemma"]))
+    ]
+    if updates:
+        conn.executemany("UPDATE vocab_words SET cefr = ? WHERE id = ?", updates)
+        conn.commit()
+    return len(updates)
+
+
+def relink_clip_contexts(
+    conn: sqlite3.Connection, *, media_item_id: str, file_hash: str, user_id: str
+) -> int:
+    """Reattach moments captured from this file before it last left the library.
+
+    Matched on the file's own hash, so it works across a delete and re-import
+    even though the item id changed. Scoped to the owning learner: two people
+    can hold the same film and their captured moments are not interchangeable.
+
+    Each reattached context also gets its clip row back, as `virtual` — the
+    state the timecodes-only storage policy produces. The extracted video was
+    deleted with the library entry and is not worth rebuilding for moments the
+    learner may never open again, but the source is present and the window is
+    known, so the existing on-demand path can cut it the moment one is played.
+    """
+    rows = conn.execute(
+        """
+        SELECT c.id, c.snippet, c.start_ms, c.end_ms, c.vocab_word_id
+          FROM vocab_contexts c
+          JOIN vocab_words w ON w.id = c.vocab_word_id
+         WHERE c.media_item_id IS NULL
+           AND c.media_file_hash = ?
+           AND w.user_id = ?
+        """,
+        (file_hash, user_id),
+    ).fetchall()
+    if not rows:
+        return 0
+
+    conn.executemany(
+        "UPDATE vocab_contexts SET media_item_id = ? WHERE id = ?",
+        [(media_item_id, row["id"]) for row in rows],
+    )
+    conn.executemany(
+        """
+        INSERT INTO media_clips (id, media_item_id, vocab_word_id, vocab_context_id, cue_text,
+                                 start_ms, end_ms, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'virtual', ?)
+        """,
+        [
+            (
+                uuid7(),
+                media_item_id,
+                row["vocab_word_id"],
+                row["id"],
+                row["snippet"],
+                row["start_ms"] or 0,
+                row["end_ms"] or 0,
+                iso8601_utc_now(),
+            )
+            for row in rows
+        ],
+    )
+    return len(rows)
+
+
+def backfill_context_hashes(conn: sqlite3.Connection) -> int:
+    """Stamp the file hash onto clip contexts saved before the column existed.
+
+    Without it, a moment captured before this change is unrecoverable the first
+    time its film leaves the library — there would be nothing to match on.
+    Only fills rows that still point at a live media item, which is exactly the
+    set that can still be told which file they came from.
+    """
+    updated = conn.execute(
+        """
+        UPDATE vocab_contexts
+           SET media_file_hash = (SELECT m.file_hash FROM media_items m WHERE m.id = vocab_contexts.media_item_id)
+         WHERE media_file_hash IS NULL
+           AND media_item_id IS NOT NULL
+        """
+    ).rowcount
+    if updated:
+        conn.commit()
+    return max(0, updated)

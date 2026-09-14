@@ -114,6 +114,7 @@ def _scheduling(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
 
 
 def _row_to_context_out(row: sqlite3.Row) -> VocabContextOut:
+    keys = row.keys()
     return VocabContextOut(
         id=row["id"],
         kind=row["kind"],
@@ -122,6 +123,11 @@ def _row_to_context_out(row: sqlite3.Row) -> VocabContextOut:
         book_id=row["book_id"],
         block_index=row["block_index"],
         created_at=row["created_at"],
+        media_item_id=row["media_item_id"] if "media_item_id" in keys else None,
+        start_ms=row["start_ms"] if "start_ms" in keys else None,
+        end_ms=row["end_ms"] if "end_ms" in keys else None,
+        clip_id=row["clip_id"] if "clip_id" in keys else None,
+        clip_status=row["clip_status"] if "clip_status" in keys else None,
     )
 
 

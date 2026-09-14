@@ -35,6 +35,13 @@ class VocabContextOut(BaseModel):
     book_id: str | None
     block_index: int | None
     created_at: str
+    # Where in which video this was captured (kind == 'clip'), so the entry
+    # page can replay the moment rather than only quoting the line.
+    media_item_id: str | None = None
+    start_ms: int | None = None
+    end_ms: int | None = None
+    clip_id: str | None = None
+    clip_status: str | None = None
 
 
 class VocabWordOut(BaseModel):

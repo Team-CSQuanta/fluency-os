@@ -64,23 +64,16 @@ export const SETTINGS_GROUPS: Record<SettingsGroupName, SettingGroup> = {
       { n: 'Speaking rate', sub: '', v: '1.0×' },
     ],
   },
+  // Rendered by MediaSettingsPanel against the real clip engine, so the
+  // fields here are unused — only `sub` is still read, for the group heading.
   Media: {
-    sub: 'Library paths, clip extraction and storage',
-    fields: [
-      { n: 'Library paths', sub: '2 folders watched', v: '~/Movies, ~/Books' },
-      { n: 'Clip resolution', sub: 'lower keeps the library small', v: '480p' },
-      { n: 'Clip padding before', sub: 'clamped to neighbouring cues', v: '1000 ms' },
-      { n: 'Clip padding after', sub: '', v: '500 ms' },
-      { n: 'Storage mode', sub: 'or reconstruct on demand', v: 'store clip' },
-      { n: 'Storage cap', sub: 'warns at 90%', v: '20 GB · 8.4 used' },
-    ],
+    sub: 'Clip extraction and storage',
+    fields: [],
   },
   Appearance: {
     sub: 'Theme, subtitle and reader defaults',
     fields: [
       { n: 'Theme', sub: '', v: 'dark' },
-      { n: 'Subtitle font size', sub: 'player default', v: '25 px' },
-      { n: 'Subtitle background', sub: '', v: '45% black' },
       { n: 'Reader theme', sub: '', v: 'sepia' },
       { n: 'Text scale', sub: 'accessibility', v: '100%' },
     ],

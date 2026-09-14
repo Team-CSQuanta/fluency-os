@@ -38,6 +38,31 @@ export function registerIpcHandlers(
     return result.canceled ? [] : result.filePaths;
   });
 
+  ipcMain.handle('dialog:pick-media-files', async () => {
+    const win = getWindow();
+    const opts: Electron.OpenDialogOptions = {
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        {
+          name: 'Video',
+          extensions: ['mp4', 'mkv', 'avi', 'webm', 'mov', 'm4v', 'mpg', 'mpeg', 'wmv', 'flv', 'ts'],
+        },
+      ],
+    };
+    const result = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    return result.canceled ? [] : result.filePaths;
+  });
+
+  ipcMain.handle('dialog:pick-subtitle-file', async () => {
+    const win = getWindow();
+    const opts: Electron.OpenDialogOptions = {
+      properties: ['openFile'],
+      filters: [{ name: 'Subtitles', extensions: ['srt', 'vtt', 'ass', 'ssa'] }],
+    };
+    const result = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
+  });
+
   ipcMain.on('window:minimize', () => getWindow()?.minimize());
   ipcMain.on('window:maximize', () => {
     const win = getWindow();

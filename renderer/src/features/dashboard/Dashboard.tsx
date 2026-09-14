@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import {
   DAILY_GOAL_DEG,
   FORECAST,
@@ -9,7 +9,19 @@ import {
   RESUME,
   SPARK,
 } from '@/features/dashboard/dashboardMockData';
+import { posterUrl, useMediaStore } from '@/store/mediaStore';
 import { useShellStore } from '@/store/shellStore';
+
+/** h:mm:ss, or m:ss below an hour. */
+function timecode(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+    : `${m}:${String(sec).padStart(2, '0')}`;
+}
 
 const HEAT_LEVEL_BG = [
   'var(--line2)',
@@ -37,6 +49,15 @@ export function Dashboard() {
   const goWord = useShellStore((s) => s.goWord);
   const heatTip = useShellStore((s) => s.heatTip);
   const setHeatTip = useShellStore((s) => s.setHeatTip);
+  // The watching half of "Continue" is real; the reading row below it is
+  // still dashboardMockData, and is left pointing at the bookshelf rather
+  // than dressed up as a resume card it cannot honour.
+  const recentMedia = useMediaStore((s) => s.recent);
+  const fetchLibrary = useMediaStore((s) => s.fetchLibrary);
+
+  useEffect(() => {
+    void fetchLibrary();
+  }, [fetchLibrary]);
 
   return (
     <div className="flex w-full flex-col gap-[14px] p-[var(--pad)]">
@@ -148,15 +169,40 @@ export function Dashboard() {
             <CardLabel>Continue</CardLabel>
           </div>
           <div className="flex flex-col gap-[9px]">
-            {RESUME.map((r) => (
+            {recentMedia.slice(0, 2).map((m) => (
+              <button
+                key={m.id}
+                onClick={() => goPlayer(m.id, m.title)}
+                className="flex items-center gap-3 rounded-panel border border-line2 p-2 text-left hover:border-acc"
+              >
+                <div
+                  className="grid h-11 w-[72px] flex-none place-items-center overflow-hidden rounded-[5px] font-mono text-[7.5px] text-tx3"
+                  style={{ background: 'repeating-linear-gradient(135deg,var(--tile) 0 5px,var(--tileB) 5px 10px)' }}
+                >
+                  {m.has_thumbnail ? (
+                    <img src={posterUrl(m.id)} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    'video'
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-sans text-[12.5px] font-semibold text-tx">{m.title}</div>
+                  <div className="my-[3px] font-mono text-[10.5px] text-tx3">
+                    {timecode(m.position_ms ?? 0)} / {timecode(m.duration_ms)} · {m.saves} saves
+                  </div>
+                  <div className="h-[3px] rounded-field bg-line2">
+                    <div
+                      className="h-[3px] rounded-field bg-acc"
+                      style={{ width: `${m.percent_complete ?? 0}%` }}
+                    />
+                  </div>
+                </div>
+              </button>
+            ))}
+            {RESUME.filter((r) => r.target === 'bookshelf').map((r) => (
               <button
                 key={r.title}
-                onClick={() =>
-                  // Dashboard's resume list is still mock data with no real
-                  // book id to open — send the reader entry to the bookshelf
-                  // to pick a real book instead of opening a nonexistent one.
-                  r.target === 'player' ? goPlayer(r.title) : goScreen('bookshelf')
-                }
+                onClick={() => goScreen('bookshelf')}
                 className="flex items-center gap-3 rounded-panel border border-line2 p-2 text-left hover:border-acc"
               >
                 <div

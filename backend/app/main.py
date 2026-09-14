@@ -12,6 +12,7 @@ from app.routers import (
     engine,
     hardware,
     health,
+    media,
     placement,
     reading,
     review,
@@ -19,6 +20,8 @@ from app.routers import (
     vocabulary,
 )
 from app.services.book_search import ensure_fts_backfilled
+from app.services.media.library import backfill_index_at_end
+from app.services.vocabulary import backfill_context_hashes, backfill_missing_cefr
 
 configure_from_argv()
 
@@ -29,6 +32,9 @@ async def lifespan(_app: FastAPI):
     try:
         run_migrations(conn)
         ensure_fts_backfilled(conn)
+        backfill_missing_cefr(conn)
+        backfill_index_at_end(conn)
+        backfill_context_hashes(conn)
     finally:
         conn.close()
     yield
@@ -49,6 +55,8 @@ app.include_router(users.router)
 app.include_router(placement.router)
 app.include_router(hardware.router)
 app.include_router(books.router)
+app.include_router(media.router)
+app.include_router(media.file_router)
 app.include_router(reading.router)
 app.include_router(vocabulary.router)
 app.include_router(conversation.router)

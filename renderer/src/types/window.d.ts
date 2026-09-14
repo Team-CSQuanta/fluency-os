@@ -14,6 +14,8 @@ export interface FluencyOSBridge {
   getSystemInfo: () => Promise<SystemInfo>;
   pickDataFolder: () => Promise<string | null>;
   pickBookFiles: () => Promise<string[]>;
+  pickMediaFiles: () => Promise<string[]>;
+  pickSubtitleFile: () => Promise<string | null>;
   getPathForFile: (file: File) => string;
   minimizeWindow: () => void;
   maximizeWindow: () => void;

@@ -55,7 +55,7 @@ export const NAV_GROUPS: NavGroup[] = [
 export const SCREEN_TITLES: Record<ScreenKey, [string, string]> = {
   dashboard: ['Dashboard', 'What is due, how you are trending, what to do next'],
   library: ['Learn by watching', 'Your content library · nothing is uploaded, everything stays on this machine'],
-  player: ['Learn by watching', 'dual subtitles · clip context engine armed'],
+  player: ['Learn by watching', 'dual subtitles · click a word to look it up and keep the moment'],
   bookshelf: ['Learn by reading', 'Your bookshelf · adaptive text leveling · reading counts toward your daily goal'],
   reader: ['Learn by reading', 'adaptive text leveling · B1 target'],
   vocab: ['Vocabulary', 'Every word you have captured, with its contexts and cards'],

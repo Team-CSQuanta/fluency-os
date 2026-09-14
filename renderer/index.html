@@ -5,8 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' blob:; media-src 'self' blob:; connect-src http://127.0.0.1:*"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' blob: http://127.0.0.1:*; media-src 'self' blob: http://127.0.0.1:*; connect-src http://127.0.0.1:*"
     />
+    <!-- img-src/media-src include the loopback backend because the video
+         player cannot use blob: URLs: a <video> fed a blob has to download the
+         entire film before it will seek, and a two-hour file does not fit in
+         renderer memory. Streaming needs the real URL so Chromium can issue
+         byte-range requests. The widening is only ever 127.0.0.1, which is
+         this app's own backend. -->
     <!-- Fonts are bundled, not fetched. They used to come from Google Fonts,
          which meant an app whose own header reads "nothing leaves the machine"
          made a third-party request on every launch, and fell back to whatever

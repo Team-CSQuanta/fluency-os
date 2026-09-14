@@ -28,6 +28,10 @@ interface ShellState {
   setUiScale: (factor: number) => void;
   heatTip: string;
   nowPlaying: string;
+  /** The media item the player should open. null means nothing has been
+   * chosen yet, which the player renders as "pick something from the
+   * library" rather than as an error. */
+  nowPlayingId: string | null;
   nowReading: string;
   readerBookId: string | null;
   selectedWord: string;
@@ -42,7 +46,7 @@ interface ShellState {
   // the learner to confirm or cancel via the leave-conversation dialog.
   pendingNav: (() => void) | null;
   goScreen: (key: ScreenKey) => void;
-  goPlayer: (title: string) => void;
+  goPlayer: (mediaId: string, title: string) => void;
   goReader: (bookId: string, title?: string) => void;
   setNowReading: (title: string) => void;
   goWord: (word: string) => void;
@@ -77,7 +81,8 @@ export const useShellStore = create<ShellState>((set, get) => {
     theme: 'dark',
     uiScale: readStoredScale(),
     heatTip: 'hover a day',
-    nowPlaying: 'Arrival (2016)',
+    nowPlaying: '',
+    nowPlayingId: null,
     nowReading: 'The Overstory — Richard Powers',
     readerBookId: null,
     selectedWord: 'reticent',
@@ -91,7 +96,8 @@ export const useShellStore = create<ShellState>((set, get) => {
     goWord: (word) => attemptNav(() => set({ screen: 'word', selectedWord: word })),
     // Mirrors the mockup's immersive() behavior: entering player/reader collapses
     // the nav to icon-only so the content area gets more room.
-    goPlayer: (title) => attemptNav(() => set({ screen: 'player', collapsed: true, nowPlaying: title })),
+    goPlayer: (mediaId, title) =>
+      attemptNav(() => set({ screen: 'player', collapsed: true, nowPlayingId: mediaId, nowPlaying: title })),
     goReader: (bookId, title) =>
       attemptNav(() =>
         set((s) => ({ screen: 'reader', collapsed: true, readerBookId: bookId, nowReading: title ?? s.nowReading })),

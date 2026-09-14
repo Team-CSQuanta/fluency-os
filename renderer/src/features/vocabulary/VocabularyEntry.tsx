@@ -19,6 +19,7 @@ const RATING_COLOR: Record<string, string> = {
 import { POS_FULL } from '@/features/vocabulary/vocabMockData';
 import { useShellStore } from '@/store/shellStore';
 import { useVocabularyStore } from '@/store/vocabularyStore';
+import { ClipContext } from '@/features/vocabulary/ClipContext';
 
 export function VocabularyEntry() {
   const word = useShellStore((s) => s.selectedWord);
@@ -434,12 +435,16 @@ export function VocabularyEntry() {
                 {detail.contexts.length === 0 && (
                   <div className="font-mono text-[10.5px] text-tx3">no captured context yet</div>
                 )}
-                {detail.contexts.map((c) => (
-                  <div key={c.id} className="rounded-field border border-line2 bg-panel p-[11px]">
-                    <div className="font-sans text-[12.5px] leading-[1.7] text-tx">"{c.snippet}"</div>
-                    <div className="mt-[7px] font-mono text-[9.5px] text-tx3">{c.source_label}</div>
-                  </div>
-                ))}
+                {detail.contexts.map((c) =>
+                  c.kind === 'clip' ? (
+                    <ClipContext key={c.id} context={c} />
+                  ) : (
+                    <div key={c.id} className="rounded-field border border-line2 bg-panel p-[11px]">
+                      <div className="font-sans text-[12.5px] leading-[1.7] text-tx">"{c.snippet}"</div>
+                      <div className="mt-[7px] font-mono text-[9.5px] text-tx3">{c.source_label}</div>
+                    </div>
+                  ),
+                )}
               </div>
             </div>
           </div>

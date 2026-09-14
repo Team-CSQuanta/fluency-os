@@ -1,269 +1,955 @@
-import { useEffect, useState } from 'react';
-import { CUE_TEXT, CUE_TRANSLATION, cleanToken, lookupFor } from '@/features/player/playerMockData';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { SidePanel, type PanelTab } from '@/features/player/SidePanel';
+import { SPEEDS, timecode } from '@/features/player/playerFormat';
+import {
+  Back5Icon,
+  ExitFullscreenIcon,
+  Forward5Icon,
+  FullscreenIcon,
+  MutedIcon,
+  NextLineIcon,
+  PauseIcon,
+  PipIcon,
+  PlayIcon,
+  PrevLineIcon,
+  ReplayLineIcon,
+  SavedIcon,
+  SettingsIcon,
+  VolumeIcon,
+} from '@/features/player/PlayerIcons';
+import { PlayerSettings } from '@/features/player/PlayerSettings';
+import { SubtitleLayer } from '@/features/player/SubtitleLayer';
+import { activeOrPreviousIndex, cueIndexAt, posterUrl, streamUrl, useMediaStore } from '@/store/mediaStore';
 import { useShellStore } from '@/store/shellStore';
+import type { CueOut } from '@/types/api';
+
+/** How often playback position is written back. Every 5 s of real playback
+ * rather than every timeupdate: resuming within five seconds of where you
+ * stopped is indistinguishable from exact, and the alternative is ~240
+ * database writes a minute per open file. */
+const PROGRESS_INTERVAL_MS = 5000;
+/** Volume lives in localStorage rather than the database for the same reason
+ * the interface scale does: it describes this machine's speakers, not this
+ * learner. Mute deliberately does NOT persist — opening the app to silence
+ * with no memory of having muted it reads as broken audio. */
+const VOLUME_KEY = 'fluencyos.playerVolume';
+
+function storedVolume(): number {
+  try {
+    const raw = window.localStorage.getItem(VOLUME_KEY);
+    const value = raw === null ? 1 : Number(raw);
+    return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 1;
+  } catch {
+    // Private windows and blocked site data throw on access.
+    return 1;
+  }
+}
+const SEEK_STEP_S = 5;
+const FRAME_S = 1 / 24;
 
 export function Player() {
-  const nowPlaying = useShellStore((s) => s.nowPlaying);
+  const mediaId = useShellStore((s) => s.nowPlayingId);
   const goScreen = useShellStore((s) => s.goScreen);
+  const {
+    detail,
+    detailStatus,
+    detailError,
+    targetCues,
+    nativeCues,
+    playerPrefs,
+    clips,
+    openMedia,
+    closeMedia,
+    setPlayerPrefs,
+    saveProgress,
+    relinkMedia,
+    optimizeForSeeking,
+  } = useMediaStore();
 
-  const [playing, setPlaying] = useState(true);
-  const [word, setWord] = useState('reticent');
-  const [panelOpen, setPanelOpen] = useState(true);
-  const [blur, setBlur] = useState(false);
-  const [autoPause, setAutoPause] = useState(true);
-  const [loop, setLoop] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  // Fullscreen is requested on the whole player, not on the video box, so the
+  // lookup panel is inside the fullscreen element and can be shown over the
+  // film. Requesting it on the video's parent — which is what this did — puts
+  // the panel outside the fullscreen subtree, where the browser will not
+  // render it at all.
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const idleTimer = useRef<number | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [positionMs, setPositionMs] = useState(0);
+  const [durationMs, setDurationMs] = useState(0);
+  const [volume, setVolume] = useState(storedVolume);
+  const [muted, setMuted] = useState(false);
+  const [rate, setRate] = useState(1);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [lookup, setLookup] = useState<{ term: string; cue: CueOut | null } | null>(null);
+  // null closes the panel. The lookup itself is kept either way, so reopening
+  // the tab shows the last word rather than an empty panel.
+  const [panelTab, setPanelTab] = useState<PanelTab | null>(null);
   const [toast, setToast] = useState('');
+  const [scrubHover, setScrubHover] = useState<number | null>(null);
+  const [videoError, setVideoError] = useState<string | null>(null);
+  const [resumed, setResumed] = useState(false);
+  const [autoPaused, setAutoPaused] = useState(false);
+  const [optimizing, setOptimizing] = useState(false);
+  const [optimizeDismissed, setOptimizeDismissed] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [chromeVisible, setChromeVisible] = useState(true);
+
+  // Watch time that is genuinely playback, not seeking. Accumulated from the
+  // delta between consecutive timeupdates and discarded when that delta is
+  // implausible, which is exactly what a seek produces.
+  const watchedMs = useRef(0);
+  const lastTick = useRef<number | null>(null);
+  const lastFlush = useRef(0);
+  // Playback position, mirrored out of the media element. Progress is flushed
+  // on the way out of the screen, and by then React may already have detached
+  // the ref — reading video.currentTime there loses the position entirely.
+  const positionRef = useRef(0);
+  // Whether positionRef holds a real position yet. Opening a file and leaving
+  // before its metadata loads must not write 0 over where the learner actually
+  // got to — losing a resume point is worse than not updating one.
+  const positionKnown = useRef(false);
+  const loopingCue = useRef<number | null>(null);
+  // The cue auto-pause last stopped on. Without this, pressing play inside the
+  // gap it paused in re-triggers the same pause on the very next tick and the
+  // learner cannot get out of it.
+  const autoPausedAfter = useRef<number | null>(null);
+  // Read by seekTo, which is created once and must still see today's cues.
+  const targetCuesRef = useRef<CueOut[]>([]);
+  const delayRef = useRef(0);
+
+  useEffect(() => {
+    positionKnown.current = false;
+    positionRef.current = 0;
+    if (mediaId) void openMedia(mediaId);
+    return () => closeMedia();
+  }, [mediaId, openMedia, closeMedia]);
 
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(''), 2800);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setToast(''), 2800);
+    return () => clearTimeout(timer);
   }, [toast]);
 
-  const lk = lookupFor(word);
+  // The browser can leave fullscreen without us (Esc, or the window losing it),
+  // so the flag follows the document rather than our own button.
+  useEffect(() => {
+    const sync = () => setIsFullscreen(document.fullscreenElement === rootRef.current);
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
 
-  const handleSave = () => {
-    setSaved(true);
-    setToast(`clip extraction queued · ${word} · 6.4 s`);
+  // Controls stay put in the window and fade out in fullscreen, which is where
+  // they cover the picture. Any mouse movement brings them back.
+  useEffect(() => {
+    if (!isFullscreen) {
+      setChromeVisible(true);
+      return;
+    }
+    const wake = () => {
+      setChromeVisible(true);
+      if (idleTimer.current) window.clearTimeout(idleTimer.current);
+      idleTimer.current = window.setTimeout(() => setChromeVisible(false), 2600);
+    };
+    wake();
+    window.addEventListener('mousemove', wake);
+    window.addEventListener('keydown', wake);
+    return () => {
+      window.removeEventListener('mousemove', wake);
+      window.removeEventListener('keydown', wake);
+      if (idleTimer.current) window.clearTimeout(idleTimer.current);
+    };
+  }, [isFullscreen]);
+
+  const delayMs = detail?.prefs.subtitle_delay_ms ?? 0;
+  targetCuesRef.current = targetCues;
+  delayRef.current = delayMs;
+  const cueTimeMs = positionMs - delayMs;
+
+  const tickDuration = durationMs || detail?.item.duration_ms || 0;
+  const cueTicks = useMemo(() => {
+    if (targetCues.length === 0 || targetCues.length >= 4000 || tickDuration <= 0) return null;
+    return (
+      <div className="pointer-events-none absolute inset-x-0 top-[7px] h-[4px] opacity-35 transition-opacity group-hover:opacity-100">
+        {targetCues.map((cue) => (
+          <span
+            key={cue.id}
+            className="absolute top-0 h-[4px] w-[1px] bg-white/55"
+            style={{ left: `${(cue.start_ms / tickDuration) * 100}%` }}
+          />
+        ))}
+      </div>
+    );
+  }, [targetCues, tickDuration]);
+
+  const targetIndex = useMemo(() => cueIndexAt(targetCues, cueTimeMs), [targetCues, cueTimeMs]);
+  const nativeIndex = useMemo(() => cueIndexAt(nativeCues, cueTimeMs), [nativeCues, cueTimeMs]);
+  const targetCue = targetIndex >= 0 ? targetCues[targetIndex] : null;
+  const nativeCue = nativeIndex >= 0 ? nativeCues[nativeIndex] : null;
+
+  const flushProgress = useCallback(
+    (force = false) => {
+      if (!mediaId || !detail || !positionKnown.current) return;
+      const now = positionRef.current;
+      if (!force && now - lastFlush.current < PROGRESS_INTERVAL_MS && watchedMs.current < PROGRESS_INTERVAL_MS) {
+        return;
+      }
+      lastFlush.current = now;
+      const delta = watchedMs.current;
+      watchedMs.current = 0;
+      void saveProgress(mediaId, now, delta).catch(() => {
+        // Progress is a convenience; failing to record it must not interrupt
+        // playback or throw inside a media event handler.
+      });
+    },
+    [mediaId, detail, saveProgress],
+  );
+
+  // The last thing a session should do is remember where it stopped, so this
+  // fires on unmount and on window close as well as on the interval.
+  useEffect(() => {
+    const onUnload = () => flushProgress(true);
+    window.addEventListener('beforeunload', onUnload);
+    return () => {
+      window.removeEventListener('beforeunload', onUnload);
+      flushProgress(true);
+    };
+  }, [flushProgress]);
+
+  /** Ref callback rather than a plain ref, because detaching is the event we
+   * need and a plain ref gives no notice of it.
+   *
+   * Taking a <video> out of the document does NOT cancel its fetch. Chromium
+   * keeps the resource loader alive and carries on pulling byte ranges for a
+   * file nobody is watching — which is what filled the backend log with
+   * /stream requests long after leaving the player, and left the audio
+   * running. Clearing src and re-running load() is the documented way to make
+   * a media element let go of its resource.
+   *
+   * useCallback with no deps is load-bearing: an inline ref callback is a new
+   * function every render, so React would detach and re-attach — tearing the
+   * video down — on each one. */
+  const attachVideo = useCallback((element: HTMLVideoElement | null) => {
+    if (element) {
+      videoRef.current = element;
+      return;
+    }
+    const previous = videoRef.current;
+    videoRef.current = null;
+    if (!previous) return;
+    previous.pause();
+    previous.removeAttribute('src');
+    previous.load();
+  }, []);
+
+  /** `armAutoPause` is false for a scrub or a ±5s jump: the learner moved
+   * there to watch, and stopping them two seconds later — with no visible
+   * reason — reads as the video refusing to play rather than as a feature.
+   * Line navigation and replay-line keep it armed, because pausing at the end
+   * of the line you asked for is the point of those. */
+  // Apply volume and mute to the media element.
+  //
+  // This is what was missing: `volume` and `muted` were React state that
+  // moved the slider and swapped the icon but never touched the <video>, so
+  // the sound controls did nothing at all. Everything else the player sets on
+  // the element — playbackRate, preservesPitch — is applied in
+  // onLoadedMetadata; these two also have to follow later changes, hence an
+  // effect rather than a one-off.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.volume = volume;
+    video.muted = muted;
+    try {
+      window.localStorage.setItem(VOLUME_KEY, String(volume));
+    } catch {
+      // Not being able to remember the level is not worth failing over.
+    }
+  }, [volume, muted, detail]);
+
+  const seekTo = useCallback(
+    (ms: number, { armAutoPause = true }: { armAutoPause?: boolean } = {}) => {
+      const video = videoRef.current;
+      if (!video) return;
+      const target = Math.max(0, ms / 1000);
+      video.currentTime = target;
+      positionRef.current = target * 1000;
+      lastTick.current = null;
+      if (!armAutoPause) {
+        // Mark the cue we landed in as already handled, so its end passes
+        // without a pause. The next line pauses normally.
+        autoPausedAfter.current = activeOrPreviousIndex(targetCuesRef.current, target * 1000 - delayRef.current);
+      }
+    },
+    [],
+  );
+
+  const togglePlay = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.paused) void video.play();
+    else video.pause();
+  }, []);
+
+  /** Spec §4.1.1: replay the current line. The "or previous" lookup is what
+   * makes it work in the gap between cues, which is where it is pressed. */
+  const replayLine = useCallback(() => {
+    const index = activeOrPreviousIndex(targetCues, cueTimeMs);
+    if (index < 0) return;
+    seekTo(targetCues[index].start_ms + delayMs);
+    void videoRef.current?.play();
+  }, [targetCues, cueTimeMs, delayMs, seekTo]);
+
+  const jumpCue = useCallback(
+    (direction: 1 | -1) => {
+      const index = activeOrPreviousIndex(targetCues, cueTimeMs);
+      const next = index + direction;
+      if (next < 0 || next >= targetCues.length) return;
+      seekTo(targetCues[next].start_ms + delayMs);
+    },
+    [targetCues, cueTimeMs, delayMs, seekTo],
+  );
+
+  const togglePref = useCallback(
+    (key: 'dual_subs' | 'blur_subs' | 'auto_pause' | 'loop_cue') => {
+      if (!playerPrefs) return;
+      void setPlayerPrefs({ [key]: !playerPrefs[key] });
+    },
+    [playerPrefs, setPlayerPrefs],
+  );
+
+  // Keyboard shortcuts (spec §4.1.1). Bound to the window rather than the
+  // video element: the video only has focus until the learner clicks a
+  // subtitle word, and space must keep working after that.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+      const video = videoRef.current;
+      if (!video) return;
+      const handlers: Record<string, () => void> = {
+        ' ': togglePlay,
+        k: togglePlay,
+        ArrowRight: () => seekTo((video.currentTime + SEEK_STEP_S) * 1000, { armAutoPause: false }),
+        ArrowLeft: () => seekTo((video.currentTime - SEEK_STEP_S) * 1000, { armAutoPause: false }),
+        ArrowUp: () => setVolume((v) => Math.min(1, v + 0.05)),
+        ArrowDown: () => setVolume((v) => Math.max(0, v - 0.05)),
+        a: replayLine,
+        n: () => jumpCue(1),
+        p: () => jumpCue(-1),
+        b: () => togglePref('blur_subs'),
+        l: () => togglePref('loop_cue'),
+        o: () => togglePref('auto_pause'),
+        d: () => togglePref('dual_subs'),
+        m: () => setMuted((v) => !v),
+        f: () => void toggleFullscreen(),
+        ',': () => seekTo((video.currentTime - FRAME_S) * 1000),
+        '.': () => seekTo((video.currentTime + FRAME_S) * 1000),
+        Escape: () => setPanelTab(null),
+      };
+      const handler = handlers[event.key];
+      if (!handler) return;
+      event.preventDefault();
+      handler();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [togglePlay, seekTo, replayLine, jumpCue, togglePref]);
+
+  const toggleFullscreen = async () => {
+    const root = rootRef.current;
+    if (!root) return;
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await root.requestFullscreen().catch(() => undefined);
   };
 
-  const toggles = [
-    { n: 'blur subs', on: blur, go: () => setBlur((v) => !v) },
-    { n: 'auto-pause', on: autoPause, go: () => setAutoPause((v) => !v) },
-    { n: 'loop cue', on: loop, go: () => setLoop((v) => !v) },
-    { n: 'dual subs', on: true, go: () => {} },
-    { n: 'generated track', on: false, go: () => {} },
-  ];
+  const togglePip = async () => {
+    const video = videoRef.current;
+    if (!video) return;
+    try {
+      if (document.pictureInPictureElement) await document.exitPictureInPicture();
+      else await video.requestPictureInPicture();
+    } catch {
+      setToast('picture-in-picture is unavailable for this file');
+    }
+  };
+
+  const onTimeUpdate = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    const nowMs = video.currentTime * 1000;
+    positionRef.current = nowMs;
+    positionKnown.current = true;
+    setPositionMs(nowMs);
+
+    if (lastTick.current !== null) {
+      const delta = nowMs - lastTick.current;
+      // A plausible tick is forward and no larger than a couple of frames at
+      // 2x. Anything else is a seek, and counting it would make "time watched"
+      // a measure of scrubbing.
+      if (delta > 0 && delta < 1000) watchedMs.current += delta;
+    }
+    lastTick.current = nowMs;
+
+    const cueMs = nowMs - delayMs;
+    const index = cueIndexAt(targetCues, cueMs);
+
+    if (playerPrefs?.loop_cue) {
+      if (index >= 0) loopingCue.current = index;
+      const looping = loopingCue.current;
+      if (looping !== null && looping < targetCues.length && cueMs > targetCues[looping].end_ms) {
+        seekTo(targetCues[looping].start_ms + delayMs);
+        return;
+      }
+    } else {
+      loopingCue.current = null;
+    }
+
+    if (index >= 0) autoPausedAfter.current = null;
+    if (playerPrefs?.auto_pause && index === -1 && !video.paused) {
+      // Pause once, as the line leaves the screen — not on every tick while
+      // there is no cue, and never twice for the same line.
+      const previous = activeOrPreviousIndex(targetCues, cueMs);
+      if (previous >= 0 && cueMs - targetCues[previous].end_ms < 400 && autoPausedAfter.current !== previous) {
+        autoPausedAfter.current = previous;
+        setAutoPaused(true);
+        video.pause();
+      }
+    }
+
+    flushProgress();
+  };
+
+  const onSelectText = (text: string, cue: CueOut) => {
+    videoRef.current?.pause();
+    setLookup({ term: text, cue });
+    setPanelTab('lookup');
+    // Clicking a word is the one moment the panel must be on screen, whether
+    // or not we are fullscreen — that is the whole point of the gesture.
+    setChromeVisible(true);
+  };
+
+  const relink = async () => {
+    if (!mediaId) return;
+    const paths = await window.fluencyos.pickMediaFiles();
+    if (paths.length === 0) return;
+    await relinkMedia(mediaId, paths[0]);
+    setVideoError(null);
+  };
+
+  if (!mediaId) {
+    return (
+      <Centered>
+        <p className="font-sans text-[13px] text-tx2">Nothing is open yet.</p>
+        <button
+          onClick={() => goScreen('library')}
+          className="mt-3 rounded-field bg-accSolid px-[14px] py-2 font-sans text-[11.5px] font-semibold text-white"
+        >
+          Open the library
+        </button>
+      </Centered>
+    );
+  }
+
+  if (detailStatus === 'loading' && !detail) return <Centered>loading…</Centered>;
+  if (detailStatus === 'error') return <Centered>{detailError}</Centered>;
+  if (!detail) return <Centered>loading…</Centered>;
+
+  const item = detail.item;
+  const missing = item.source_missing;
+  const subtitleTracks = detail.tracks.filter((t) => t.kind === 'subtitle');
+  const generating = subtitleTracks.find((t) => t.status === 'transcribing' || t.status === 'queued');
 
   return (
-    <div className="relative flex h-full w-full min-h-0">
+    <div ref={rootRef} className="relative flex h-full w-full min-h-0 bg-[#08090a]">
       <div className="flex min-w-0 flex-1 flex-col bg-[#08090a]">
-        <div
-          className="relative grid min-h-0 flex-1 place-items-center"
-          style={{ background: 'repeating-linear-gradient(135deg,rgba(255,255,255,.035) 0 8px,rgba(255,255,255,.015) 8px 16px)' }}
-        >
-          <div className="font-mono text-[10px] tracking-[0.06em] text-white/30">video frame · 1920×1080 · h264</div>
+        <div className="relative grid min-h-0 flex-1 place-items-center bg-black">
+          {missing ? (
+            <div className="max-w-[420px] px-6 text-center">
+              <div className="font-sans text-[13px] font-semibold text-white">This file has moved.</div>
+              <div className="mt-2 font-mono text-[11px] leading-[1.7] text-white/50">{item.source_path}</div>
+              <div className="mt-3 font-sans text-[11.5px] leading-[1.6] text-white/60">
+                Your saved words and clips from it are safe — point FluencyOS at the file’s new location to keep
+                watching.
+              </div>
+              <button
+                onClick={() => void relink()}
+                className="mt-[14px] rounded-field bg-accSolid px-[14px] py-2 font-sans text-[11.5px] font-semibold text-white"
+              >
+                Locate the file…
+              </button>
+            </div>
+          ) : (
+            <video
+              ref={attachVideo}
+              src={streamUrl(item.id)}
+              poster={item.has_thumbnail ? posterUrl(item.id) : undefined}
+              // Without this Chromium downloads the entire file the moment the
+              // screen opens, whether or not anyone presses play — a 2 GB read
+              // for a glance at the library. Buffering ahead during playback is
+              // unaffected; preload only governs what happens before it.
+              preload="metadata"
+              className="h-full w-full bg-black"
+              onClick={togglePlay}
+              onDoubleClick={() => void toggleFullscreen()}
+              onLoadedMetadata={(e) => {
+                const video = e.currentTarget;
+                setDurationMs(video.duration * 1000);
+                video.playbackRate = rate;
+                // Chromium keeps pitch correction on by default, but it is the
+                // whole point of slowing a film down to listen, so it is set
+                // explicitly rather than inherited.
+                video.preservesPitch = true;
+                video.volume = volume;
+                video.muted = muted;
+                positionRef.current = video.currentTime * 1000;
+                positionKnown.current = true;
+                if (!resumed && (item.position_ms ?? 0) > 0) {
+                  // Half a second back, so resuming lands just before the word
+                  // that was on screen rather than just after it.
+                  const resumeAt = Math.max(0, (item.position_ms! - 500) / 1000);
+                  video.currentTime = resumeAt;
+                  positionRef.current = resumeAt * 1000;
+                  setResumed(true);
+                }
+              }}
+              onTimeUpdate={onTimeUpdate}
+              onPlay={() => {
+                setPlaying(true);
+                setAutoPaused(false);
+              }}
+              onPause={() => {
+                setPlaying(false);
+                lastTick.current = null;
+                flushProgress(true);
+              }}
+              onEnded={() => flushProgress(true)}
+              onError={() =>
+                setVideoError(
+                  'This file’s video or audio codec isn’t one Chromium can decode. It plays in VLC but not here.',
+                )
+              }
+            />
+          )}
+
+          {videoError && (
+            <div className="absolute inset-x-0 top-1/2 mx-auto max-w-[430px] -translate-y-1/2 rounded-panel bg-black/85 px-5 py-4 text-center">
+              <div className="font-sans text-[12.5px] leading-[1.6] text-white/85">{videoError}</div>
+              <div className="mt-2 font-mono text-[10px] text-white/45">
+                {item.video_codec ?? '?'} · {item.audio_codec ?? '?'} · {item.container ?? '?'}
+              </div>
+            </div>
+          )}
 
           <div className="absolute left-4 top-[14px] flex items-center gap-[6px]">
             <button
-              onClick={() => goScreen('library')}
+              onClick={() => {
+                flushProgress(true);
+                goScreen('library');
+              }}
               className="rounded-[4px] bg-black/45 px-[9px] py-1 font-mono text-[9.5px] font-medium text-white/70 hover:bg-black/70 hover:text-white"
             >
               ‹ library
             </button>
-            <span className="rounded-[4px] bg-black/45 px-2 py-1 font-mono text-[9.5px] font-medium text-white/50">
-              {nowPlaying}
+            <span className="max-w-[320px] truncate rounded-[4px] bg-black/45 px-2 py-1 font-mono text-[9.5px] font-medium text-white/50">
+              {item.title}
             </span>
-            <span className="rounded-[4px] bg-black/45 px-2 py-1 font-mono text-[9.5px] font-medium text-acc">
-              EN + BN dual
-            </span>
+            {targetCues.length > 0 && (
+              <span className="rounded-[4px] bg-black/45 px-2 py-1 font-mono text-[9.5px] font-medium text-acc">
+                {playerPrefs?.dual_subs && nativeCues.length > 0 ? 'dual subs' : 'subs on'}
+              </span>
+            )}
+            {generating && (
+              <span className="rounded-[4px] bg-black/45 px-2 py-1 font-mono text-[9.5px] font-medium text-white/70">
+                transcribing {Math.round((generating.progress ?? 0) * 100)}%
+              </span>
+            )}
           </div>
 
-          <div className="absolute inset-x-0 bottom-[26px] flex flex-col items-center gap-[7px] px-[60px]">
-            <div
-              className="flex flex-wrap justify-center gap-x-[9px] gap-y-0 text-center font-sans text-[25px] leading-[1.4] text-white transition-[filter]"
-              style={{ filter: blur ? 'blur(7px)' : 'none', textShadow: '0 2px 10px rgba(0,0,0,.85)' }}
-            >
-              {CUE_TEXT.split(' ').map((raw, i) => {
-                const clean = cleanToken(raw);
-                const on = clean === word || (word === 'even' && clean === 'even');
-                return (
-                  <span
-                    key={i}
-                    onClick={() => {
-                      setWord(clean);
-                      setPanelOpen(true);
-                      setSaved(false);
-                    }}
-                    className="cursor-pointer rounded-[3px] px-[2px] hover:bg-white/20"
-                    style={{
-                      background: on ? 'rgba(var(--accRGB),.85)' : 'transparent',
-                      borderBottom: on ? 'none' : '1px dotted rgba(255,255,255,.28)',
-                    }}
-                  >
-                    {raw}
-                  </span>
-                );
-              })}
-            </div>
-            <div className="text-center font-sans text-[17px] text-white/60" style={{ textShadow: '0 2px 10px rgba(0,0,0,.85)' }}>
-              {CUE_TRANSLATION}
-            </div>
-          </div>
-        </div>
-
-        <div className="flex-none border-t border-white/[0.07] bg-[#0d0f0e] px-4 pb-[14px] pt-3">
-          <div className="relative mb-3 h-1 cursor-pointer rounded-field bg-white/[0.12]">
-            <div className="absolute inset-y-0 left-0 w-[61%] rounded-field bg-acc" />
-            <div className="absolute -top-[4px] left-[61%] h-3 w-3 -translate-x-1/2 rounded-full bg-white" />
-            <div className="absolute -top-[3px] left-[64.5%] h-[10px] w-[3px] bg-white/50" title="chapter marker" />
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => setPlaying((v) => !v)}
-              className="grid h-[34px] w-[34px] place-items-center rounded-full bg-white font-mono text-[12px] text-black"
-            >
-              {playing ? '❚❚' : '▶'}
-            </button>
-            <span className="min-w-[104px] font-mono text-[11px] text-white/55">01:14:22 / 02:01:38</span>
-            <div className="h-[18px] w-px bg-white/[0.12]" />
-            {toggles.map((t) => (
+          {!missing && targetCues.length === 0 && (
+            <div className="absolute inset-x-0 bottom-[90px] mx-auto w-fit rounded-panel bg-black/70 px-4 py-[10px] text-center">
+              <div className="font-sans text-[12px] text-white/80">No subtitles for this file yet.</div>
               <button
-                key={t.n}
-                onClick={t.go}
-                className="rounded-[5px] border px-[10px] py-[5px] font-mono text-[10.5px] font-medium"
-                style={{
-                  borderColor: t.on ? 'var(--accLine)' : 'rgba(255,255,255,.14)',
-                  background: t.on ? 'var(--accSoft)' : 'transparent',
-                  color: t.on ? 'var(--acc)' : 'rgba(255,255,255,.6)',
-                }}
+                onClick={() => setSettingsOpen(true)}
+                className="mt-[7px] rounded-field border border-white/25 px-[11px] py-[5px] font-mono text-[10.5px] text-white/80 hover:border-acc hover:text-acc"
               >
-                {t.n}
+                load or generate a track
               </button>
-            ))}
-            <div className="flex-1" />
-            <span className="font-mono text-[10.5px] font-medium text-white/40">A = replay line · 1.0× · sub +0ms</span>
+            </div>
+          )}
+
+          {item.index_at_end && !optimizeDismissed && !missing && (
+            <div className="absolute inset-x-0 bottom-0 z-20 flex flex-wrap items-center gap-3 bg-black/80 px-4 py-[10px]">
+              <span className="min-w-0 flex-1 font-sans text-[11.5px] leading-[1.55] text-white/80">
+                <strong className="font-semibold text-white">Seeking in this file is slow.</strong> Its index sits
+                at the end, so jumping to a timestamp means reading the end of the file first — in any player.
+                FluencyOS can move the index to the front without re-encoding: same picture, same audio, same size.
+              </span>
+              <button
+                onClick={async () => {
+                  setOptimizing(true);
+                  const problem = await optimizeForSeeking(item.id);
+                  setOptimizing(false);
+                  setToast(problem ?? 'index moved to the front — seeking should be quick now');
+                  if (!problem) setOptimizeDismissed(true);
+                }}
+                disabled={optimizing}
+                className="flex-none rounded-field bg-accSolid px-[13px] py-[6px] font-sans text-[11.5px] font-semibold text-white hover:brightness-110 disabled:opacity-60"
+              >
+                {optimizing ? 'rewriting…' : 'Fix seeking'}
+              </button>
+              <button
+                onClick={() => setOptimizeDismissed(true)}
+                className="flex-none font-mono text-[10.5px] text-white/45 hover:text-white/80"
+              >
+                not now
+              </button>
+            </div>
+          )}
+
+          {autoPaused && (
+            <button
+              onClick={togglePlay}
+              className="absolute left-1/2 top-[18px] flex -translate-x-1/2 items-center gap-[7px] rounded-full bg-black/75 px-[13px] py-[6px] font-sans text-[11.5px] font-medium text-white/90 hover:bg-black/90"
+            >
+              <PauseIcon size={12} />
+              paused at the end of the line — press space to carry on
+            </button>
+          )}
+
+          {!missing && playerPrefs && (
+            <SubtitleLayer
+              cue={targetCue}
+              nativeCue={nativeCue}
+              dualSubs={playerPrefs.dual_subs}
+              blur={playerPrefs.blur_subs}
+              // A fullscreen picture is several times the windowed one, so the
+              // learner's chosen size is a size for the window and has to grow
+              // with it — otherwise the setting means "unreadable" fullscreen.
+              size={isFullscreen ? Math.round(playerPrefs.sub_size * 1.5) : playerPrefs.sub_size}
+              opacity={playerPrefs.sub_opacity}
+              // In fullscreen the transport bar floats over the bottom of the
+              // picture rather than sitting below it, so the subtitle has to
+              // step out of its way while it is on screen.
+              offset={playerPrefs.sub_offset + (isFullscreen && chromeVisible ? 72 : 0)}
+              insetRight={isFullscreen && panelTab ? 360 : 0}
+              selectedWord={lookup?.term ?? null}
+              onSelect={onSelectText}
+            />
+          )}
+        </div>
+
+        {/* Transport. Three groups, left to right: moving through the film,
+            what is happening to the subtitles, and how it is being played.
+            Previously one undifferentiated row of fifteen controls. */}
+        <div
+          className="flex-none border-t border-white/10 bg-[#0c0d0f] px-4 pb-[10px] pt-[6px] transition-opacity duration-200"
+          style={{
+            opacity: chromeVisible ? 1 : 0,
+            pointerEvents: chromeVisible ? 'auto' : 'none',
+            position: isFullscreen ? 'absolute' : undefined,
+            insetInline: isFullscreen ? 0 : undefined,
+            bottom: isFullscreen ? 0 : undefined,
+            zIndex: isFullscreen ? 30 : undefined,
+            background: isFullscreen
+              ? 'linear-gradient(to top, rgba(8,9,10,.96), rgba(8,9,10,.72) 60%, transparent)'
+              : undefined,
+            borderTop: isFullscreen ? 'none' : undefined,
+          }}
+        >
+          {/* Seek bar. Tall enough to hit: the hit area is 18px while the
+              track stays 4px, so the bar looks thin and behaves thick. */}
+          <div
+            className="group relative h-[18px] cursor-pointer"
+            onMouseMove={(e) => {
+              const box = e.currentTarget.getBoundingClientRect();
+              setScrubHover(((e.clientX - box.left) / box.width) * (durationMs || item.duration_ms));
+            }}
+            onMouseLeave={() => setScrubHover(null)}
+            onClick={(e) => {
+              const box = e.currentTarget.getBoundingClientRect();
+              seekTo(((e.clientX - box.left) / box.width) * (durationMs || item.duration_ms), {
+                armAutoPause: false,
+              });
+            }}
+          >
+            <div className="absolute inset-x-0 top-[7px] h-[4px] rounded-full bg-white/18">
+              <div
+                className="h-[4px] rounded-full bg-acc"
+                style={{ width: `${((positionMs / (durationMs || item.duration_ms || 1)) * 100).toFixed(2)}%` }}
+              />
+            </div>
+            {/* Every cue as a tick: the bar becomes a map of where the dialogue
+                is, which is what a learner is actually navigating.
+
+                Memoised because the position updates four times a second and
+                these do not move. Rebuilt inline, a generated track's ~300
+                ticks were ~1,200 DOM reconciliations a second for a picture
+                that never changed — and the count scales with film length. */}
+            {cueTicks}
+            <span
+              className="pointer-events-none absolute top-[4px] h-[10px] w-[10px] -translate-x-1/2 rounded-full bg-acc opacity-0 shadow-[0_0_0_3px_rgba(0,0,0,.35)] transition-opacity group-hover:opacity-100"
+              style={{ left: `${((positionMs / (durationMs || item.duration_ms || 1)) * 100).toFixed(2)}%` }}
+            />
+            {scrubHover !== null && (
+              <span
+                className="pointer-events-none absolute -top-[21px] -translate-x-1/2 rounded-[4px] bg-black/90 px-[7px] py-[3px] font-mono text-[10.5px] tabular-nums text-white"
+                style={{ left: `${(scrubHover / (durationMs || item.duration_ms || 1)) * 100}%` }}
+              >
+                {timecode(scrubHover)}
+              </span>
+            )}
+          </div>
+
+          <div className="mt-[4px] flex flex-nowrap items-center gap-[14px] overflow-x-auto">
+            {/* moving through the film */}
+            <div className="flex flex-none items-center gap-[3px]">
+              <IconButton onClick={togglePlay} title={playing ? 'Pause  (space)' : 'Play  (space)'} primary>
+                {playing ? <PauseIcon size={16} /> : <PlayIcon size={16} />}
+              </IconButton>
+              <IconButton
+                onClick={() => seekTo(positionMs - SEEK_STEP_S * 1000, { armAutoPause: false })}
+                title="Back 5 seconds  (←)"
+              >
+                <Back5Icon />
+              </IconButton>
+              <IconButton
+                onClick={() => seekTo(positionMs + SEEK_STEP_S * 1000, { armAutoPause: false })}
+                title="Forward 5 seconds  (→)"
+              >
+                <Forward5Icon />
+              </IconButton>
+            </div>
+
+            <Divider />
+
+            {/* moving line by line — the part that is specific to learning */}
+            <div className="flex flex-none items-center gap-[3px]">
+              <IconButton onClick={() => jumpCue(-1)} title="Previous line  (P)">
+                <PrevLineIcon />
+              </IconButton>
+              <TextButton onClick={replayLine} title="Replay this line  (A)">
+                <ReplayLineIcon size={13} />
+                <span>replay line</span>
+              </TextButton>
+              <IconButton onClick={() => jumpCue(1)} title="Next line  (N)">
+                <NextLineIcon />
+              </IconButton>
+            </div>
+
+            <span className="flex-none font-mono text-[11.5px] tabular-nums text-white/75">
+              {timecode(positionMs)}
+              <span className="text-white/35"> / {timecode(durationMs || item.duration_ms)}</span>
+            </span>
+
+            <div className="min-w-[8px] flex-1" />
+
+            {/* what is happening to the subtitles */}
+            <div className="flex flex-none items-center gap-[5px]">
+              {(
+                [
+                  ['dual_subs', 'dual', 'Show the native-language line too  (D)'],
+                  ['blur_subs', 'blur', 'Hide subtitles until you hover them  (B)'],
+                  ['auto_pause', 'auto-pause', 'Pause when each line ends  (O)'],
+                  ['loop_cue', 'loop', 'Repeat the current line  (L)'],
+                ] as const
+              ).map(([key, label, title]) => (
+                <Toggle
+                  key={key}
+                  on={Boolean(playerPrefs?.[key])}
+                  onClick={() => togglePref(key)}
+                  label={label}
+                  title={title}
+                />
+              ))}
+            </div>
+
+            <Divider />
+
+            {/* how it is being played */}
+            <div className="flex flex-none items-center gap-[7px]">
+              <label className="flex items-center gap-[5px]">
+                <span className="sr-only">Playback speed</span>
+                <select
+                  value={rate}
+                  onChange={(e) => {
+                    const next = Number(e.target.value);
+                    setRate(next);
+                    if (videoRef.current) videoRef.current.playbackRate = next;
+                  }}
+                  title="Playback speed — pitch is corrected, so slowing down does not deepen voices"
+                  className="rounded-[5px] border border-white/15 bg-transparent py-[4px] pl-[7px] pr-[4px] font-mono text-[11px] text-white/80 outline-none hover:border-white/35"
+                >
+                  {SPEEDS.map((speed) => (
+                    <option key={speed} value={speed} className="bg-[#0c0d0f]">
+                      {speed}×
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="flex items-center gap-[5px]">
+                <IconButton onClick={() => setMuted((v) => !v)} title={muted ? 'Unmute  (M)' : 'Mute  (M)'}>
+                  {muted || volume === 0 ? <MutedIcon size={14} /> : <VolumeIcon size={14} />}
+                </IconButton>
+                <input
+                  type="range"
+                  aria-label="Volume"
+                  min={0}
+                  max={1}
+                  step={0.02}
+                  value={muted ? 0 : volume}
+                  onChange={(e) => {
+                    setVolume(Number(e.target.value));
+                    setMuted(false);
+                  }}
+                  className="h-[3px] w-[64px] accent-[var(--acc)]"
+                />
+              </div>
+
+              <TextButton
+                onClick={() => setPanelTab((current) => (current === 'saved' ? null : 'saved'))}
+                title="Words saved from this file"
+              >
+                <SavedIcon size={13} />
+                <span>saved</span>
+                {clips.length > 0 && (
+                  <span className="rounded-full bg-white/15 px-[5px] font-mono text-[9.5px] leading-[15px]">
+                    {clips.length}
+                  </span>
+                )}
+              </TextButton>
+
+              <IconButton onClick={() => void togglePip()} title="Picture in picture">
+                <PipIcon size={14} />
+              </IconButton>
+              <IconButton onClick={() => void toggleFullscreen()} title="Fullscreen  (F)">
+                {isFullscreen ? <ExitFullscreenIcon size={14} /> : <FullscreenIcon size={14} />}
+              </IconButton>
+              <IconButton onClick={() => setSettingsOpen(true)} title="Subtitles, tracks and clips">
+                <SettingsIcon size={14} />
+              </IconButton>
+            </div>
           </div>
         </div>
+
       </div>
 
-      {panelOpen && (
-        <aside className="flex w-[352px] flex-none flex-col border-l border-line2 bg-panel">
-          <div className="flex flex-none items-start justify-between border-b border-line2 px-4 py-[14px]">
-            <div>
-              <div className="font-sans text-[22px] font-semibold tracking-[-0.015em] text-tx">{lk.word}</div>
-              <div className="mt-[3px] font-mono text-[11px] text-tx3">
-                {lk.ipa} · {lk.pos} · {lk.cefr}
-              </div>
-            </div>
-            <div className="flex gap-[6px]">
-              <button
-                className="grid h-7 w-7 place-items-center rounded-field border border-line2 font-mono text-[11px] text-tx2 hover:border-acc hover:text-acc"
-                title="pronounce"
-              >
-                ▶
-              </button>
-              <button
-                onClick={() => setPanelOpen(false)}
-                className="grid h-7 w-7 place-items-center rounded-field border border-line2 font-mono text-[11px] text-tx2 hover:border-acc"
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-
-          <div className="flex min-h-0 flex-1 flex-col gap-[14px] overflow-y-auto px-4 py-[14px]">
-            <div>
-              <div className="mb-[6px] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
-                Dictionary · WordNet
-              </div>
-              <div className="font-sans text-[12.5px] leading-[1.6] text-tx2">{lk.dict}</div>
-              <div className="mt-[5px] font-mono text-[10px] text-tx3">responded in 180 ms</div>
-            </div>
-
-            <div className="rounded-panel border border-accLine bg-accSoft p-[13px]">
-              <div className="mb-2 flex items-center gap-[7px]">
-                <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.1em] text-acc">
-                  AI · in this context
-                </span>
-                <span className="font-mono text-[9px] text-tx3">not yet configured · offline stub</span>
-              </div>
-              <div className="font-sans text-[13px] leading-[1.65] text-tx">{lk.ai}</div>
-              {lk.para && (
-                <div className="mt-[9px] border-t border-accLine pt-[9px] font-sans text-[12px] leading-[1.6] text-tx2">
-                  <b className="font-semibold">Line means:</b> {lk.para}
-                </div>
-              )}
-              {lk.tags.length > 0 && (
-                <div className="mt-[10px] flex flex-wrap gap-[5px]">
-                  {lk.tags.map((t) => (
-                    <span key={t} className="rounded-[4px] border border-accLine px-[7px] py-[3px] font-mono text-[9.5px] text-tx2">
-                      {t}
-                    </span>
-                  ))}
-                </div>
-              )}
-              <div className="mt-[11px] flex gap-[10px]">
-                <button className="font-mono text-[10.5px] text-tx3 hover:text-acc">edit</button>
-                <button className="font-mono text-[10.5px] text-tx3 hover:text-acc">reject</button>
-                <button className="font-mono text-[10.5px] text-tx3 hover:text-acc">regenerate</button>
-              </div>
-            </div>
-
-            {(lk.ex1 || lk.ex2) && (
-              <div>
-                <div className="mb-[7px] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
-                  Examples at your level
-                </div>
-                <div className="font-sans text-[12.5px] leading-[1.65] text-tx2">
-                  {lk.ex1 && <div>· {lk.ex1}</div>}
-                  {lk.ex2 && <div className="mt-1">· {lk.ex2}</div>}
-                </div>
-              </div>
-            )}
-
-            {lk.colls.length > 0 && (
-              <div>
-                <div className="mb-[7px] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
-                  Collocations found in this cue
-                </div>
-                <div className="flex flex-wrap gap-[6px]">
-                  {lk.colls.map((c) => (
-                    <button
-                      key={c}
-                      className="rounded-[5px] border border-dashed border-line px-2 py-1 font-mono text-[11px] text-tx2 hover:border-solid hover:border-acc hover:text-acc"
-                    >
-                      + {c}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div>
-              <div className="mb-[7px] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
-                Clip context · 6.4 s
-              </div>
-              <div className="overflow-hidden rounded-panel border border-line2">
-                <div
-                  className="grid h-24 place-items-center font-mono text-[8px] text-tx3"
-                  style={{ background: 'repeating-linear-gradient(135deg,var(--tile) 0 6px,var(--tileB) 6px 12px)' }}
-                >
-                  clip preview · 480p · muted until hover
-                </div>
-                <div className="border-t border-line2 px-[9px] py-[7px] font-mono text-[10px] text-tx3">
-                  {nowPlaying} · 01:14:21.4 → 01:14:27.8 · pad 1000/500 ms
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex-none border-t border-line2 px-4 py-3">
-            <button
-              onClick={handleSave}
-              className="w-full rounded-field py-[11px] font-sans text-[12.5px] font-semibold hover:brightness-110"
-              style={{
-                background: saved ? 'transparent' : 'var(--acc)',
-                color: saved ? 'var(--acc)' : '#fff',
-                border: saved ? '1px solid var(--accLine)' : '1px solid transparent',
-              }}
-            >
-              {saved ? '✓ Saved — clip queued' : 'Save with context'}
-            </button>
-            <div className="mt-[7px] text-center font-mono text-[9.5px] text-tx3">
-              saves word + line + timecodes + clip job
-            </div>
-          </div>
-        </aside>
+      {panelTab && (
+        <div
+          className={
+            isFullscreen
+              ? 'absolute inset-y-0 right-0 z-40 flex w-[360px] max-w-[42vw] shadow-[0_0_60px_rgba(0,0,0,.55)]'
+              : 'flex w-[340px] flex-none'
+          }
+        >
+          <SidePanel
+            mediaId={item.id}
+            tab={panelTab}
+            lookup={lookup}
+            onTab={setPanelTab}
+            onClose={() => setPanelTab(null)}
+            onJump={(ms) => seekTo(ms, { armAutoPause: false })}
+            onSaved={(message) => setToast(message)}
+          />
+        </div>
       )}
 
+      {settingsOpen && <PlayerSettings onClose={() => setSettingsOpen(false)} />}
+
       {toast && (
-        <div className="absolute bottom-[26px] left-1/2 z-[60] flex -translate-x-1/2 items-center gap-[10px] rounded-field border border-accLine bg-panel2 px-[14px] py-[10px] shadow-panel">
-          <span className="h-3 w-3 animate-spin rounded-full border-2 border-accLine" style={{ borderTopColor: 'var(--acc)' }} />
-          <span className="font-mono text-[11.5px] font-medium text-tx">{toast}</span>
+        <div className="pointer-events-none absolute bottom-[96px] left-1/2 -translate-x-1/2 rounded-field bg-black/85 px-[14px] py-[9px] font-mono text-[11px] text-white">
+          {toast}
         </div>
       )}
     </div>
+  );
+}
+
+function Centered({ children }: { children: React.ReactNode }) {
+  return <div className="grid h-full w-full place-items-center bg-[#08090a] text-center text-tx3">{children}</div>;
+}
+
+/** Square icon button. 28px is the smallest target that stays comfortable in
+ * a bar this dense; the play button is larger because it is pressed most. */
+function IconButton({
+  onClick,
+  title,
+  primary = false,
+  children,
+}: {
+  onClick: () => void;
+  title: string;
+  primary?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      className={`grid flex-none place-items-center rounded-[5px] text-white/80 transition-colors hover:bg-white/10 hover:text-white ${
+        primary ? 'h-[32px] w-[34px] bg-white/10' : 'h-[28px] w-[28px]'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** Icon plus a word. Used only for "replay line", which has no conventional
+ * symbol and is the one control specific to this app rather than to players
+ * in general — so it is the one that earns a label. */
+function TextButton({
+  onClick,
+  title,
+  children,
+}: {
+  onClick: () => void;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className="flex h-[28px] flex-none items-center gap-[5px] whitespace-nowrap rounded-[5px] px-[9px] font-sans text-[11.5px] font-medium text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+    >
+      {children}
+    </button>
+  );
+}
+
+function Divider() {
+  return <span className="h-[18px] w-px flex-none bg-white/12" />;
+}
+
+function Toggle({
+  on,
+  onClick,
+  label,
+  title,
+}: {
+  on: boolean;
+  onClick: () => void;
+  label: string;
+  title: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      aria-pressed={on}
+      className="h-[26px] flex-none whitespace-nowrap rounded-full border px-[11px] font-sans text-[11px] font-medium transition-colors"
+      style={{
+        borderColor: on ? 'var(--accLine)' : 'rgba(255,255,255,.16)',
+        background: on ? 'rgba(var(--accRGB),.22)' : 'transparent',
+        color: on ? 'var(--acc)' : 'rgba(255,255,255,.62)',
+      }}
+    >
+      {label}
+    </button>
   );
 }
