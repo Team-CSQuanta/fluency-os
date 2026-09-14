@@ -53,7 +53,23 @@ class VocabWordOut(BaseModel):
     tags: list[str]
     context_count: int
     ai_mnemonic: str | None
+    ai_definition: str | None = None
+    ai_examples: list[str] = []
+    ai_usage_note: str | None = None
+    ai_sense_definition: str | None = None
     created_at: str
+    # Scheduling state, joined from review_cards. The most informative thing
+    # about a saved word is where it stands — due, sticking, or a leech — and
+    # the list had no access to it at all before.
+    card_state: str | None = None
+    due: str | None = None
+    stability_days: float | None = None
+    difficulty: float | None = None
+    reps: int = 0
+    lapses: int = 0
+    suspended: bool = False
+    mastery_level: int = 0
+    mastery_label: str = "unseen"
 
 
 class VocabWordDetailOut(VocabWordOut):
@@ -62,6 +78,10 @@ class VocabWordDetailOut(VocabWordOut):
     # Real per-outcome usage counts from Conversation sessions (review_logs) —
     # the visible half of Dynamic SRS Routing. Empty until Conversation exists.
     conversation_usage: dict[str, int]
+    # How this word has been answered on flashcards, kept apart from the
+    # conversation counts above because they are different kinds of evidence
+    # (spec §6.3) and merging them was a real bug.
+    flashcard_reviews: dict[str, int]
 
 
 class VocabWordSaveOut(BaseModel):
@@ -98,6 +118,15 @@ class VocabWordManualCreate(BaseModel):
     ipa: str | None = None
     audio_url: str | None = None
     note: str | None = None
+    # AI enrichment, kept apart from the dictionary's own fields above so
+    # neither overwrites the other.
+    ai_definition: str | None = None
+    ai_examples: list[str] = []
+    ai_mnemonic: str | None = None
+    ai_usage_note: str | None = None
+    # The dictionary sense the enrichment was generated against, so the entry
+    # page can say which of a word's meanings it describes.
+    ai_sense_definition: str | None = None
 
 
 class AiExplainIn(BaseModel):
@@ -124,3 +153,38 @@ class AiMnemonicOut(BaseModel):
 
 class AiPracticeOut(BaseModel):
     question: str
+
+
+class TagCountOut(BaseModel):
+    tag: str
+    count: int
+
+
+class VocabOverviewOut(BaseModel):
+    total: int
+    added_last_7_days: int
+    due_now: int
+    new_count: int
+    learning: int
+    struggling: int
+    suspended: int
+    by_cefr: dict[str, int]
+    tags: list[TagCountOut]
+
+
+class AiEnrichIn(BaseModel):
+    user_id: str
+    word: str
+    # Both optional: a word can be added from nothing but itself, and the
+    # dictionary definition is grounding that keeps the model from inventing
+    # a sense the word does not have.
+    dictionary_definition: str | None = None
+    context: str | None = None
+
+
+class AiEnrichOut(BaseModel):
+    definition: str
+    examples: list[str]
+    mnemonic: str
+    usage_note: str
+    synonyms: list[str]

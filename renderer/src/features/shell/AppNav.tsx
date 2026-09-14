@@ -1,6 +1,8 @@
+import { useEffect } from 'react';
 import { ICONS } from '@/features/shell/icons';
 import { NAV_GROUPS } from '@/features/shell/navConfig';
 import { useAppStore } from '@/store/appStore';
+import { useReviewStore } from '@/store/reviewStore';
 import { useShellStore } from '@/store/shellStore';
 
 // Mock profile stats — no gamification backend yet (spec §8, Foyez's ownership per §12).
@@ -18,6 +20,15 @@ export function AppNav() {
   const goScreen = useShellStore((s) => s.goScreen);
   const toggleNav = useShellStore((s) => s.toggleNav);
   const currentUser = useAppStore((s) => s.currentUser);
+  const dueNow = useReviewStore((s) => s.stats?.due_now ?? 0);
+  const fetchReviewStats = useReviewStore((s) => s.fetchStats);
+
+  // Refreshed on every screen change: answering cards, ending a conversation
+  // and saving a new word all change what is due, and a badge that only
+  // updates on reload is a badge nobody trusts.
+  useEffect(() => {
+    if (currentUser) void fetchReviewStats();
+  }, [currentUser, screen, fetchReviewStats]);
 
   const navW = collapsed ? '62px' : '224px';
   const avatarSize = collapsed ? 34 : 48;
@@ -93,11 +104,16 @@ export function AppNav() {
                   (item.key === 'bookshelf' && screen === 'reader') ||
                   (item.key === 'vocab' && screen === 'word') ||
                   (item.key === 'conv' && (screen === 'convlive' || screen === 'report'));
+                // Only Review carries a count, and it is the real number of
+                // cards the scheduler says are due — it used to be the string
+                // '47', which was wrong for everyone including a new user with
+                // no words saved at all.
+                const badge = item.key === 'review' && dueNow > 0 ? String(dueNow) : null;
                 return (
                   <button
                     key={item.key}
                     onClick={() => goScreen(item.key)}
-                    title={collapsed ? item.label + (item.badge ? ` · ${item.badge} due` : '') : undefined}
+                    title={collapsed ? item.label + (badge ? ` · ${badge} due` : '') : undefined}
                     className="relative flex items-center gap-[10px] rounded-field p-2 text-left hover:bg-line2"
                     style={{
                       justifyContent: collapsed ? 'center' : 'flex-start',
@@ -123,12 +139,12 @@ export function AppNav() {
                         {item.label}
                       </span>
                     )}
-                    {item.badge && !collapsed && (
+                    {badge && !collapsed && (
                       <span className="flex-none rounded-full bg-accSoft px-[6px] py-[2px] font-mono text-[9.5px] font-semibold text-acc">
-                        {item.badge}
+                        {badge}
                       </span>
                     )}
-                    {item.badge && collapsed && (
+                    {badge && collapsed && (
                       <span className="absolute right-[6px] top-[5px] h-[6px] w-[6px] rounded-full bg-acc" />
                     )}
                   </button>

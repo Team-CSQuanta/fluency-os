@@ -1,4 +1,21 @@
 import { useEffect, useState } from 'react';
+import { MasteryDot, dueLabel } from '@/features/vocabulary/MasteryDot';
+
+// Conversation outcomes and flashcard ratings read better with the same
+// colour language as the Review screen: only failure is coloured as a
+// warning, success is quiet.
+const USAGE_COLOR: Record<string, string> = {
+  spontaneous: '#3f9d5c',
+  prompted: 'var(--acc)',
+  incorrect: '#c0563f',
+  avoided: '#d9a441',
+};
+const RATING_COLOR: Record<string, string> = {
+  again: '#c0563f',
+  hard: '#d9a441',
+  good: 'var(--acc)',
+  easy: '#3f9d5c',
+};
 import { POS_FULL } from '@/features/vocabulary/vocabMockData';
 import { useShellStore } from '@/store/shellStore';
 import { useVocabularyStore } from '@/store/vocabularyStore';
@@ -19,9 +36,72 @@ export function VocabularyEntry() {
   const generateMnemonic = useVocabularyStore((s) => s.generateMnemonic);
   const fetchAiExamples = useVocabularyStore((s) => s.fetchAiExamples);
   const fetchAiPractice = useVocabularyStore((s) => s.fetchAiPractice);
+  const pronunciationUrl = useVocabularyStore((s) => s.pronunciationUrl);
+  const speakText = useVocabularyStore((s) => s.speakText);
 
-  const [playing, setPlaying] = useState(false);
+  const [playing, setPlaying] = useState<null | 'dict' | 'word' | 'sentence'>(null);
+  const [speakError, setSpeakError] = useState<string | null>(null);
   const [toast, setToast] = useState('');
+
+  const playDictionary = () => {
+    if (!detail?.audio_url) return;
+    setPlaying('dict');
+    const audio = new Audio(detail.audio_url);
+    const stop = () => setPlaying(null);
+    audio.onended = stop;
+    audio.onerror = stop;
+    void audio.play().catch(stop);
+  };
+
+  /** Speaks any short text — the AI's example sentences are not the stored
+   * `example`, so the per-word endpoint cannot reach them. */
+  const speakArbitrary = async (text: string) => {
+    setSpeakError(null);
+    setPlaying('sentence');
+    let url: string | null = null;
+    try {
+      url = await speakText(text);
+      await new Promise<void>((resolve) => {
+        const audio = new Audio(url as string);
+        audio.onended = () => resolve();
+        audio.onerror = () => resolve();
+        void audio.play().catch(() => resolve());
+      });
+    } catch (err) {
+      setSpeakError(err instanceof Error ? err.message : 'Could not speak this — is the AI launched?');
+    } finally {
+      if (url) URL.revokeObjectURL(url);
+      setPlaying(null);
+    }
+  };
+
+  /** Speaks with the app's own TTS engine. The first call for a word is real
+   * synthesis and takes a moment; every one after it is served from disk. */
+  const speak = async (part: 'word' | 'sentence') => {
+    if (!detail) return;
+    setSpeakError(null);
+    setPlaying(part);
+    let url: string | null = null;
+    try {
+      url = await pronunciationUrl(detail.id, part);
+      await new Promise<void>((resolve) => {
+        const audio = new Audio(url as string);
+        audio.onended = () => resolve();
+        audio.onerror = () => resolve();
+        void audio.play().catch(() => resolve());
+      });
+    } catch (err) {
+      setSpeakError(
+        err instanceof Error ? err.message : 'Could not speak this — is the AI launched?',
+      );
+    } finally {
+      // The clip is a blob the browser holds until it is explicitly released;
+      // without this every press leaks one for as long as the app is open.
+      if (url) URL.revokeObjectURL(url);
+      setPlaying(null);
+    }
+  };
+
   const [noteDraft, setNoteDraft] = useState('');
   const [tagDraft, setTagDraft] = useState('');
 
@@ -122,7 +202,6 @@ export function VocabularyEntry() {
   }
 
   const detail = selectedDetail;
-  const hasAudio = detail.pos !== 'phrase';
 
   return (
     <div className="relative h-full overflow-y-auto bg-bg">
@@ -157,28 +236,44 @@ export function VocabularyEntry() {
               </span>
               {detail.ipa && <span className="font-mono text-[15px] text-tx3">{detail.ipa}</span>}
             </div>
-            {detail.audio_url ? (
-              <div className="mt-[14px] flex items-center gap-[8px]">
+            {/* Two ways to hear a word, and the local engine covers both.
+                Previously this offered only whatever recording happened to
+                ship with a dictionary entry, so a manually added word — or
+                any word the dictionary had no audio for — had no
+                pronunciation at all. Spec §5.3 asks for the word and the
+                sentence; the engine that speaks in Conversation can say
+                either. */}
+            <div className="mt-[14px] flex flex-wrap items-center gap-[8px]">
+              {detail.audio_url && (
                 <button
-                  onClick={() => {
-                    setPlaying(true);
-                    const audio = new Audio(detail.audio_url ?? undefined);
-                    audio.play().catch(() => {});
-                    audio.onended = () => setPlaying(false);
-                    setTimeout(() => setPlaying(false), 3000);
-                  }}
+                  onClick={() => playDictionary()}
                   className="flex items-center gap-[7px] rounded-full border border-accLine bg-accSoft px-3 py-[7px] font-sans text-[11px] font-medium text-acc"
                 >
-                  {playing ? '▶ playing…' : '▶ play pronunciation'}
+                  {playing === 'dict' ? '▶ playing…' : '▶ pronunciation'}
                 </button>
-                <span className="font-mono text-[9.5px] text-tx3">from dictionaryapi.dev</span>
-              </div>
-            ) : (
-              <div className="mt-[14px] rounded-field border border-dashed border-line px-[11px] py-2 font-mono text-[10.5px] leading-[1.6] text-tx3">
-                {hasAudio
-                  ? 'no pronunciation audio for this word — words added via “add word” dictionary search come with one when the dictionary has it'
-                  : 'no single pronunciation — multi-word phrase · say it in context'}
-              </div>
+              )}
+              <button
+                onClick={() => void speak('word')}
+                disabled={playing === 'word'}
+                className="flex items-center gap-[7px] rounded-full border border-line px-3 py-[7px] font-sans text-[11px] font-medium text-tx2 hover:border-acc hover:text-acc disabled:opacity-60"
+              >
+                {playing === 'word' ? '▶ speaking…' : detail.audio_url ? '▶ say it' : '▶ say the word'}
+              </button>
+              {detail.example && (
+                <button
+                  onClick={() => void speak('sentence')}
+                  disabled={playing === 'sentence'}
+                  className="flex items-center gap-[7px] rounded-full border border-line px-3 py-[7px] font-sans text-[11px] font-medium text-tx2 hover:border-acc hover:text-acc disabled:opacity-60"
+                >
+                  {playing === 'sentence' ? '▶ speaking…' : '▶ say the sentence'}
+                </button>
+              )}
+              <span className="font-mono text-[9.5px] text-tx3">
+                {detail.audio_url ? 'dictionaryapi.dev · local voice' : 'local voice'}
+              </span>
+            </div>
+            {speakError && (
+              <div className="mt-[8px] font-mono text-[10px] text-[#c0563f]">{speakError}</div>
             )}
           </div>
           <div className="flex flex-wrap gap-2">
@@ -218,6 +313,61 @@ export function VocabularyEntry() {
                 </div>
               )}
             </div>
+
+            {/* AI enrichment, in its own right rather than merged into the
+                dictionary's fields above. The dictionary is authoritative
+                about what a word means; the model is better at saying it in
+                words a learner already has. Neither has to win. */}
+            {(detail.ai_definition || detail.ai_examples.length > 0 || detail.ai_usage_note) && (
+              <div>
+                <div className="mb-[10px] flex items-baseline gap-[8px]">
+                  <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
+                    AI enrichment
+                  </span>
+                  {detail.ai_sense_definition &&
+                    detail.ai_sense_definition !== detail.definition && (
+                      <span
+                        className="font-mono text-[9.5px] text-tx3"
+                        title={detail.ai_sense_definition}
+                      >
+                        · for the sense “{detail.ai_sense_definition.slice(0, 48)}
+                        {detail.ai_sense_definition.length > 48 ? '…' : ''}”
+                      </span>
+                    )}
+                </div>
+                <div className="rounded-field border border-accLine bg-accSoft px-[14px] py-[13px]">
+                  {detail.ai_definition && (
+                    <div className="font-sans text-[13px] leading-[1.7] text-tx">
+                      {detail.ai_definition}
+                    </div>
+                  )}
+                  {detail.ai_examples.length > 0 && (
+                    <div className="mt-[10px] flex flex-col gap-[6px]">
+                      {detail.ai_examples.map((e) => (
+                        <div key={e} className="flex items-start gap-[8px]">
+                          <span className="flex-1 font-sans text-[12px] italic leading-[1.6] text-tx2">
+                            “{e}”
+                          </span>
+                          <button
+                            onClick={() => void speakArbitrary(e)}
+                            disabled={playing !== null}
+                            title="hear this sentence"
+                            className="flex-none font-mono text-[10px] text-tx3 hover:text-acc disabled:opacity-40"
+                          >
+                            ▶
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {detail.ai_usage_note && (
+                    <div className="mt-[10px] border-t border-accLine pt-[8px] font-mono text-[10.5px] leading-[1.6] text-tx2">
+                      when to use it · {detail.ai_usage_note}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div>
               <div className="mb-[10px] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
@@ -351,9 +501,37 @@ export function VocabularyEntry() {
               <div className="mb-[8px] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
                 Scheduling
               </div>
-              <div className="font-sans text-[12px] leading-[1.6] text-tx2">
-                Not yet scheduled — spaced repetition arrives in a later update.
-              </div>
+              {detail.card_state === 'new' || detail.reps === 0 ? (
+                <div className="font-sans text-[12px] leading-[1.6] text-tx2">
+                  Not reviewed yet — this word is waiting in the review queue.
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center gap-[8px]">
+                    <MasteryDot level={detail.mastery_level} label={detail.mastery_label} />
+                    <span className="font-sans text-[12.5px] font-medium text-tx">
+                      L{detail.mastery_level} · {detail.mastery_label}
+                    </span>
+                  </div>
+                  <div className="mt-[8px] font-mono text-[10.5px] leading-[1.8] text-tx3">
+                    next review {dueLabel(detail.due, detail.card_state)}
+                    <br />
+                    stability {detail.stability_days ?? 0} d · difficulty {detail.difficulty ?? 0}
+                    <br />
+                    {detail.reps} review{detail.reps === 1 ? '' : 's'} · {detail.lapses} lapse
+                    {detail.lapses === 1 ? '' : 's'}
+                    {detail.suspended && <> · suspended</>}
+                  </div>
+                  {/* The project's central claim, stated where it applies to
+                      this specific word rather than only in the spec. */}
+                  {detail.mastery_level <= 2 && (
+                    <div className="mt-[10px] border-t border-line2 pt-[8px] font-mono text-[9.5px] leading-[1.6] text-tx3">
+                      flashcards alone stop at L2 — this word only goes further by being used
+                      unprompted in conversation
+                    </div>
+                  )}
+                </>
+              )}
             </div>
 
             <div className="rounded-panel border border-line2 p-[14px]">
@@ -368,13 +546,40 @@ export function VocabularyEntry() {
                 <div className="flex flex-col gap-[6px]">
                   {Object.entries(detail.conversation_usage).map(([outcome, count]) => (
                     <div key={outcome} className="flex items-center justify-between font-mono text-[11px]">
-                      <span className="text-tx2">{outcome}</span>
+                      <span style={{ color: USAGE_COLOR[outcome] ?? 'var(--tx2)' }}>{outcome}</span>
                       <span className="font-medium text-tx">{count}×</span>
                     </div>
                   ))}
                 </div>
               )}
+              <div className="mt-[10px] border-t border-line2 pt-[8px] font-mono text-[9.5px] leading-[1.6] text-tx3">
+                each of these reschedules the word, the same way a flashcard answer does
+              </div>
             </div>
+
+            {/* Kept separate from conversation usage above. They are different
+                kinds of evidence — recognising a word and producing it are not
+                the same claim — and merging them was a real bug: a word only
+                ever answered on a flashcard reported "conversation usage:
+                again", which is not something anyone can do in a
+                conversation. */}
+            {Object.keys(detail.flashcard_reviews).length > 0 && (
+              <div className="rounded-panel border border-line2 p-[14px]">
+                <div className="mb-[8px] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
+                  Flashcard answers
+                </div>
+                <div className="flex flex-col gap-[6px]">
+                  {['again', 'hard', 'good', 'easy']
+                    .filter((r) => detail.flashcard_reviews[r])
+                    .map((r) => (
+                      <div key={r} className="flex items-center justify-between font-mono text-[11px]">
+                        <span style={{ color: RATING_COLOR[r] ?? 'var(--tx2)' }}>{r}</span>
+                        <span className="font-medium text-tx">{detail.flashcard_reviews[r]}×</span>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
 
             <div className="rounded-panel border border-line2 p-[14px]">
               <div className="mb-[8px] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">

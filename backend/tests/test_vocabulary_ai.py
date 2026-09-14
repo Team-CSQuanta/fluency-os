@@ -126,7 +126,12 @@ def test_ai_examples_route_returns_generated_sentences(client, auth_headers, fak
 def test_ai_examples_route_respects_count_and_caps_it(client, auth_headers, fake_generate_json):
     user_id = _create_user(client, auth_headers)
     word_id = _save_word(client, auth_headers, user_id)
-    fake_generate_json["response"] = {"examples": [f"Sentence {i}." for i in range(10)]}
+    # Every sentence contains the word, because the service now drops any
+    # that do not — an "example" without the word in it is not an example
+    # of it, and a 1B model produces those regularly.
+    fake_generate_json["response"] = {
+        "examples": [f"An ephemeral thing, number {i}." for i in range(10)]
+    }
 
     res = client.post(
         f"/vocabulary/{word_id}/ai-examples", headers=auth_headers, params={"user_id": user_id, "count": 20}

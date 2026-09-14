@@ -16,7 +16,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from app.config import settings
-from app.services import conversation_report
+from app.services import conversation_report, review
 from app.services.voice import (
     cloud_llm_engine,
     engine_health,
@@ -753,12 +753,14 @@ def end_session(conn: sqlite3.Connection, session: sqlite3.Row) -> dict:
     # — appending would make one conversation count twice, both in a word's
     # usage history and in _select_target_words' "not practised yet" ordering.
     conn.execute("DELETE FROM review_logs WHERE session_id = ?", (session["id"],))
-    for vocab_word_id, outcome in outcomes_for_logs:
-        conn.execute(
-            "INSERT INTO review_logs (id, user_id, vocab_word_id, session_id, source, outcome, created_at) "
-            "VALUES (?, ?, ?, ?, 'conversation', ?, ?)",
-            (uuid7(), session["user_id"], vocab_word_id, session["id"], outcome, now),
-        )
+    # Spec §6.3: this is what makes conversation count as study. Each outcome
+    # is rated on the same scale a flashcard would be and applied to the same
+    # FSRS card, so producing a word out loud reschedules it exactly as
+    # answering a flashcard would — the project's actual thesis, rather than
+    # a log nobody acts on.
+    review.apply_conversation_outcomes(
+        conn, session["user_id"], session["id"], outcomes_for_logs
+    )
 
     return report
 
@@ -794,10 +796,28 @@ def delete_session(conn: sqlite3.Connection, user_id: str, session_id: str) -> b
 
 
 def word_usage_counts(conn: sqlite3.Connection, vocab_word_id: str) -> dict[str, int]:
-    """Real per-outcome usage counts for one word — the visible half of
-    Dynamic SRS Routing, surfaced on the Vocabulary entry screen."""
+    """Per-outcome CONVERSATION usage for one word — the visible half of
+    Dynamic SRS Routing, surfaced on the Vocabulary entry screen.
+
+    The source filter is load-bearing. review_logs carried only conversation
+    rows until 0015 gave flashcard reviews the same table (spec §5.5's
+    dual-source review), and without it this counted both — so the Vocabulary
+    page reported "conversation usage: again 1x" for a word that had only
+    ever been answered on a flashcard. "again" is not something anyone can do
+    in a conversation."""
     rows = conn.execute(
-        "SELECT outcome, COUNT(*) AS n FROM review_logs WHERE vocab_word_id = ? GROUP BY outcome",
+        "SELECT outcome, COUNT(*) AS n FROM review_logs "
+        "WHERE vocab_word_id = ? AND source = 'conversation' GROUP BY outcome",
+        (vocab_word_id,),
+    ).fetchall()
+    return {row["outcome"]: row["n"] for row in rows}
+
+
+def flashcard_review_counts(conn: sqlite3.Connection, vocab_word_id: str) -> dict[str, int]:
+    """The other half: how this word has been answered on flashcards."""
+    rows = conn.execute(
+        "SELECT outcome, COUNT(*) AS n FROM review_logs "
+        "WHERE vocab_word_id = ? AND source = 'flashcard' GROUP BY outcome",
         (vocab_word_id,),
     ).fetchall()
     return {row["outcome"]: row["n"] for row in rows}

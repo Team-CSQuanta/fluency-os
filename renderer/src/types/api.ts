@@ -394,13 +394,56 @@ export interface VocabWordOut {
   tags: string[];
   context_count: number;
   ai_mnemonic: string | null;
+  /** AI enrichment, stored apart from the dictionary's own fields so neither
+   * overwrites the other. */
+  ai_definition: string | null;
+  ai_examples: string[];
+  ai_usage_note: string | null;
+  /** The dictionary sense the enrichment was generated against. */
+  ai_sense_definition: string | null;
   created_at: string;
+  /** Scheduling state, joined from the review card. */
+  card_state: string | null;
+  due: string | null;
+  stability_days: number | null;
+  difficulty: number | null;
+  reps: number;
+  lapses: number;
+  suspended: boolean;
+  mastery_level: number;
+  mastery_label: string;
+}
+
+export type VocabStatusFilter =
+  | 'all'
+  | 'due'
+  | 'new'
+  | 'learning'
+  | 'mastered'
+  | 'struggling'
+  | 'suspended';
+
+export type VocabSort = 'recent' | 'oldest' | 'alphabetical' | 'mastery' | 'due' | 'difficulty';
+
+export interface VocabOverviewOut {
+  total: number;
+  added_last_7_days: number;
+  due_now: number;
+  new_count: number;
+  learning: number;
+  struggling: number;
+  suspended: number;
+  by_cefr: Record<string, number>;
+  tags: Array<{ tag: string; count: number }>;
 }
 
 export interface VocabWordDetailOut extends VocabWordOut {
   contexts: VocabContextOut[];
   notes: VocabNoteOut[];
   conversation_usage: Record<string, number>;
+  /** Flashcard ratings, kept apart from conversation outcomes — they are
+   * different kinds of evidence and merging them was a real bug. */
+  flashcard_reviews: Record<string, number>;
 }
 
 export interface VocabWordSaveOut {
@@ -622,4 +665,76 @@ export interface VocabWordManualCreate {
   ipa?: string | null;
   audio_url?: string | null;
   note?: string | null;
+}
+
+// --- Review / spaced repetition (spec §5.5, §6.3) ---------------------------
+
+export type ReviewCardType = 'recognition' | 'production' | 'cloze' | 'listening';
+export type ReviewRating = 1 | 2 | 3 | 4;
+
+export interface ReviewCardOut {
+  vocab_word_id: string;
+  card_type: ReviewCardType;
+  word: string;
+  ipa: string | null;
+  pos: string | null;
+  cefr: string | null;
+  definition: string | null;
+  simpler: string | null;
+  example: string | null;
+  mnemonic: string | null;
+  synonyms: string[];
+  audio_url: string | null;
+  context_snippet: string | null;
+  context_source: string | null;
+  cloze_before: string | null;
+  cloze_after: string | null;
+  state: string;
+  stability_days: number;
+  difficulty: number;
+  reps: number;
+  lapses: number;
+  spontaneous_sessions: number;
+  mastery_level: number;
+  mastery_label: string;
+  mastery_reason: string;
+  is_leech: boolean;
+  /** What each button would schedule, already humanised ("10 m", "3.2 mo"). */
+  intervals: Record<string, string>;
+}
+
+export interface RateCardOut {
+  vocab_word_id: string;
+  state: string;
+  due: string | null;
+  stability_days: number;
+  difficulty: number;
+  reps: number;
+  lapses: number;
+  suspended: boolean;
+  is_leech: boolean;
+  mastery_level: number;
+  mastery_label: string;
+  mastery_reason: string;
+  interval_label: string;
+}
+
+export interface ReviewStatsOut {
+  due_now: number;
+  new_available: number;
+  total_cards: number;
+  suspended: number;
+  reviewed_today: number;
+  target_retention: number;
+  forecast: Array<{ date: string; count: number }>;
+  /** Cards at each mastery level 0-5. */
+  mastery_counts: number[];
+}
+
+export interface AiEnrichOut {
+  definition: string;
+  examples: string[];
+  mnemonic: string;
+  usage_note: string;
+  synonyms: string[];
 }
