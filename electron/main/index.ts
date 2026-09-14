@@ -45,10 +45,36 @@ async function createWindow(): Promise<void> {
   });
 
   if (isDev) {
+    // DevTools on demand, not on every launch. Opening it automatically made
+    // Chromium print two errors into the dev terminal on every start that
+    // have nothing to do with this app — a DevTools-protocol "Autofill.enable
+    // wasn't found" pair (Electron implements no Autofill domain) and a
+    // "Cannot send request of length 16777248" from the DevTools IPC pipe's
+    // 16 MiB per-message cap. Both are noise, and noise in a dev log is
+    // expensive: it trains you to scroll past the region where real backend
+    // errors appear.
+    //
+    // Deliberately not filtered out of the child's stderr instead — that
+    // would hide whatever else Chromium has to say, including things worth
+    // reading.
     await mainWindow.loadURL('http://127.0.0.1:5173');
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
+    if (process.env.FLUENCYOS_DEVTOOLS === '1') {
+      mainWindow.webContents.openDevTools({ mode: 'detach' });
+    }
   } else {
     await mainWindow.loadFile(path.join(__dirname, '../renderer/dist/index.html'));
+  }
+
+  if (isDev) {
+    // The window is frameless, so there is no menu bar and none of the
+    // default menu accelerators are reachable — DevTools has to be bound
+    // here or losing the auto-open would mean losing DevTools entirely.
+    mainWindow.webContents.on('before-input-event', (_event, input) => {
+      if (input.type !== 'keyDown') return;
+      const toggle =
+        input.key === 'F12' || (input.control && input.shift && input.key.toLowerCase() === 'i');
+      if (toggle) mainWindow?.webContents.toggleDevTools();
+    });
   }
 
   mainWindow.on('closed', () => {

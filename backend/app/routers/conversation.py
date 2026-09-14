@@ -28,10 +28,11 @@ router = APIRouter(prefix="/conversation", dependencies=[Depends(require_token)]
 def _turn_out(
     row: sqlite3.Row, channel: str = "text", engine: str = tts.DEFAULT_ENGINE
 ) -> ConversationTurnOut:
-    # How many pieces a reply comes in depends on the engine — Kokoro splits
-    # in two, Pocket TTS streams one — and the client asks for exactly this
-    # many chunks, so it has to be the engine the audio endpoint will use.
-    chunks = conversation.audio_chunk_count(row, channel, engine)
+    # How a reply is cut up depends on the engine, and the client both asks
+    # for exactly this many chunks and highlights words against their text —
+    # so this has to be the engine the audio endpoint will actually use.
+    chunk_texts = conversation.audio_chunk_texts(row, channel, engine)
+    chunks = len(chunk_texts)
     # Legacy turns still carry a single pre-rendered wav in audio_path; newer
     # ones are synthesized per sentence on request.
     has_audio = chunks > 0 or bool(row["audio_path"])
@@ -42,6 +43,7 @@ def _turn_out(
         text=row["text"],
         audio_url=f"/conversation/turns/{row['id']}/audio" if has_audio else None,
         audio_chunk_count=chunks,
+        audio_chunks=chunk_texts,
         stt_confidence=row["stt_confidence"],
         created_at=row["created_at"],
     )

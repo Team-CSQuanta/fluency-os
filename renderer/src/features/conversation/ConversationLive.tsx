@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { SpokenText, type SpeakingState } from './SpokenText';
+import { spokenCount, timeWords } from './spokenTiming';
 import { useMicRecorder } from '@/features/conversation/useMicRecorder';
 import { useVadRecorder } from '@/features/conversation/useVadRecorder';
 import { useConversationStore } from '@/store/conversationStore';
@@ -62,6 +64,10 @@ export function ConversationLive() {
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   // Bumped to cancel an in-progress sentence-by-sentence playback run.
   const playbackIdRef = useRef(0);
+  // Which turn is being spoken and how far into it, so the bubble can light
+  // up in time with the voice. Null whenever nothing is playing, which is
+  // what makes finished replies render as ordinary text.
+  const [speaking, setSpeaking] = useState<(SpeakingState & { turnId: string }) | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
 
   const turns = activeSession?.turns ?? [];
@@ -133,6 +139,7 @@ export function ConversationLive() {
   const stopPlayback = () => {
     // Invalidate any running sequence first, so its next sentence never starts.
     playbackIdRef.current += 1;
+    setSpeaking(null);
     const audio = currentAudioRef.current;
     if (!audio) return false;
     audio.onended = null;
@@ -151,11 +158,14 @@ export function ConversationLive() {
    * wait to roughly its own synthesis time. `playbackId` makes every sequence
    * cancellable, so barge-in or a newer reply stops the whole run rather than
    * just the clip currently playing. */
-  const playTurnAudio = async (turnId: string, chunkCount = 1) => {
+  const playTurnAudio = async (turnId: string, chunkTexts: string[] = []) => {
     lastAutoPlayedTurnId.current = turnId; // dedupes against the effect below firing for the same turn
     stopPlayback();
     const runId = ++playbackIdRef.current;
-    const total = Math.max(1, chunkCount);
+    // A turn recorded before the API returned chunk texts still has exactly
+    // one clip to play — it just gets no word highlighting, which is the
+    // right fallback rather than refusing to speak.
+    const total = Math.max(1, chunkTexts.length);
     setMicState('speaking');
 
     const fetchChunk = (index: number) =>
@@ -184,14 +194,46 @@ export function ConversationLive() {
         // Kick off the next sentence's synthesis before playing this one, so
         // the gap between sentences is as small as the hardware allows.
         pending = trackedFetch(i + 1);
+        const words = timeWords(chunkTexts[i] ?? '');
         await new Promise<void>((resolve) => {
           const audio = new Audio(url);
           currentAudioRef.current = audio;
-          audio.onended = () => resolve();
-          audio.onerror = () => resolve();
-          void audio.play().catch(() => resolve());
+
+          // Read from the element every frame rather than running a timer
+          // alongside it. currentTime is the sound's own position, so the
+          // highlight cannot drift away from what is audible — through a
+          // stall, a slow decode, or a pause.
+          let frame = 0;
+          let lastCount = -1;
+          const follow = () => {
+            if (runId !== playbackIdRef.current) return;
+            const total = audio.duration;
+            if (Number.isFinite(total) && total > 0) {
+              const count = spokenCount(words, audio.currentTime / total);
+              // Only when the word actually changes: re-rendering the
+              // transcript 60 times a second to move a highlight nobody can
+              // see move is not worth it on this hardware.
+              if (count !== lastCount) {
+                lastCount = count;
+                setSpeaking({ turnId, chunkIndex: i, spokenInChunk: count });
+              }
+            }
+            frame = requestAnimationFrame(follow);
+          };
+          frame = requestAnimationFrame(follow);
+
+          const finish = () => {
+            cancelAnimationFrame(frame);
+            resolve();
+          };
+          audio.onended = finish;
+          audio.onerror = finish;
+          void audio.play().catch(finish);
         });
         if (runId !== playbackIdRef.current) return;
+        // The clip finished: mark every one of its words said, so the last
+        // word doesn't sit un-highlighted while the next clip is fetched.
+        setSpeaking({ turnId, chunkIndex: i, spokenInChunk: words.length });
       }
     } finally {
       // Awaited, not fire-and-forget: the in-flight prefetch has to land
@@ -200,6 +242,7 @@ export function ConversationLive() {
       void pending.finally(() => created.forEach((url) => URL.revokeObjectURL(url)));
       if (runId === playbackIdRef.current) {
         currentAudioRef.current = null;
+        setSpeaking(null);
         setMicState('idle');
       }
     }
@@ -227,7 +270,7 @@ export function ConversationLive() {
 
     const isFreshOpeningLine = turns.length === 1 && useConversationStore.getState().consumeJustStarted();
     if (isFreshOpeningLine) {
-      void playTurnAudio(lastAiTurn.id, lastAiTurn.audio_chunk_count);
+      void playTurnAudio(lastAiTurn.id, lastAiTurn.audio_chunks);
     } else {
       // Not something to auto-play (a resumed session's existing history) —
       // still mark it "seen" so nothing tries to play it later either.
@@ -245,7 +288,7 @@ export function ConversationLive() {
       const { ai_turn } = await submitAudioTurn(activeSession.id, blob);
       setPendingUserText(null);
       if (isVoice && ai_turn.audio_url) {
-        void playTurnAudio(ai_turn.id, ai_turn.audio_chunk_count);
+        void playTurnAudio(ai_turn.id, ai_turn.audio_chunks);
       } else {
         setMicState('idle');
       }
@@ -313,7 +356,7 @@ export function ConversationLive() {
       const { ai_turn } = await submitTextTurn(activeSession.id, text);
       setPendingUserText(null);
       if (isVoice && ai_turn.audio_url) {
-        void playTurnAudio(ai_turn.id, ai_turn.audio_chunk_count);
+        void playTurnAudio(ai_turn.id, ai_turn.audio_chunks);
       }
     } catch (err) {
       setPendingUserText(null);
@@ -417,7 +460,15 @@ export function ConversationLive() {
                       color: 'var(--tx)',
                     }}
                   >
-                    {t.text || <span className="italic text-tx3">(no speech detected)</span>}
+                    {t.text ? (
+                      <SpokenText
+                        text={t.text}
+                        chunks={t.audio_chunks}
+                        speaking={speaking?.turnId === t.id ? speaking : null}
+                      />
+                    ) : (
+                      <span className="italic text-tx3">(no speech detected)</span>
+                    )}
                   </div>
                   <div
                     className="mt-[5px] flex items-center gap-[8px] font-mono text-[9.5px] text-tx3"
@@ -425,7 +476,7 @@ export function ConversationLive() {
                   >
                     {isAi ? 'Juno' : t.stt_confidence !== null ? `confidence ${Math.round(t.stt_confidence * 100)}%` : ''}
                     {t.audio_url && (
-                      <button onClick={() => void playTurnAudio(t.id, t.audio_chunk_count)} className="hover:text-acc">
+                      <button onClick={() => void playTurnAudio(t.id, t.audio_chunks)} className="hover:text-acc">
                         ▶ play
                       </button>
                     )}
