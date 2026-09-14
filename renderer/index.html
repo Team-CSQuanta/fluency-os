@@ -5,14 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' blob:; media-src 'self' blob:; connect-src http://127.0.0.1:*"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' blob:; media-src 'self' blob:; connect-src http://127.0.0.1:*"
     />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
-      rel="stylesheet"
-    />
+    <!-- Fonts are bundled, not fetched. They used to come from Google Fonts,
+         which meant an app whose own header reads "nothing leaves the machine"
+         made a third-party request on every launch, and fell back to whatever
+         system-ui resolved to whenever the machine was offline. 148KB buys
+         both the privacy claim and a stable rendering. -->
     <link rel="icon" type="image/png" href="/icon.png" />
     <title>FluencyOS</title>
   </head>

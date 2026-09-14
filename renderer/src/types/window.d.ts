@@ -19,6 +19,9 @@ export interface FluencyOSBridge {
   maximizeWindow: () => void;
   closeWindow: () => void;
   setDownloadActive: (active: boolean) => void;
+  /** Chromium zoom factor, 0.8–1.6. Scales the whole interface, which is the
+   * only thing that moves several hundred absolute-px sizes together. */
+  setUiScale: (factor: number) => void;
   /** Registers the close-confirmation handler; returns an unsubscribe. */
   onConfirmClose: (handler: () => void) => () => void;
   forceClose: () => void;

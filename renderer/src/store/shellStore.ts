@@ -1,4 +1,18 @@
 import { create } from 'zustand';
+
+const UI_SCALE_KEY = 'fluencyos.uiScale';
+
+/** The stored text size, or 1. Read before the store is created so the first
+ * paint is already at the right size rather than visibly resizing. */
+function readStoredScale(): number {
+  try {
+    const raw = Number(localStorage.getItem(UI_SCALE_KEY));
+    if (Number.isFinite(raw) && raw >= 0.8 && raw <= 1.6) return raw;
+  } catch {
+    /* unreadable storage is not a reason to fail to start */
+  }
+  return 1;
+}
 import type { ScreenKey } from '@/features/shell/navConfig';
 import type { SettingsGroupName } from '@/features/settings/settingsMockData';
 
@@ -6,6 +20,12 @@ interface ShellState {
   screen: ScreenKey;
   collapsed: boolean;
   theme: 'dark' | 'light';
+  /** Interface text size as a zoom factor. Persisted in localStorage rather
+   * than the database because it describes this screen, not this learner —
+   * the same account on a laptop and an external monitor wants different
+   * answers. */
+  uiScale: number;
+  setUiScale: (factor: number) => void;
   heatTip: string;
   nowPlaying: string;
   nowReading: string;
@@ -55,6 +75,7 @@ export const useShellStore = create<ShellState>((set, get) => {
     screen: 'dashboard',
     collapsed: false,
     theme: 'dark',
+    uiScale: readStoredScale(),
     heatTip: 'hover a day',
     nowPlaying: 'Arrival (2016)',
     nowReading: 'The Overstory — Richard Powers',
@@ -86,6 +107,18 @@ export const useShellStore = create<ShellState>((set, get) => {
       const next = get().theme === 'dark' ? 'light' : 'dark';
       document.body.setAttribute('data-theme', next);
       set({ theme: next });
+    },
+
+    setUiScale: (factor) => {
+      const clamped = Math.max(0.8, Math.min(1.6, factor));
+      set({ uiScale: clamped });
+      try {
+        localStorage.setItem(UI_SCALE_KEY, String(clamped));
+      } catch {
+        // Private windows and cleared site data both throw here; the setting
+        // simply does not persist, which is better than failing to apply.
+      }
+      window.fluencyos?.setUiScale(clamped);
     },
     setHeatTip: (tip) => set({ heatTip: tip }),
     setConvBusy: (busy) => set({ convBusy: busy }),

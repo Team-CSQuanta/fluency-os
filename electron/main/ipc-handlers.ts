@@ -48,4 +48,12 @@ export function registerIpcHandlers(
   ipcMain.on('window:close', () => getWindow()?.close());
 
   ipcMain.on('downloads:set-active', (_event, active: boolean) => setDownloadActive(active));
+
+  ipcMain.on('ui:set-scale', (_event, factor: number) => {
+    // Clamped: Chromium will happily accept a factor that makes the app
+    // unusable in either direction, and there is no way back from a window
+    // whose controls have scrolled off screen.
+    const clamped = Math.max(0.8, Math.min(1.6, Number(factor) || 1));
+    getWindow()?.webContents.setZoomFactor(clamped);
+  });
 }
