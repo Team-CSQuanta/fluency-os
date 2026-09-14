@@ -376,6 +376,13 @@ export interface VocabContextOut {
   book_id: string | null;
   block_index: number | null;
   created_at: string;
+  /** Set when kind === 'clip': where in which video this was captured, and
+   * the state of the clip cut for it. */
+  media_item_id: string | null;
+  start_ms: number | null;
+  end_ms: number | null;
+  clip_id: string | null;
+  clip_status: ClipStatus | null;
 }
 
 export interface VocabWordOut {
@@ -737,4 +744,147 @@ export interface AiEnrichOut {
   mnemonic: string;
   usage_note: string;
   synonyms: string[];
+}
+
+// --- Learn by watching (spec §4.1, §4.2) --------------------------------
+
+export type MediaKind = 'local' | 'link';
+export type MediaIngestStatus = 'queued' | 'probing' | 'ready' | 'failed';
+export type TrackKind = 'subtitle' | 'audio';
+export type TrackOrigin = 'embedded' | 'sidecar' | 'generated';
+export type TrackRole = 'target' | 'native';
+export type TrackStatus = 'queued' | 'extracting' | 'transcribing' | 'ready' | 'failed';
+export type ClipStatus = 'queued' | 'extracting' | 'ready' | 'failed' | 'virtual';
+export type LibraryScope = 'all' | 'local' | 'link' | 'unfinished' | 'unwatched' | 'no-subs';
+
+export interface MediaItemOut {
+  id: string;
+  user_id: string;
+  title: string;
+  kind: MediaKind;
+  source_path: string | null;
+  url: string | null;
+  container: string | null;
+  duration_ms: number;
+  width: number | null;
+  height: number | null;
+  video_codec: string | null;
+  audio_codec: string | null;
+  file_bytes: number;
+  has_thumbnail: boolean;
+  ingest_status: MediaIngestStatus;
+  ingest_error: string | null;
+  source_missing: boolean;
+  /** The MP4 index sits after the media data, so seeking is slow in any
+   * player. Fixable losslessly — see optimizeForSeeking. */
+  index_at_end: boolean;
+  added_at: string;
+  /** null when never opened — distinct from 0, which means restarted. */
+  position_ms: number | null;
+  percent_complete: number | null;
+  total_watch_ms: number | null;
+  last_watched_at: string | null;
+  saves: number;
+  subtitle_tracks: number;
+}
+
+export interface MediaTrackOut {
+  id: string;
+  kind: TrackKind;
+  origin: TrackOrigin;
+  language: string | null;
+  label: string;
+  stream_index: number | null;
+  role: TrackRole;
+  cue_count: number;
+  status: TrackStatus;
+  progress: number;
+  error: string | null;
+}
+
+export interface CueOut {
+  id: string;
+  order_index: number;
+  start_ms: number;
+  end_ms: number;
+  text: string;
+}
+
+export interface MediaItemPrefsOut {
+  target_track_id: string | null;
+  native_track_id: string | null;
+  audio_track_index: number | null;
+  subtitle_delay_ms: number;
+  playback_rate: number;
+}
+
+export interface MediaDetailOut {
+  item: MediaItemOut;
+  tracks: MediaTrackOut[];
+  prefs: MediaItemPrefsOut;
+}
+
+export interface LibraryOut {
+  items: MediaItemOut[];
+  recent: MediaItemOut[];
+  counts: Record<string, number>;
+  ffmpeg_available: boolean;
+  stt_ready: boolean;
+  library_bytes: number;
+}
+
+export interface ProgressOut {
+  position_ms: number;
+  percent_complete: number;
+  total_watch_ms: number;
+  updated_at: string;
+}
+
+export interface ClipOut {
+  id: string;
+  media_item_id: string;
+  media_title: string;
+  vocab_word_id: string | null;
+  cue_text: string;
+  start_ms: number;
+  end_ms: number;
+  status: ClipStatus;
+  error: string | null;
+  clip_bytes: number;
+  has_thumbnail: boolean;
+  created_at: string;
+}
+
+export interface SaveFromVideoOut {
+  vocab_word_id: string;
+  word: string;
+  already_saved: boolean;
+  context_added: boolean;
+  clip: ClipOut | null;
+}
+
+export interface PlayerPrefsOut {
+  dual_subs: boolean;
+  blur_subs: boolean;
+  auto_pause: boolean;
+  loop_cue: boolean;
+  sub_size: number;
+  sub_opacity: number;
+  sub_offset: number;
+  clip_pad_before_ms: number;
+  clip_pad_after_ms: number;
+  clip_max_ms: number;
+  clip_height: number;
+  /** false keeps only the timecodes and rebuilds the clip on demand. */
+  clip_store_files: boolean;
+}
+
+export interface MediaStorageOut {
+  clips: number;
+  stored_clips: number;
+  clip_bytes: number;
+  total_bytes: number;
+  ffmpeg_available: boolean;
+  ffmpeg_version: string | null;
+  stt_ready: boolean;
 }

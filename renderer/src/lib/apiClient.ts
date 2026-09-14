@@ -47,6 +47,17 @@ export async function fetchBlobUrl(path: string): Promise<string> {
   return URL.createObjectURL(blob);
 }
 
+// A URL the browser itself will fetch — a <video src>, a poster <img>.
+// Those tags cannot carry a custom header, and the fetch-into-a-blob trick
+// fetchBlobUrl uses would mean holding a whole film in renderer memory and
+// losing seeking, so the handshake token rides as a query parameter instead.
+// The backend accepts it only on these file routes (see security.py).
+export function fileUrl(path: string): string {
+  const { baseUrl, token } = requireBackendInfo();
+  const separator = path.includes('?') ? '&' : '?';
+  return `${baseUrl}${path}${separator}t=${encodeURIComponent(token)}`;
+}
+
 // Multipart uploads (conversation turn audio) can't go through request<T>()'s
 // forced 'Content-Type: application/json' — the browser needs to set its own
 // boundary — so this bypasses it the same way fetchBlobUrl bypasses the JSON

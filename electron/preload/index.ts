@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('fluencyos', {
   getSystemInfo: () => ipcRenderer.invoke('system:get-info'),
   pickDataFolder: () => ipcRenderer.invoke('dialog:pick-folder'),
   pickBookFiles: () => ipcRenderer.invoke('dialog:pick-book-files'),
+  pickMediaFiles: () => ipcRenderer.invoke('dialog:pick-media-files'),
+  pickSubtitleFile: () => ipcRenderer.invoke('dialog:pick-subtitle-file'),
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   minimizeWindow: () => ipcRenderer.send('window:minimize'),
   maximizeWindow: () => ipcRenderer.send('window:maximize'),

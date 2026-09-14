@@ -1,42 +1,56 @@
 import { useState } from 'react';
-import { ADD_LINK_FIELDS, ADD_LOCAL_FIELDS } from '@/features/library/libraryMockData';
+import { useMediaStore } from '@/store/mediaStore';
 
-type Step = 'source' | 'local' | 'link';
-
-const SOURCES: Array<{ key: Step; n: string; desc: string; meta: string }> = [
-  {
-    key: 'local',
-    n: 'Local video file',
-    desc: 'Read in place from your disk. Nothing is copied or uploaded.',
-    meta: 'mp4 · mkv · avi · webm · mov',
-  },
-  {
-    key: 'link',
-    n: 'Paste a link',
-    desc: 'YouTube and similar. Streamed by the embedded player; only the URL and timecodes are stored.',
-    meta: 'youtube.com · vimeo.com · direct URL',
-  },
-];
-
+/** Adding content to the watching library.
+ *
+ * Local files only, deliberately. The spec (§4.1.1) also asks for pasted
+ * YouTube links, and the mock modal used to show a convincing two-step flow
+ * for them — but there is no resolver behind it, so every field in that flow
+ * was invented. A dialog that cannot do what it offers is worse than one that
+ * says what it can do, so the link path states plainly what it would need.
+ */
 export function AddContentModal({ onClose }: { onClose: () => void }) {
-  const [step, setStep] = useState<Step | 'source'>('source');
+  const { importMedia, importQueue, clearImportQueue, ffmpegAvailable } = useMediaStore();
+  const [dragging, setDragging] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const stepLabel =
-    step === 'source' ? 'step 1 of 2 · where is it coming from?' : step === 'local' ? 'step 2 of 2 · local file' : 'step 2 of 2 · from a link';
-  const backLabel = step === 'source' ? 'Cancel' : 'Back';
-  const confirmLabel = step === 'source' ? 'Pick a source above' : 'Add to library';
-
-  const handleBack = () => {
-    if (step === 'source') onClose();
-    else setStep('source');
+  const run = async (paths: string[]) => {
+    if (paths.length === 0) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await importMedia(paths);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const handleConfirm = () => {
-    if (step !== 'source') onClose(); // no real ingestion backend yet — closes as a demo action
+  const browse = async () => {
+    const paths = await window.fluencyos.pickMediaFiles();
+    await run(paths);
+  };
+
+  const onDrop = async (event: React.DragEvent) => {
+    event.preventDefault();
+    setDragging(false);
+    // Electron exposes the real path through webUtils; File.path was removed
+    // in Electron 32, which is why this goes through the preload bridge.
+    const paths = Array.from(event.dataTransfer.files).map((file) => window.fluencyos.getPathForFile(file));
+    await run(paths.filter(Boolean));
+  };
+
+  const done = importQueue.length > 0 && importQueue.every((q) => q.status === 'ready' || q.status === 'failed');
+
+  const close = () => {
+    clearImportQueue();
+    onClose();
   };
 
   return (
-    <div className="fixed inset-0 z-[80] grid place-items-center bg-black/45 p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-[80] grid place-items-center bg-black/45 p-6" onClick={close}>
       <div
         className="w-full max-w-[560px] overflow-hidden rounded-panel border border-line bg-panel shadow-[0_24px_60px_rgba(0,0,0,.35)]"
         onClick={(e) => e.stopPropagation()}
@@ -44,117 +58,110 @@ export function AddContentModal({ onClose }: { onClose: () => void }) {
         <div className="flex items-center justify-between border-b border-line2 px-5 py-4">
           <div>
             <div className="font-sans text-[14px] font-semibold text-tx">Add content</div>
-            <div className="mt-[3px] font-mono text-[10.5px] text-tx3">{stepLabel}</div>
+            <div className="mt-[3px] font-mono text-[10.5px] text-tx3">
+              read in place · nothing is copied or uploaded
+            </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={close}
             className="grid h-7 w-7 place-items-center rounded-field border border-line2 font-mono text-[11px] text-tx2 hover:border-acc"
           >
             ✕
           </button>
         </div>
 
-        <div className="p-5">
-          {step === 'source' && (
-            <div className="flex flex-col gap-[10px]">
-              {SOURCES.map((s) => (
-                <button
-                  key={s.key}
-                  onClick={() => setStep(s.key)}
-                  className="rounded-panel border border-line2 bg-panel2 p-4 text-left hover:border-acc"
+        <div className="flex flex-col gap-[14px] p-5">
+          {!ffmpegAvailable && (
+            <div
+              className="rounded-panel px-[13px] py-[10px] font-sans text-[11.5px] leading-[1.6]"
+              style={{ background: 'rgba(220,140,60,.10)', color: 'var(--tx2)' }}
+            >
+              ffmpeg isn’t installed, so video files can’t be read yet. Install it and restart FluencyOS.
+            </div>
+          )}
+
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragging(true);
+            }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={onDrop}
+            className="rounded-panel border border-dashed px-[26px] py-[26px] text-center"
+            style={{ borderColor: dragging ? 'var(--acc)' : 'var(--line)' }}
+          >
+            <div className="font-sans text-[12.5px] font-medium text-tx">Drop video files here</div>
+            <div className="mt-[6px] font-mono text-[10.5px] text-tx3">mp4 · mkv · avi · webm · mov</div>
+            <button
+              onClick={() => void browse()}
+              disabled={busy || !ffmpegAvailable}
+              className="mt-[14px] rounded-field border border-line px-[14px] py-2 font-mono text-[11px] text-tx2 hover:border-acc hover:text-acc disabled:opacity-50"
+            >
+              {busy ? 'importing…' : 'browse…'}
+            </button>
+          </div>
+
+          {error && <div className="font-sans text-[11.5px] text-[#e06c6c]">{error}</div>}
+
+          {importQueue.length > 0 && (
+            <div className="flex flex-col overflow-hidden rounded-panel border border-line2">
+              {importQueue.map((q, i) => (
+                <div
+                  key={q.path + i}
+                  className="flex items-center justify-between gap-4 px-[14px] py-3"
+                  style={{ borderBottom: i < importQueue.length - 1 ? '1px solid var(--line2)' : 'none' }}
                 >
-                  <span className="block font-sans text-[13px] font-semibold text-tx">{s.n}</span>
-                  <span className="mt-1 block font-sans text-[11.5px] leading-[1.6] text-tx2">{s.desc}</span>
-                  <span className="mt-[6px] block font-mono text-[9.5px] text-tx3">{s.meta}</span>
-                </button>
+                  <span className="min-w-0">
+                    <span className="block truncate font-sans text-[12px] font-medium text-tx">{q.name}</span>
+                    <span className="mt-[2px] block truncate font-mono text-[10px] text-tx3">
+                      {q.error ?? q.path}
+                    </span>
+                  </span>
+                  <span
+                    className="flex-none rounded-field border px-[10px] py-[5px] font-mono text-[10.5px]"
+                    style={{
+                      borderColor: q.status === 'failed' ? 'rgba(224,108,108,.45)' : 'var(--line2)',
+                      color: q.status === 'failed' ? '#e06c6c' : q.status === 'ready' ? 'var(--acc)' : 'var(--tx3)',
+                    }}
+                  >
+                    {q.status === 'ready'
+                      ? 'ready'
+                      : q.status === 'failed'
+                        ? 'failed'
+                        : q.status === 'probing'
+                          ? 'reading tracks…'
+                          : 'queued'}
+                  </span>
+                </div>
               ))}
             </div>
           )}
 
-          {step === 'local' && (
-            <div className="flex flex-col gap-[14px]">
-              <div className="rounded-panel border border-dashed border-line px-[26px] py-[26px] text-center">
-                <div className="font-sans text-[12.5px] font-medium text-tx">Drop video files here</div>
-                <div className="mt-[6px] font-mono text-[10.5px] text-tx3">mp4 · mkv · avi · webm · mov</div>
-                <button className="mt-[14px] rounded-field border border-line px-[14px] py-2 font-mono text-[11px] text-tx2 hover:border-acc hover:text-acc">
-                  browse…
-                </button>
-              </div>
-              <div className="flex flex-col overflow-hidden rounded-panel border border-line2">
-                {ADD_LOCAL_FIELDS.map((f, i) => (
-                  <div
-                    key={f.n}
-                    className="flex items-center justify-between gap-4 px-[14px] py-3"
-                    style={{ borderBottom: i < ADD_LOCAL_FIELDS.length - 1 ? '1px solid var(--line2)' : 'none' }}
-                  >
-                    <span className="min-w-0">
-                      <span className="block font-sans text-[12px] font-medium text-tx">{f.n}</span>
-                      <span className="mt-[2px] block font-mono text-[10px] text-tx3">{f.sub}</span>
-                    </span>
-                    <span className="flex-none rounded-field border border-line2 px-[10px] py-[5px] font-mono text-[11px] text-tx2">
-                      {f.v}
-                    </span>
-                  </div>
-                ))}
-              </div>
+          <div className="rounded-panel border border-line2 bg-panel2 p-4">
+            <div className="font-sans text-[12.5px] font-semibold text-tx">Pasting a link</div>
+            <div className="mt-[6px] font-sans text-[11.5px] leading-[1.6] text-tx2">
+              Streaming from YouTube and similar isn’t wired up yet. It needs a URL resolver that FluencyOS doesn’t
+              ship, so the option is left out rather than shown as a step that quietly does nothing.
             </div>
-          )}
-
-          {step === 'link' && (
-            <div className="flex flex-col gap-[14px]">
-              <div>
-                <div className="mb-[7px] font-mono text-[11px] text-tx3">paste a link</div>
-                <div className="flex items-center rounded-field border border-accLine bg-accSoft px-[13px] py-[11px] font-mono text-[12px] text-tx">
-                  youtube.com/watch?v=…
-                  <span className="ml-[2px] animate-pulse">▌</span>
-                </div>
-                <div className="mt-[7px] font-mono text-[10px] text-tx3">
-                  resolved: "The Immune System Explained" · 09:41 · captions available (en)
-                </div>
-              </div>
-              <div className="flex flex-col overflow-hidden rounded-panel border border-line2">
-                {ADD_LINK_FIELDS.map((f, i) => (
-                  <div
-                    key={f.n}
-                    className="flex items-center justify-between gap-4 px-[14px] py-3"
-                    style={{ borderBottom: i < ADD_LINK_FIELDS.length - 1 ? '1px solid var(--line2)' : 'none' }}
-                  >
-                    <span className="min-w-0">
-                      <span className="block font-sans text-[12px] font-medium text-tx">{f.n}</span>
-                      <span className="mt-[2px] block font-mono text-[10px] text-tx3">{f.sub}</span>
-                    </span>
-                    <span className="flex-none rounded-field border border-line2 px-[10px] py-[5px] font-mono text-[11px] text-tx2">
-                      {f.v}
-                    </span>
-                  </div>
-                ))}
-              </div>
-              <div className="font-mono text-[10px] leading-[1.7] text-tx3">
-                links are never downloaded — the embedded player streams them and only the URL plus timecodes are
-                stored, so a clip is reconstructed on demand
-              </div>
+            <div className="mt-[8px] font-mono text-[10px] leading-[1.6] text-tx3">
+              a file you already have on disk works today, with subtitles, lookups and clips
             </div>
-          )}
+          </div>
         </div>
 
         <div className="flex justify-between gap-2 border-t border-line2 px-5 py-[14px]">
           <button
-            onClick={handleBack}
+            onClick={close}
             className="rounded-field border border-line px-[14px] py-[9px] font-sans text-[11.5px] font-medium text-tx2 hover:border-acc hover:text-acc"
           >
-            {backLabel}
+            {done ? 'Close' : 'Cancel'}
           </button>
           <button
-            onClick={handleConfirm}
-            disabled={step === 'source'}
-            className="rounded-field px-[18px] py-[9px] font-sans text-[11.5px] font-semibold"
-            style={{
-              background: step === 'source' ? 'transparent' : 'var(--acc)',
-              color: step === 'source' ? 'var(--tx3)' : '#fff',
-              border: step === 'source' ? '1px solid var(--line2)' : '1px solid transparent',
-            }}
+            onClick={() => void browse()}
+            disabled={busy || !ffmpegAvailable}
+            className="rounded-field bg-accSolid px-[18px] py-[9px] font-sans text-[11.5px] font-semibold text-white hover:brightness-110 disabled:opacity-50"
           >
-            {confirmLabel}
+            Choose files…
           </button>
         </div>
       </div>

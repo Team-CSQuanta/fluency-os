@@ -30,7 +30,9 @@ export function ScreenHeader() {
       : staticSub;
   const sub =
     screen === 'player'
-      ? `${nowPlaying} · ${staticSub}`
+      ? nowPlaying
+        ? `${nowPlaying} · ${staticSub}`
+        : staticSub
       : screen === 'reader'
         ? `${nowReading} · ${staticSub}`
         : screen === 'word'

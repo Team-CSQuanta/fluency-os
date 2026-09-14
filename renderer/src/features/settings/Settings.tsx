@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { MediaSettingsPanel } from '@/features/settings/MediaSettingsPanel';
 import { ModelsPanel } from '@/features/settings/ModelsPanel';
 import { SETTINGS_GROUPS, SETTINGS_GROUP_ORDER, type SettingsGroupName } from '@/features/settings/settingsMockData';
 import { useAppStore } from '@/store/appStore';
@@ -46,6 +47,8 @@ export function Settings() {
 
           {group === 'AI' ? (
             <ModelsPanel />
+          ) : group === 'Media' ? (
+            <MediaSettingsPanel />
           ) : (
             <>
             {group === 'Appearance' && <TextSizeControl />}
