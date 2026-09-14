@@ -1,10 +1,69 @@
+/* Bundled locally — see index.html. Inter for the interface, IBM Plex Mono
+   for the technical/label text. `font-display: block` rather than `swap`:
+   the files are local so there is no wait to paper over, and a swap would
+   only introduce a flash of a different metric. */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('/fonts/inter-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+  src: url('/fonts/inter-500.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: block;
+  src: url('/fonts/inter-600.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  src: url('/fonts/inter-700.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('/fonts/plex-mono-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+  src: url('/fonts/plex-mono-500.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: block;
+  src: url('/fonts/plex-mono-600.woff2') format('woff2');
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 /* Design tokens ported verbatim from claude-ui-mockup-files/FluencyOS.html */
 :root {
-  --sans: 'Public Sans', system-ui, sans-serif;
+  /* Inter, measured at x-height 0.546em against Public Sans's 0.517 — a
+     ~6% larger lowercase at the same px size, which matters in an
+     interface with several hundred labels at 11px and below. It is also
+     drawn for screens at small sizes, with open apertures that keep
+     a/e/s/c from filling in. */
+  --sans: 'Inter', system-ui, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
   /* The accent, as channels so every tint derives from one place rather than
      from copies of an rgba() literal scattered through the components. */

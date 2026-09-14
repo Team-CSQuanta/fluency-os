@@ -47,6 +47,8 @@ export function Settings() {
           {group === 'AI' ? (
             <ModelsPanel />
           ) : (
+            <>
+            {group === 'Appearance' && <TextSizeControl />}
             <div className="mt-5 flex flex-col gap-[1px] overflow-hidden rounded-panel border border-line2 bg-panel">
               {fields.map((f) => (
                 <div
@@ -63,7 +65,70 @@ export function Settings() {
                 </div>
               ))}
             </div>
+            </>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+/** Interface text size.
+ *
+ * The app sizes several hundred elements in absolute px — over four hundred
+ * of them at 11px or below — so no font change moves them together. Switching
+ * typeface buys about 6% of lowercase height (Inter's x-height is 0.546em
+ * against Public Sans's 0.517); this buys as much as the reader wants, and
+ * scales borders, spacing and images with the type rather than leaving them
+ * behind.
+ */
+function TextSizeControl() {
+  const uiScale = useShellStore((s) => s.uiScale);
+  const setUiScale = useShellStore((s) => s.setUiScale);
+
+  const STEPS: Array<{ factor: number; label: string }> = [
+    { factor: 0.9, label: 'compact' },
+    { factor: 1.0, label: 'default' },
+    { factor: 1.15, label: 'larger' },
+    { factor: 1.3, label: 'largest' },
+  ];
+
+  return (
+    <div className="mt-5 overflow-hidden rounded-panel border border-line2 bg-panel">
+      <div className="flex items-center justify-between gap-5 border-b border-line2 px-4 py-[14px]">
+        <div className="min-w-0">
+          <div className="font-sans text-[12.5px] font-medium text-tx">Text size</div>
+          <div className="mt-[3px] font-mono text-[10.5px] leading-[1.6] text-tx3">
+            scales the whole interface · applies immediately
+          </div>
+        </div>
+        <div className="flex flex-none gap-[5px]">
+          {STEPS.map((s) => {
+            const on = Math.abs(uiScale - s.factor) < 0.01;
+            return (
+              <button
+                key={s.factor}
+                onClick={() => setUiScale(s.factor)}
+                className="rounded-field border px-[10px] py-[6px] font-mono text-[11px] font-medium"
+                style={{
+                  borderColor: on ? 'var(--accLine)' : 'var(--line2)',
+                  background: on ? 'var(--accSoft)' : 'transparent',
+                  color: on ? 'var(--acc)' : 'var(--tx2)',
+                }}
+              >
+                {s.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div className="px-4 py-[13px]">
+        <div className="font-sans text-[13px] leading-[1.7] text-tx">
+          The quick brown fox jumps over the lazy dog.
+        </div>
+        <div className="mt-[5px] font-mono text-[10.5px] text-tx3">
+          Illegible? Il1 O0 rn m — a sample at the size labels use.
         </div>
       </div>
     </div>

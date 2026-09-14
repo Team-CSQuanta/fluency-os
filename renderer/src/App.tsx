@@ -90,6 +90,13 @@ export function App() {
     void initialize();
   }, [initialize]);
 
+  // Chromium does not remember the zoom factor across launches, so the stored
+  // preference has to be re-applied each time or the setting silently resets.
+  const uiScale = useShellStore((s) => s.uiScale);
+  useEffect(() => {
+    window.fluencyos?.setUiScale(uiScale);
+  }, [uiScale]);
+
   const screenTitle = onboardingCompleted ? 'Dashboard' : 'Onboarding';
 
   return (
