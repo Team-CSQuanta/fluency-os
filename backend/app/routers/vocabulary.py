@@ -2,11 +2,15 @@ import json
 import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse
 
 from app.db import get_db
 from app.models.vocabulary import (
     AiExamplesOut,
     AiExplainIn,
+    AiEnrichIn,
+    AiEnrichOut,
     AiExplainOut,
     AiMnemonicOut,
     AiPracticeOut,
@@ -15,6 +19,7 @@ from app.models.vocabulary import (
     VocabContextOut,
     VocabNoteCreate,
     VocabNoteOut,
+    VocabOverviewOut,
     VocabTagCreate,
     VocabWordCreate,
     VocabWordDetailOut,
@@ -23,7 +28,17 @@ from app.models.vocabulary import (
     VocabWordSaveOut,
 )
 from app.security import require_token
-from app.services import cefr_lexicon, conversation, dictionary_lookup, vocabulary, vocabulary_ai
+from app.services import (
+    cefr_lexicon,
+    conversation,
+    dictionary_lookup,
+    fsrs,
+    pronunciation,
+    review,
+    vocabulary,
+    vocabulary_ai,
+)
+from app.services.voice import tts
 from app.services.voice.errors import EngineUnavailable
 
 router = APIRouter(prefix="/vocabulary", dependencies=[Depends(require_token)])
@@ -36,18 +51,66 @@ def _row_to_word_out(conn: sqlite3.Connection, row: sqlite3.Row) -> VocabWordOut
         word=row["word"],
         lemma=row["lemma"],
         pos=row["pos"],
-        cefr=row["cefr"],
+        # Falls back to the band table when the row has no level of its own.
+        # Derived rather than backfilled: the stored value was snapshotted
+        # when the word was saved, so a word added before the band table
+        # existed would otherwise stay "—" forever, and would go stale again
+        # the next time the lexicon grows.
+        cefr=row["cefr"] or cefr_lexicon.band_of(row["word"]),
         definition=row["definition"],
         example=row["example"],
         simpler=row["simpler"],
-        ipa=row["ipa"],
+        # Same fallback shape as cefr below: derived when the row has none of
+        # its own, so a word saved before this table existed — or saved while
+        # the online dictionary was unreachable — still shows how to say it.
+        ipa=pronunciation.display(row["ipa"] or pronunciation.ipa_for(row["word"])),
         audio_url=row["audio_url"],
         synonyms=json.loads(row["synonyms"]),
         tags=vocabulary.get_tags(conn, row["id"]),
         context_count=vocabulary.context_count(conn, row["id"]),
         ai_mnemonic=row["ai_mnemonic"],
+        ai_definition=_opt(row, "ai_definition"),
+        ai_examples=json.loads(_opt(row, "ai_examples") or "[]"),
+        ai_usage_note=_opt(row, "ai_usage_note"),
+        ai_sense_definition=_opt(row, "ai_sense_definition"),
         created_at=row["created_at"],
+        **_scheduling(conn, row),
     )
+
+
+def _opt(row: sqlite3.Row, key: str):
+    """A column that may not be in this particular SELECT."""
+    return row[key] if key in row.keys() else None
+
+
+def _scheduling(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    """Scheduling state for a word row, when the query joined it in.
+
+    `get_word_row` and friends return a bare vocab_words row, so every field
+    here is optional — a detail view is not worth a second query just to
+    decorate it with numbers the list already shows."""
+    keys = row.keys()
+    if "card_state" not in keys:
+        return {}
+    card = fsrs.Card(
+        stability=row["stability"] or 0.0,
+        difficulty=row["difficulty"] or 0.0,
+        reps=row["reps"] or 0,
+        lapses=row["lapses"] or 0,
+        state=row["card_state"] or "new",
+    )
+    mastery = review.mastery_for(card, review.spontaneous_sessions(conn, row["id"]))
+    return {
+        "card_state": row["card_state"],
+        "due": row["due"],
+        "stability_days": round(card.stability, 1),
+        "difficulty": round(card.difficulty, 1),
+        "reps": card.reps,
+        "lapses": card.lapses,
+        "suspended": bool(row["suspended"]),
+        "mastery_level": mastery.level,
+        "mastery_label": mastery.label,
+    }
 
 
 def _row_to_context_out(row: sqlite3.Row) -> VocabContextOut:
@@ -76,8 +139,35 @@ def _get_owned_word_row(conn: sqlite3.Connection, vocab_word_id: str, user_id: s
 
 
 @router.get("", response_model=list[VocabWordOut])
-def list_words(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> list[VocabWordOut]:
-    return [_row_to_word_out(conn, row) for row in vocabulary.list_words(conn, user_id)]
+def list_words(
+    user_id: str,
+    q: str = "",
+    cefr: str | None = None,
+    tag: str | None = None,
+    status_filter: str = "all",
+    sort: str = "recent",
+    conn: sqlite3.Connection = Depends(get_db),
+) -> list[VocabWordOut]:
+    """Filtered and ordered in SQL rather than in the browser.
+
+    The search used to run client-side over whatever had already been
+    fetched, which quietly stops working as a collection grows — and the only
+    ordering was when a word happened to be saved."""
+    if status_filter not in vocabulary.STATUS_FILTERS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unknown status filter")
+    if sort not in vocabulary.SORT_ORDERS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unknown sort order")
+    rows = vocabulary.list_words(
+        conn, user_id, query=q, cefr=cefr, tag=tag, status=status_filter, sort=sort
+    )
+    return [_row_to_word_out(conn, row) for row in rows]
+
+
+@router.get("/overview", response_model=VocabOverviewOut)
+def get_overview(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> VocabOverviewOut:
+    """Counts for the summary header and the filter chips, so the list opens
+    on something other than an undifferentiated wall of words."""
+    return VocabOverviewOut(**vocabulary.overview(conn, user_id))
 
 
 @router.get("/by-word/{word}", response_model=VocabWordDetailOut)
@@ -91,6 +181,7 @@ def get_word_detail(word: str, user_id: str, conn: sqlite3.Connection = Depends(
         contexts=[_row_to_context_out(r) for r in vocabulary.get_contexts(conn, row["id"])],
         notes=[_row_to_note_out(r) for r in vocabulary.get_notes(conn, row["id"])],
         conversation_usage=conversation.word_usage_counts(conn, row["id"]),
+        flashcard_reviews=conversation.flashcard_review_counts(conn, row["id"]),
     )
 
 
@@ -131,15 +222,22 @@ def dictionary_search(w: str) -> DictionarySearchOut:
     # to know the word; dictionaryapi.dev has neither, so these are never
     # invented to fill the gap.
     local = cefr_lexicon.lookup(word)
+    # The band comes from band_of, not from `local`, so the ~8.8k words that
+    # are in the band table but not the curated lexicon still get a level —
+    # which is most of them. Reading it off `local` alone is why almost every
+    # saved word showed "CEFR —".
+    band = cefr_lexicon.band_of(word)
 
     return DictionarySearchOut(
         word=result.word,
         found=result.found,
-        ipa=result.ipa,
+        # The online dictionary often has no phonetics even when it has the
+        # word. CMUdict does, offline, for 126k words.
+        ipa=pronunciation.display(result.ipa or pronunciation.ipa_for(result.word)),
         audio_url=result.audio_url,
         senses=[DictionarySenseOut(pos=s.pos, definition=s.definition, example=s.example) for s in result.senses],
         synonyms=list(result.synonyms),
-        cefr=local.cefr if local is not None else None,
+        cefr=band,
         simpler=local.simpler if local is not None else None,
     )
 
@@ -157,6 +255,11 @@ def save_manual_word(payload: VocabWordManualCreate, conn: sqlite3.Connection = 
         ipa=payload.ipa,
         audio_url=payload.audio_url,
         note_text=payload.note,
+        ai_definition=payload.ai_definition,
+        ai_examples=payload.ai_examples,
+        ai_mnemonic=payload.ai_mnemonic,
+        ai_usage_note=payload.ai_usage_note,
+        ai_sense_definition=payload.ai_sense_definition,
     )
     return VocabWordSaveOut(word=_row_to_word_out(conn, row), already_saved=already_existed)
 
@@ -198,6 +301,44 @@ def remove_tag(vocab_word_id: str, tag: str, user_id: str, conn: sqlite3.Connect
     return vocabulary.remove_tag(conn, vocab_word_id, tag)
 
 
+@router.get("/{vocab_word_id}/pronounce")
+async def pronounce(
+    vocab_word_id: str,
+    user_id: str,
+    part: str = "word",
+    conn: sqlite3.Connection = Depends(get_db),
+) -> FileResponse:
+    """Speaks the word, or its example sentence, with the local TTS engine.
+
+    Spec §5.3 asks for "TTS pronunciation of both the word and the sentence".
+    Until now the page could only offer audio that happened to ship with a
+    dictionary entry, so a manually added word — or any word the dictionary
+    had no recording for — simply had no pronunciation at all. The engine
+    that speaks in Conversation can say any of them.
+
+    Cached on disk after the first request, keyed by engine and part: this is
+    real synthesis, and a word's pronunciation does not change."""
+    row = conn.execute(
+        "SELECT id, word, example FROM vocab_words WHERE id = ? AND user_id = ?",
+        (vocab_word_id, user_id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Word not saved")
+
+    text = row["word"] if part == "word" else (row["example"] or "")
+    if not text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No example sentence to speak"
+        )
+
+    engine = tts.selected_name(conn, user_id)
+    try:
+        path = await run_in_threadpool(vocabulary.pronunciation_path, row["id"], text, part, engine)
+    except EngineUnavailable as err:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(err)) from err
+    return FileResponse(str(path), media_type="audio/wav")
+
+
 @router.post("/ai-explain", response_model=AiExplainOut)
 def ai_explain(payload: AiExplainIn, conn: sqlite3.Connection = Depends(get_db)) -> AiExplainOut:
     """The AI alternative to dictionary-search: define a word as used in a
@@ -213,6 +354,52 @@ def ai_explain(payload: AiExplainIn, conn: sqlite3.Connection = Depends(get_db))
     except EngineUnavailable as err:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(err)) from err
     return AiExplainOut(**result)
+
+
+@router.post("/ai-enrich", response_model=AiEnrichOut)
+def ai_enrich(payload: AiEnrichIn, conn: sqlite3.Connection = Depends(get_db)) -> AiEnrichOut:
+    """The AI half of adding a word, run alongside the dictionary rather than
+    as an alternative to it.
+
+    A dictionary defines a word for someone who already speaks the language.
+    What a learner needs on top — a definition at their level, sentences they
+    might really say, a hook to remember it by, a note on register — is
+    exactly what dictionaries omit."""
+    word = payload.word.strip()
+    if not word:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="word is required")
+    try:
+        result = vocabulary_ai.enrich_word(
+            conn,
+            user_id=payload.user_id,
+            word=word,
+            dictionary_definition=payload.dictionary_definition,
+            context=payload.context,
+        )
+    except EngineUnavailable as err:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(err)) from err
+    return AiEnrichOut(**result)
+
+
+@router.get("/speak")
+async def speak(text: str, user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> FileResponse:
+    """Says a short piece of text with the local voice.
+
+    Exists so a word can be heard BEFORE it is saved — the per-word endpoint
+    needs an id, and deciding whether to keep a word is exactly when hearing
+    it is most useful. Capped and cached by content hash, because this is one
+    request away from being an open text-to-speech service for anything."""
+    clean = (text or "").strip()
+    if not clean:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="text is required")
+    if len(clean) > 200:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="text is too long to speak")
+    engine = tts.selected_name(conn, user_id)
+    try:
+        path = await run_in_threadpool(vocabulary.speech_path, clean, engine)
+    except EngineUnavailable as err:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(err)) from err
+    return FileResponse(str(path), media_type="audio/wav")
 
 
 @router.post("/{vocab_word_id}/ai-examples", response_model=AiExamplesOut)

@@ -10,7 +10,7 @@ Conversation uses.
 
 import sqlite3
 
-from app.services import conversation
+from app.services import conversation, conversation_report
 from app.services.voice import cloud_llm_engine, gemini_llm_engine, llm_chat_engine
 
 _JSON_ONLY = "Respond with ONLY a JSON object (no prose, no markdown fences) of the shape: "
@@ -72,6 +72,75 @@ def explain_in_context(conn: sqlite3.Connection, *, user_id: str, word: str, con
     }
 
 
+def enrich_word(
+    conn: sqlite3.Connection,
+    *,
+    user_id: str,
+    word: str,
+    dictionary_definition: str | None = None,
+    context: str | None = None,
+) -> dict:
+    """The AI half of adding a word, alongside the dictionary rather than
+    instead of it.
+
+    A dictionary defines a word for someone who already speaks the language;
+    the parts a learner actually needs — a definition pitched at their level,
+    sentences they might really say, a hook to remember it by, and a warning
+    about register — are exactly what dictionaries leave out. Given the
+    dictionary's own definition as grounding, a small local model does this
+    well, and grounding it is what keeps it from inventing a sense.
+
+    `context` is optional: a word can be added from nothing but itself.
+    """
+    grounding = ""
+    if dictionary_definition:
+        grounding += f'\nA dictionary defines it as: "{dictionary_definition}"'
+    if context:
+        grounding += f'\nThe learner met it here: "{context}"'
+
+    system_prompt = (
+        "You help someone learning English record a new word. Respond with ONLY a JSON object "
+        "(no prose, no markdown fences) with exactly these keys: "
+        '"definition": a plain one-sentence meaning a B1 learner would understand, '
+        '"examples": an array of exactly 2 natural sentences a person might really say, using the word, '
+        '"mnemonic": one short vivid memory hook, '
+        '"usage_note": at most 8 words on when to use it (e.g. "formal writing; rare in speech"), '
+        '"synonyms": an array of up to 4 near-synonyms. '
+        "Never invent a meaning the word does not have."
+    )
+    user_prompt = f"Word: {word}{grounding}"
+
+    target = _llm_target(conn, user_id)
+    raw = _generate_json(target, system_prompt, user_prompt, max_tokens=400)
+
+    def _text(key: str) -> str:
+        value = raw.get(key)
+        return value.strip() if isinstance(value, str) else ""
+
+    def _list(key: str, limit: int) -> list[str]:
+        value = raw.get(key)
+        if not isinstance(value, list):
+            return []
+        return [str(v).strip() for v in value if str(v).strip()][:limit]
+
+    # An example sentence that does not contain the word teaches nothing about
+    # the word, and a 1B model produces them regularly — observed asking for
+    # "excerpt" and getting "I need to read the entire article before I can
+    # understand it." Checked rather than trusted, on the same lemma rules the
+    # transcript search uses, so an inflected form still counts.
+    examples = [
+        e for e in _list("examples", 4) if conversation_report.says_word(e, word)
+    ][:2]
+
+    return {
+        "definition": _text("definition"),
+        "examples": examples,
+        "mnemonic": _text("mnemonic"),
+        "usage_note": _text("usage_note"),
+        "synonyms": [s for s in _list("synonyms", 6) if s.lower() != word.lower()][:4],
+    }
+
+
 def generate_examples(conn: sqlite3.Connection, *, user_id: str, word_row: sqlite3.Row, count: int = 3) -> list[str]:
     """Fresh example sentences for an already-saved word — regenerated live
     each time rather than cached, since variety is the point (unlike the
@@ -87,6 +156,9 @@ def generate_examples(conn: sqlite3.Connection, *, user_id: str, word_row: sqlit
     user_prompt = f"Word: {word_row['word']}\nDefinition: {definition}"
     data = _generate_json(target, system_prompt, user_prompt, max_tokens=300)
     examples = [str(s).strip() for s in (data.get("examples") or []) if str(s).strip()]
+    # Same check as enrich_word: a sentence that doesn't contain the word is
+    # not an example of it, and a small model produces those regularly.
+    examples = [e for e in examples if conversation_report.says_word(e, word_row["word"])]
     return examples[:count]
 
 

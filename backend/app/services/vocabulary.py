@@ -8,9 +8,13 @@ being faked.
 """
 
 import json
+import os
 import sqlite3
+from pathlib import Path
 
-from app.services import cefr_lexicon, pagination
+from app.config import settings
+from app.services import cefr_lexicon, pagination, review
+from app.services.voice import tts
 from app.utils.ids import uuid7
 from app.utils.time import iso8601_utc_now
 
@@ -62,6 +66,15 @@ def save_word(
     ).fetchone()
     already_existed = row["id"] != new_id
 
+    # A saved word is a word to be scheduled — created here rather than only
+    # by 0015's backfill, so a word saved after that migration reaches the
+    # review queue without a separate "add to review" step.
+    #
+    # Keyed off row["id"], never new_id: the insert above is ON CONFLICT DO
+    # NOTHING, so for a word already saved new_id was never written and a card
+    # pointing at it has no word to belong to.
+    review.ensure_card(conn, user_id, row["id"])
+
     _add_context_if_new(conn, row["id"], sentence=sentence, book_id=book_id, block_index=block_index)
     return row, already_existed
 
@@ -78,6 +91,11 @@ def save_manual_word(
     ipa: str | None,
     audio_url: str | None,
     note_text: str | None,
+    ai_definition: str | None = None,
+    ai_examples: list[str] | None = None,
+    ai_mnemonic: str | None = None,
+    ai_usage_note: str | None = None,
+    ai_sense_definition: str | None = None,
 ) -> tuple[sqlite3.Row, bool]:
     """Save a word the user picked from a dictionaryapi.dev search rather
     than one captured while reading — same de-dup key (user_id, lemma) as
@@ -96,8 +114,10 @@ def save_manual_word(
     new_id = uuid7()
     conn.execute(
         """
-        INSERT INTO vocab_words (id, user_id, word, lemma, pos, cefr, definition, example, simpler, synonyms, ipa, audio_url, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO vocab_words (id, user_id, word, lemma, pos, cefr, definition, example, simpler,
+                                 synonyms, ipa, audio_url, ai_definition, ai_examples, ai_mnemonic,
+                                 ai_usage_note, ai_sense_definition, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id, lemma) DO NOTHING
         """,
         (
@@ -113,11 +133,31 @@ def save_manual_word(
             json.dumps(list(synonyms)),
             ipa,
             audio_url,
+            ai_definition,
+            json.dumps(list(ai_examples or [])),
+            ai_mnemonic,
+            ai_usage_note,
+            ai_sense_definition,
             iso8601_utc_now(),
         ),
     )
     row = conn.execute("SELECT * FROM vocab_words WHERE user_id = ? AND lemma = ?", (user_id, lemma)).fetchone()
     already_existed = row["id"] != new_id
+    # A word already saved keeps whatever it has, except where this save
+    # brings enrichment it was missing — re-adding a word to attach a
+    # mnemonic should work, and should not wipe the rest of the entry.
+    if already_existed:
+        _fill_missing_enrichment(
+            conn,
+            row,
+            ai_definition=ai_definition,
+            ai_examples=ai_examples,
+            ai_mnemonic=ai_mnemonic,
+            ai_usage_note=ai_usage_note,
+            ai_sense_definition=ai_sense_definition,
+        )
+        row = conn.execute("SELECT * FROM vocab_words WHERE id = ?", (row["id"],)).fetchone()
+    review.ensure_card(conn, user_id, row["id"])
 
     if not already_existed and note_text and note_text.strip():
         add_note(conn, row["id"], note_text.strip())
@@ -125,10 +165,160 @@ def save_manual_word(
     return row, already_existed
 
 
-def list_words(conn: sqlite3.Connection, user_id: str) -> list[sqlite3.Row]:
+# What a learner actually wants to slice their collection by. Each maps to a
+# predicate over the joined review_cards row — "status" is scheduling state,
+# which is the dimension the old list had no idea existed.
+STATUS_FILTERS = ("all", "due", "new", "learning", "mastered", "struggling", "suspended")
+SORT_ORDERS = ("recent", "oldest", "alphabetical", "mastery", "due", "difficulty")
+
+
+def list_words(
+    conn: sqlite3.Connection,
+    user_id: str,
+    *,
+    query: str = "",
+    cefr: str | None = None,
+    tag: str | None = None,
+    status: str = "all",
+    sort: str = "recent",
+    now_iso: str | None = None,
+) -> list[sqlite3.Row]:
+    """The vocabulary list, filtered and ordered in SQL.
+
+    Previously this was `SELECT * ... ORDER BY created_at DESC` with the
+    search done in the browser over whatever had already been fetched. That
+    is fine for twenty words and wrong for two thousand, and it left the only
+    available ordering — when a word happened to be saved — as the least
+    useful thing to sort a vocabulary by.
+
+    The join onto review_cards is the substantive change: a word's scheduling
+    state is the most informative thing about it (is it due, is it sticking,
+    is it a leech) and the list could not see it at all."""
+    now_iso = now_iso or iso8601_utc_now()
+    where = ["w.user_id = ?"]
+    params: list = [user_id]
+
+    if query.strip():
+        like = f"%{query.strip().lower()}%"
+        # Definition included deliberately: half of "find that word I saved"
+        # is remembering the meaning but not the word.
+        where.append(
+            "(LOWER(w.word) LIKE ? OR LOWER(w.lemma) LIKE ? OR LOWER(COALESCE(w.definition,'')) LIKE ?"
+            " OR EXISTS (SELECT 1 FROM vocab_tags t WHERE t.vocab_word_id = w.id AND LOWER(t.tag) LIKE ?))"
+        )
+        params += [like, like, like, like]
+
+    if cefr:
+        where.append("w.cefr = ?")
+        params.append(cefr.upper())
+
+    if tag:
+        where.append("EXISTS (SELECT 1 FROM vocab_tags t WHERE t.vocab_word_id = w.id AND t.tag = ?)")
+        params.append(tag)
+
+    if status == "due":
+        where.append("rc.suspended = 0 AND rc.state != 'new' AND rc.due <= ?")
+        params.append(now_iso)
+    elif status == "new":
+        where.append("(rc.state = 'new' OR rc.state IS NULL)")
+    elif status == "learning":
+        where.append("rc.state IN ('learning', 'relearning')")
+    elif status == "mastered":
+        # Level 5 needs conversation evidence, which is not a column — the
+        # cheap proxy here is a card that is both stable and has been used
+        # unprompted at least once; the exact level is computed per row below.
+        where.append("rc.stability >= 21")
+    elif status == "struggling":
+        where.append("rc.lapses >= 3")
+    elif status == "suspended":
+        where.append("rc.suspended = 1")
+
+    order = {
+        "recent": "w.created_at DESC",
+        "oldest": "w.created_at ASC",
+        "alphabetical": "LOWER(w.word) ASC",
+        # NULLs last so unscheduled words don't crowd the top of a view that
+        # is specifically about scheduling.
+        "mastery": "rc.stability DESC NULLS LAST, w.created_at DESC",
+        "due": "rc.due ASC NULLS LAST",
+        "difficulty": "rc.difficulty DESC NULLS LAST, rc.lapses DESC",
+    }.get(sort, "w.created_at DESC")
+
     return conn.execute(
-        "SELECT * FROM vocab_words WHERE user_id = ? ORDER BY created_at DESC", (user_id,)
+        f"""
+        SELECT w.*, rc.stability, rc.difficulty, rc.state AS card_state, rc.due,
+               rc.reps, rc.lapses, rc.suspended
+        FROM vocab_words w
+        LEFT JOIN review_cards rc ON rc.vocab_word_id = w.id
+        WHERE {' AND '.join(where)}
+        ORDER BY {order}
+        """,
+        params,
     ).fetchall()
+
+
+def overview(conn: sqlite3.Connection, user_id: str, *, now_iso: str | None = None) -> dict:
+    """A summary of the collection, so the list opens on something other than
+    an undifferentiated wall of words."""
+    now_iso = now_iso or iso8601_utc_now()
+    total = conn.execute(
+        "SELECT COUNT(*) AS n FROM vocab_words WHERE user_id = ?", (user_id,)
+    ).fetchone()["n"]
+
+    by_cefr = {
+        r["cefr"] or "—": r["n"]
+        for r in conn.execute(
+            "SELECT COALESCE(cefr,'—') AS cefr, COUNT(*) AS n FROM vocab_words "
+            "WHERE user_id = ? GROUP BY COALESCE(cefr,'—') ORDER BY cefr",
+            (user_id,),
+        )
+    }
+
+    tags = [
+        {"tag": r["tag"], "count": r["n"]}
+        for r in conn.execute(
+            "SELECT t.tag, COUNT(*) AS n FROM vocab_tags t "
+            "JOIN vocab_words w ON w.id = t.vocab_word_id WHERE w.user_id = ? "
+            "GROUP BY t.tag ORDER BY n DESC, t.tag ASC",
+            (user_id,),
+        )
+    ]
+
+    counts = conn.execute(
+        """
+        SELECT
+          SUM(CASE WHEN rc.suspended = 0 AND rc.state != 'new' AND rc.due <= ? THEN 1 ELSE 0 END) AS due_now,
+          SUM(CASE WHEN rc.state = 'new' THEN 1 ELSE 0 END)                     AS new_count,
+          SUM(CASE WHEN rc.state IN ('learning','relearning') THEN 1 ELSE 0 END) AS learning,
+          SUM(CASE WHEN rc.lapses >= 3 THEN 1 ELSE 0 END)                        AS struggling,
+          SUM(CASE WHEN rc.suspended = 1 THEN 1 ELSE 0 END)                      AS suspended
+        FROM review_cards rc WHERE rc.user_id = ?
+        """,
+        (now_iso, user_id),
+    ).fetchone()
+
+    added_7d = conn.execute(
+        "SELECT COUNT(*) AS n FROM vocab_words WHERE user_id = ? AND created_at >= ?",
+        (user_id, _days_ago_iso(7)),
+    ).fetchone()["n"]
+
+    return {
+        "total": total,
+        "added_last_7_days": added_7d,
+        "due_now": counts["due_now"] or 0,
+        "new_count": counts["new_count"] or 0,
+        "learning": counts["learning"] or 0,
+        "struggling": counts["struggling"] or 0,
+        "suspended": counts["suspended"] or 0,
+        "by_cefr": by_cefr,
+        "tags": tags,
+    }
+
+
+def _days_ago_iso(days: int) -> str:
+    from datetime import datetime, timedelta, timezone
+
+    return (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def get_word_row(conn: sqlite3.Connection, user_id: str, word: str) -> sqlite3.Row | None:
@@ -136,8 +326,19 @@ def get_word_row(conn: sqlite3.Connection, user_id: str, word: str) -> sqlite3.R
     inflected form ("walked") finds the entry saved under its lemma ("walk")."""
     entry = cefr_lexicon.lookup(word)
     lemma = entry.lemma if entry is not None else cefr_lexicon.normalise(word)
+    # Joined the same way list_words does, so the detail view reports a word's
+    # real scheduling state. Without the join those columns are absent and the
+    # response model's defaults take over, which would report every word —
+    # however well known — as never reviewed.
     return conn.execute(
-        "SELECT * FROM vocab_words WHERE user_id = ? AND lemma = ?", (user_id, lemma)
+        """
+        SELECT w.*, rc.stability, rc.difficulty, rc.state AS card_state, rc.due,
+               rc.reps, rc.lapses, rc.suspended
+        FROM vocab_words w
+        LEFT JOIN review_cards rc ON rc.vocab_word_id = w.id
+        WHERE w.user_id = ? AND w.lemma = ?
+        """,
+        (user_id, lemma),
     ).fetchone()
 
 
@@ -211,6 +412,9 @@ def delete_word(conn: sqlite3.Connection, user_id: str, vocab_word_id: str) -> b
     if row is None:
         return False
     conn.execute("DELETE FROM vocab_words WHERE id = ?", (vocab_word_id,))
+    # Synthesized pronunciation lives on disk, outside any DB cascade, so
+    # deleting the word has to clear it explicitly or it leaks forever.
+    delete_pronunciation(vocab_word_id)
     return True
 
 
@@ -262,3 +466,94 @@ def _page_number(conn: sqlite3.Connection, book: sqlite3.Row, block_index: int) 
         (book["id"], block_index),
     ).fetchone()
     return pagination.page_number(offset_row["w"])
+
+
+def _pronunciation_dir() -> Path:
+    d = Path(settings.db_path).resolve().parent / "pronunciation"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def pronunciation_path(vocab_word_id: str, text: str, part: str, engine: str) -> Path:
+    """Synthesized once, then served from disk.
+
+    Keyed by engine as well as word because the file *is* that engine's voice
+    — the same reason conversation audio chunks are (see
+    conversation.audio_chunk_path). Written to a temp file and moved into
+    place so a second request for the same clip cannot read a half-written
+    WAV."""
+    name = tts.normalise(engine)
+    safe_part = "word" if part == "word" else "sentence"
+    path = _pronunciation_dir() / f"{vocab_word_id}.{name}.{safe_part}.wav"
+    if not path.exists():
+        audio = tts.engine_for(name).synthesize(text)
+        tmp = path.with_suffix(f".{uuid7()}.part")
+        try:
+            tmp.write_bytes(audio)
+            os.replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)
+    return path
+
+
+def delete_pronunciation(vocab_word_id: str) -> None:
+    """Called when a word is removed — these are derived files that nothing
+    else will ever clean up, and no DB cascade reaches them."""
+    for stale in _pronunciation_dir().glob(f"{vocab_word_id}.*.wav"):
+        stale.unlink(missing_ok=True)
+
+
+def speech_path(text: str, engine: str) -> Path:
+    """Synthesized speech for arbitrary short text, cached by content.
+
+    Keyed by a hash of the text rather than by a word id, because the point
+    of this one is to speak something that has not been saved yet. Same
+    engine-in-the-name and atomic-rename rules as everything else that writes
+    audio here."""
+    import hashlib
+
+    name = tts.normalise(engine)
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    path = _pronunciation_dir() / f"speak.{name}.{digest}.wav"
+    if not path.exists():
+        audio = tts.engine_for(name).synthesize(text)
+        tmp = path.with_suffix(f".{uuid7()}.part")
+        try:
+            tmp.write_bytes(audio)
+            os.replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)
+    return path
+
+
+def _fill_missing_enrichment(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    *,
+    ai_definition: str | None,
+    ai_examples: list[str] | None,
+    ai_mnemonic: str | None,
+    ai_usage_note: str | None,
+    ai_sense_definition: str | None,
+) -> None:
+    """Adds enrichment to an existing entry without overwriting what is there.
+
+    Only empty fields are filled. Someone re-adding a word to attach a
+    mnemonic should get the mnemonic; they should not silently lose the
+    definition they already had."""
+    updates: dict[str, object] = {}
+    if ai_definition and not row["ai_definition"]:
+        updates["ai_definition"] = ai_definition
+        updates["ai_sense_definition"] = ai_sense_definition
+    if ai_examples and not json.loads(row["ai_examples"] or "[]"):
+        updates["ai_examples"] = json.dumps(list(ai_examples))
+    if ai_mnemonic and not row["ai_mnemonic"]:
+        updates["ai_mnemonic"] = ai_mnemonic
+    if ai_usage_note and not row["ai_usage_note"]:
+        updates["ai_usage_note"] = ai_usage_note
+    if not updates:
+        return
+    assignments = ", ".join(f"{k} = ?" for k in updates)
+    conn.execute(
+        f"UPDATE vocab_words SET {assignments} WHERE id = ?", [*updates.values(), row["id"]]
+    )

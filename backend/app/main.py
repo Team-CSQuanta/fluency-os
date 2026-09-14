@@ -6,7 +6,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import configure_from_argv, settings
 from app.db import get_connection
 from app.migrations.runner import run_migrations
-from app.routers import books, conversation, engine, hardware, health, placement, reading, users, vocabulary
+from app.routers import (
+    books,
+    conversation,
+    engine,
+    hardware,
+    health,
+    placement,
+    reading,
+    review,
+    users,
+    vocabulary,
+)
 from app.services.book_search import ensure_fts_backfilled
 
 configure_from_argv()
@@ -41,6 +52,7 @@ app.include_router(books.router)
 app.include_router(reading.router)
 app.include_router(vocabulary.router)
 app.include_router(conversation.router)
+app.include_router(review.router)
 app.include_router(engine.router)
 
 

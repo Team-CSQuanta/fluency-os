@@ -18,7 +18,6 @@ export type ScreenKey =
 export interface NavItem {
   key: ScreenKey;
   label: string;
-  badge?: string;
 }
 
 export interface NavGroup {
@@ -39,7 +38,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Knowledge',
     items: [
       { key: 'vocab', label: 'Vocabulary' },
-      { key: 'review', label: 'Review', badge: '47' },
+      { key: 'review', label: 'Review' },
     ],
   },
   {

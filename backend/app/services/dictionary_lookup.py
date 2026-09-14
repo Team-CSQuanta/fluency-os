@@ -23,7 +23,7 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 API_BASE = "https://api.dictionaryapi.dev/api/v2/entries/en"
 FALLBACK_API_BASE = "https://freedictionaryapi.com/api/v1/entries/en"
@@ -66,11 +66,58 @@ class DictionaryResult:
     synonyms: tuple[str, ...]
 
 
+# A sense the dictionary tags as a proper noun. Wiktionary-derived sources
+# use "name" for surnames, places and brands.
+_PROPER_NOUN_POS = {"name", "proper noun"}
+
+
+def _is_proper_noun_only(result: "DictionaryResult") -> bool:
+    return bool(result.senses) and all(s.pos.lower() in _PROPER_NOUN_POS for s in result.senses)
+
+
+def _common_senses_first(result: "DictionaryResult") -> "DictionaryResult":
+    """Ordinary senses before proper-noun ones, order otherwise untouched.
+
+    Someone building a vocabulary almost never means the surname: "Baker"
+    should open on the trade, not on four people's family names."""
+    if not result.senses:
+        return result
+    ordered = sorted(result.senses, key=lambda s: s.pos.lower() in _PROPER_NOUN_POS)
+    return replace(result, senses=tuple(ordered))
+
+
 def search(word: str, *, timeout: float = TIMEOUT_SECONDS) -> DictionaryResult:
     """Look up a word, preferring dictionaryapi.dev and falling back to
     freedictionaryapi.com if the primary source is unreachable or draws a
-    blank."""
+    blank.
+
+    Capitalisation is resolved here because these dictionaries treat it as
+    meaningful: "Sleep" returns exactly one sense — "A surname from English" —
+    while "sleep" returns sixteen real ones. A learner types a capital all the
+    time (start of a sentence, a phone keyboard, pasting from prose) and did
+    not mean a surname.
+
+    Lowercasing unconditionally would be wrong the other way: "london" is not
+    in these dictionaries at all, only "London". So a capitalised query tries
+    the lowercase form first and keeps it only if it found something that
+    isn't purely a proper noun."""
     clean = word.strip()
+
+    if clean != clean.lower():
+        try:
+            lowered = _search_one(clean.lower(), timeout=timeout)
+            if lowered.found and not _is_proper_noun_only(lowered):
+                return _common_senses_first(lowered)
+        except DictionaryServiceUnavailable:
+            # Fall through to the original spelling; if the service is really
+            # down the attempt below reports it.
+            pass
+
+    return _common_senses_first(_search_one(clean, timeout=timeout))
+
+
+def _search_one(clean: str, *, timeout: float) -> DictionaryResult:
+    """One spelling, across both sources."""
 
     primary_error: DictionaryServiceUnavailable | None = None
     try:
