@@ -152,7 +152,12 @@ def review(
     if card.last_review is not None:
         elapsed = max(0.0, (now - card.last_review).total_seconds() / 86400)
 
-    if card.state == "new":
+    # `stability <= 0` alongside a non-new state is an inconsistent card: it
+    # claims to have been reviewed but records no memory strength. Growth is
+    # multiplicative here (stability ** -w[9]), so zero is not merely wrong, it
+    # raises ZeroDivisionError and takes the scheduler down. There is nothing
+    # to grow from, so it is treated as the first review it evidently is.
+    if card.state == "new" or card.stability <= 0:
         stability = max(w[rating - 1], 0.01)
         difficulty = _initial_difficulty(w, rating)
     else:

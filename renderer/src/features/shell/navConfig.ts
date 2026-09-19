@@ -64,7 +64,7 @@ export const SCREEN_TITLES: Record<ScreenKey, [string, string]> = {
   conv: ['Conversation', 'Guided AI practice with target words injected'],
   convlive: ['Conversation', 'Guided AI practice with target words injected'],
   report: ['Session Report', 'Contextual accuracy, fluency proxies, and a focus for next time'],
-  challenge: ['Scene Description Challenge', 'Timed production against your own clips'],
+  challenge: ['Scene Description Challenge', 'Watch without subtitles, say what happened, be marked on it'],
   forest: ['Forest', 'Every vocabulary entry, growing'],
   settings: ['Settings', 'Local-first by default · nothing leaves the machine'],
 };

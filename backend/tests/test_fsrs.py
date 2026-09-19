@@ -146,3 +146,19 @@ def test_an_invalid_rating_is_refused():
     for bad in (0, 5, -1):
         with pytest.raises(ValueError):
             fsrs.review(Card(), bad, now=T0)
+
+
+def test_a_card_claiming_review_state_with_no_stability_does_not_crash_the_scheduler():
+    """Growth is multiplicative in stability, so zero raises ZeroDivisionError
+    rather than merely giving a wrong answer. Such a row records no memory
+    strength at all, so it is scheduled as the first review it evidently is."""
+    from app.services import fsrs
+
+    broken = fsrs.Card(
+        stability=0.0, difficulty=0.0, state="review", due=None, last_review=None, reps=1, lapses=0
+    )
+    now = fsrs.utcnow()
+    for rating in (fsrs.AGAIN, fsrs.HARD, fsrs.GOOD, fsrs.EASY):
+        after = fsrs.review(broken, rating, now=now)
+        assert after.stability > 0
+        assert 1.0 <= after.difficulty <= 10.0

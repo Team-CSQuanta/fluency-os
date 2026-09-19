@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 type RecorderStatus = 'idle' | 'recording' | 'error';
 
@@ -50,6 +50,37 @@ export function useMicRecorder() {
       };
       recorder.stop();
     });
+  }, []);
+
+  /* Release the microphone if this unmounts mid-recording.
+   *
+   * There was no cleanup here at all, so navigating away while recording —
+   * pressing "Give me another scene", or just leaving the screen — left the
+   * getUserMedia tracks live for the rest of the session. The sibling
+   * useVadRecorder has always stopped its tracks and closed its AudioContext
+   * on cleanup; this one simply never did.
+   *
+   * It is not only a leak. getUserMedia({audio: true}) enables echo
+   * cancellation by default, and on Linux that routes output through
+   * PulseAudio's AEC module for as long as a capture stream is open — which is
+   * a good way to end up wondering why the video you opened afterwards has no
+   * sound.
+   */
+  useEffect(() => {
+    return () => {
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state !== 'inactive') {
+        recorder.onstop = null;
+        try {
+          recorder.stop();
+        } catch {
+          // Already torn down by the browser; nothing to do.
+        }
+      }
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      mediaRecorderRef.current = null;
+    };
   }, []);
 
   return { status, start, stop };

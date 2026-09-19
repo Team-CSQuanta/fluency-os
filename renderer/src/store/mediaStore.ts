@@ -329,26 +329,39 @@ export const useMediaStore = create<MediaState>((set, get) => ({
     const detail = get().detail;
     if (!detail) return;
     const userId = requireUserId();
-    const track = await api.post<MediaTrackOut>(`/media/${detail.item.id}/tracks/generate`, {
+    const mediaId = detail.item.id;
+    const track = await api.post<MediaTrackOut>(`/media/${mediaId}/tracks/generate`, {
       user_id: userId,
       language: 'en',
     });
-    await get().refreshDetail();
+    if (get().detail?.item.id === mediaId) await get().refreshDetail();
 
     // Cues arrive in batches while Whisper works, so this keeps refreshing
     // until the track stops moving — the player shows the transcript filling
     // in rather than a spinner over an empty screen.
+    //
+    // The job outlives the player, so every write is guarded on this item still
+    // being the open one: transcribing in the background must not drag the
+    // screen back off whatever the user opened next.
     let done = false;
     while (!done) {
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-      const fresh = await api.get<MediaDetailOut>(`/media/${detail.item.id}`);
+      const fresh = await api.get<MediaDetailOut>(`/media/${mediaId}`);
       const current = fresh.tracks.find((t) => t.id === track.id);
-      set({ detail: fresh });
-      if (current && current.cue_count > 0 && get().detail?.prefs.target_track_id === track.id) {
-        await get().loadCues(track.id, 'target');
+      if (get().detail?.item.id === mediaId) {
+        set({ detail: fresh });
+        if (current && current.cue_count > 0 && get().detail?.prefs.target_track_id === track.id) {
+          await get().loadCues(track.id, 'target');
+        }
       }
       done = !current || current.status === 'ready' || current.status === 'failed';
-      if (done && current?.status === 'ready') await get().setTrack('target', track.id);
+      if (done && current?.status === 'ready') {
+        // Selecting the finished track is a stored preference, so it still
+        // happens when the user has moved on — just written straight to that
+        // item rather than through the open one's state.
+        if (get().detail?.item.id === mediaId) await get().setTrack('target', track.id);
+        else await api.put<MediaItemPrefsOut>(`/media/${mediaId}/prefs`, { target_track_id: track.id });
+      }
     }
     await get().fetchLibrary();
   },

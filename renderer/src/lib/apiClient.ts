@@ -14,6 +14,35 @@ function requireBackendInfo(): BackendInfo {
   return backendInfo;
 }
 
+/** An HTTP failure with the status kept as a field rather than only spelled
+ * into the message.
+ *
+ * Callers need to tell one failure from another — a 503 from the engines not
+ * being launched wants a "start the AI" dialog, while a 400 wants the message
+ * shown as-is. Until now the only way to know which was to pattern-match the
+ * message string. Extends Error, so every existing `instanceof Error` and
+ * `.message` read keeps working unchanged.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  /** FastAPI's `detail`, unwrapped from the JSON body when there is one. */
+  readonly detail: string;
+
+  constructor(method: string, path: string, status: number, body: string) {
+    let detail = body;
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed && typeof parsed.detail === 'string') detail = parsed.detail;
+    } catch {
+      // Not JSON — keep the raw body, which is what the old message carried.
+    }
+    super(`API ${method} ${path} failed: ${status} ${body}`);
+    this.name = 'ApiError';
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const { baseUrl, token } = requireBackendInfo();
   const res = await fetch(`${baseUrl}${path}`, {
@@ -26,7 +55,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new Error(`API ${init?.method ?? 'GET'} ${path} failed: ${res.status} ${body}`);
+    throw new ApiError(init?.method ?? 'GET', path, res.status, body);
   }
   if (res.status === 204) {
     return undefined as T;
@@ -41,7 +70,7 @@ export async function fetchBlobUrl(path: string): Promise<string> {
   const { baseUrl, token } = requireBackendInfo();
   const res = await fetch(`${baseUrl}${path}`, { headers: { 'X-FluencyOS-Token': token } });
   if (!res.ok) {
-    throw new Error(`API GET ${path} failed: ${res.status}`);
+    throw new ApiError('GET', path, res.status, '');
   }
   const blob = await res.blob();
   return URL.createObjectURL(blob);
@@ -71,7 +100,7 @@ async function postForm<T>(path: string, form: FormData): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new Error(`API POST ${path} failed: ${res.status} ${body}`);
+    throw new ApiError('POST', path, res.status, body);
   }
   return (await res.json()) as T;
 }

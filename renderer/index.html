@@ -5,8 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' blob: http://127.0.0.1:*; media-src 'self' blob: http://127.0.0.1:*; connect-src http://127.0.0.1:*"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' blob: http://127.0.0.1:*; media-src 'self' blob: http://127.0.0.1:*; connect-src http://127.0.0.1:*; frame-src https://www.youtube-nocookie.com"
     />
+    <!-- frame-src is the one entry here that is not this machine. The Scene
+         Description Challenge plays VATEX scenes, and VATEX publishes
+         annotations without video — the clips are YouTube ids, so playing one
+         means embedding it. Narrowed to youtube-nocookie.com (the host that
+         sets no tracking cookie) and to frames only: no script, style, image
+         or fetch may come from it. The feature itself is off until the learner
+         turns it on, and Settings says what it costs. -->
     <!-- img-src/media-src include the loopback backend because the video
          player cannot use blob: URLs: a <video> fed a blob has to download the
          entire film before it will seek, and a two-hour file does not fit in

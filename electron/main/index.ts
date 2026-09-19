@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'node:path';
 import { startBackend, stopBackend, type BackendHandle } from './backend-process';
+import { registerSceneEmbedReferrer } from './scene-embeds';
 import { isDownloadActive } from './download-state';
 import { registerIpcHandlers } from './ipc-handlers';
 import { logger } from './logger';
@@ -98,7 +99,35 @@ registerIpcHandlers(
   () => mainWindow,
 );
 
+/** Let the player decode H.265 (HEVC).
+ *
+ * Chromium ships no software HEVC decoder, so by default an HEVC file plays
+ * its AAC audio while the picture never appears — videoWidth stays 0 and not a
+ * single frame is decoded, with no error raised. Measured on this machine
+ * (AMD Vega APU, hardware HEVC decode present):
+ *
+ *     default                        canPlayType = ""     0 frames
+ *     with these three features      canPlayType = ...    52 frames in 2s
+ *
+ * Deliberately WITHOUT --ignore-gpu-blocklist, which was also tried: it made no
+ * difference here, and overriding the blocklist invites driver crashes on the
+ * configurations it exists to protect.
+ *
+ * This is hardware decode, so it only helps where the GPU can do it. A machine
+ * without HEVC support still cannot play these files, and the player says so
+ * rather than showing a frozen frame.
+ *
+ * Must be set before `whenReady`; Chromium reads its command line at startup.
+ */
+app.commandLine.appendSwitch(
+  'enable-features',
+  'VaapiVideoDecoder,VaapiVideoDecodeLinuxGL,PlatformHEVCDecoderSupport',
+);
+
 app.whenReady().then(async () => {
+  // Must be registered before any window loads a scene embed.
+  registerSceneEmbedReferrer();
+
   try {
     backendHandle = await startBackend();
   } catch (err) {

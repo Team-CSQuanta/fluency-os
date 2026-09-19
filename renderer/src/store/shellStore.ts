@@ -35,6 +35,12 @@ interface ShellState {
   nowReading: string;
   readerBookId: string | null;
   selectedWord: string;
+  /** The word to single out when the Forest opens, or null for none.
+   *
+   * Kept apart from `selectedWord`, which is simply whichever word page was
+   * last viewed. Reusing that would light up a tree every time the Forest was
+   * opened from the nav, for a word the learner had stopped thinking about. */
+  forestFocus: string | null;
   convScenario: string;
   reportOrigin: ScreenKey;
   settingsGroup: SettingsGroupName;
@@ -50,6 +56,9 @@ interface ShellState {
   goReader: (bookId: string, title?: string) => void;
   setNowReading: (title: string) => void;
   goWord: (word: string) => void;
+  /** Open the Forest, optionally pointing at one word's tree. */
+  goForest: (word?: string) => void;
+  clearForestFocus: () => void;
   goConvLive: (scenario: string) => void;
   goReport: () => void;
   goSettings: (group?: SettingsGroupName) => void;
@@ -86,13 +95,18 @@ export const useShellStore = create<ShellState>((set, get) => {
     nowReading: 'The Overstory — Richard Powers',
     readerBookId: null,
     selectedWord: 'reticent',
+    forestFocus: null,
     convScenario: 'Free talk',
     reportOrigin: 'conv',
     settingsGroup: 'Media',
     convBusy: false,
     pendingNav: null,
 
-    goScreen: (key) => attemptNav(() => set({ screen: key })),
+    // Any other navigation drops the focus, so returning to the Forest later
+    // does not re-highlight a word from a previous visit.
+    goScreen: (key) => attemptNav(() => set({ screen: key, forestFocus: null })),
+    goForest: (word) => attemptNav(() => set({ screen: 'forest', forestFocus: word ?? null })),
+    clearForestFocus: () => set({ forestFocus: null }),
     goWord: (word) => attemptNav(() => set({ screen: 'word', selectedWord: word })),
     // Mirrors the mockup's immersive() behavior: entering player/reader collapses
     // the nav to icon-only so the content area gets more room.

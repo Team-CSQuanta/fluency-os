@@ -1,214 +1,324 @@
-import { useMemo, useState } from 'react';
-import {
-  BIOME_DATA,
-  DEFAULT_BIOME,
-  DEFAULT_FOCUS_DURATION,
-  FOCUS_DURATIONS,
-  FOREST_LEVEL,
-  GROWTH_STAGES,
-  STAGE_CANOPY,
-  STAGE_COLOR_DAY,
-  STAGE_COLOR_NIGHT,
-  STAGE_STEM,
-  WEEKLY_CHALLENGE,
-  buildTiles,
-} from '@/features/forest/forestMockData';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { useForestStore, visibleTrees } from '@/store/forestStore';
+import { useShellStore } from '@/store/shellStore';
+import type { TreeOut } from '@/types/api';
 
+/* three.js is about 600 KB and is needed on exactly one screen. Loaded on
+ * demand it stays out of the startup bundle entirely, so opening the app — or
+ * any other screen — never pays for it. */
+const ForestScene = lazy(() =>
+  import('@/features/forest/three/ForestScene').then((m) => ({ default: m.ForestScene })),
+);
+
+const FOCUS_DURATIONS = [15, 25, 45, 60];
+
+/** Spec §8 — the Forest.
+ *
+ * Every tree is one saved word, and its size is that word's FSRS stability.
+ * Nothing on this screen is decorative state: it is a drawing of the
+ * scheduler, so the only way to grow it is to remember things for longer.
+ */
 export function Forest() {
-  const [biome, setBiome] = useState(DEFAULT_BIOME);
-  const [night, setNight] = useState(false);
-  const [hover, setHover] = useState<{ word: string; meta: string } | null>(null);
-  const [focusDuration, setFocusDuration] = useState(DEFAULT_FOCUS_DURATION);
-  const [planted, setPlanted] = useState(false);
+  const { forest, loading, error, biome, focus } = useForestStore();
+  const { fetchForest, setBiome, spend, startFocus, completeFocus, clearFocus } = useForestStore();
+  const goWord = useShellStore((s) => s.goWord);
+  const focusWord = useShellStore((s) => s.forestFocus);
+  const [hover, setHover] = useState<TreeOut | null>(null);
+  /* The tree the learner last clicked. Starts unset, so an arrival from
+   * "see plant" shows that word until they pick another. */
+  const [picked, setPicked] = useState<TreeOut | null>(null);
 
-  const tiles = useMemo(() => buildTiles(biome), [biome]);
-  const stageColors = night ? STAGE_COLOR_NIGHT : STAGE_COLOR_DAY;
-  const sky = night ? 'var(--bg2)' : 'var(--bg)';
-  const xpPct = Math.min(100, Math.round((FOREST_LEVEL.xp / FOREST_LEVEL.nextXp) * 100));
-  const challengePct = Math.min(100, Math.round((WEEKLY_CHALLENGE.done / WEEKLY_CHALLENGE.target) * 100));
+  useEffect(() => {
+    void fetchForest();
+  }, [fetchForest]);
+
+  /* No unmount cleanup here on purpose.
+   *
+   * Clearing the focus on unmount looks right and is wrong: StrictMode mounts,
+   * unmounts and remounts every component in development, so the cleanup fired
+   * immediately and wiped the highlight before it could be seen. `goScreen`
+   * already clears the focus whenever the learner navigates anywhere, which
+   * covers the same ground without depending on mount timing. */
+
+  const trees = useMemo(() => visibleTrees(forest, biome), [forest, biome]);
+
+  /* Arriving from "see plant" should name the word, not just ring it. The
+   * hovered tree still wins, so moving the pointer explores as usual. */
+  const focused = useMemo(
+    () => (focusWord ? (forest?.trees.find((t) => t.word === focusWord) ?? null) : null),
+    [forest, focusWord],
+  );
+  /* Hover wins while the pointer is over a tree, so the forest still explores
+   * by pointing. Otherwise the last click, and failing that the word arrived
+   * at. */
+  const shown = hover ?? picked ?? focused;
+  const marked = (picked ?? focused)?.word ?? null;
+
+  /* A word can only be singled out if it is in view. Landing on a filtered
+   * biome that happens to exclude it would ring nothing and look broken. */
+  useEffect(() => {
+    if (focusWord && biome && !trees.some((t) => t.word === focusWord)) setBiome(null);
+  }, [focusWord, biome, trees, setBiome]);
+
+  // Changing biome can hide the selected tree; a ring pointing at something
+  // off-screen is worse than no ring.
+  useEffect(() => {
+    if (picked && !trees.some((t) => t.word === picked.word)) setPicked(null);
+  }, [picked, trees]);
+
+  if (loading && !forest) {
+    return <div className="grid h-full place-items-center font-mono text-[11px] text-tx3">reading your forest…</div>;
+  }
+  if (!forest) {
+    return (
+      <div className="grid h-full place-items-center px-6 text-center">
+        <p className="font-sans text-[13px] text-tx2">{error ?? 'The forest could not be read.'}</p>
+      </div>
+    );
+  }
+
+  const tallest = forest.trees.reduce((a, b) => (b.stage > a.stage ? b : a), forest.trees[0]);
 
   return (
-    <div className="flex h-full min-h-0 w-full">
-      <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden" style={{ background: sky }}>
-        <div className="z-[5] flex flex-none flex-wrap items-center gap-[6px] p-[12px_var(--pad)]">
-          {BIOME_DATA.map((b) => {
-            const on = b.key === biome;
-            return (
-              <button
-                key={b.key}
-                onClick={() => setBiome(b.key)}
-                className="rounded-full border px-[11px] py-[6px] font-sans text-[11px] font-medium"
-                style={{
-                  borderColor: on ? 'var(--accLine)' : 'var(--line2)',
-                  background: on ? 'var(--accSoft)' : 'transparent',
-                  color: on ? 'var(--acc)' : 'var(--tx2)',
-                }}
-              >
-                {b.n} <span className="font-mono text-[9.5px] opacity-60">{b.c}</span>
-              </button>
-            );
-          })}
-          <div className="flex-1" />
-          <button
-            onClick={() => setNight((v) => !v)}
-            className="rounded-field border border-line px-[11px] py-[6px] font-mono text-[10.5px] font-medium text-tx2 hover:border-acc"
-          >
-            {night ? '☾ night' : '☀ day'}
-          </button>
+    <div className="flex h-full min-h-0">
+      <div className="flex min-w-0 flex-1 flex-col p-[var(--pad)]">
+        <div className="mb-[12px] flex flex-wrap items-center gap-2">
+          <Chip on={biome === null} onClick={() => setBiome(null)}>
+            Whole forest <Count n={forest.trees.length} />
+          </Chip>
+          {forest.biomes.map((b) => (
+            <Chip key={b.key} on={biome === b.key} onClick={() => setBiome(b.key)} title={b.blurb}>
+              {b.label} <Count n={b.count} />
+            </Chip>
+          ))}
         </div>
 
-        <div className="grid min-h-0 flex-1 place-items-center" style={{ perspective: 1200 }}>
-          <div
-            className="relative"
-            style={{
-              width: 600,
-              height: 600,
-              transform: 'rotateX(58deg) rotateZ(45deg) scale(.86)',
-              transformStyle: 'preserve-3d',
-            }}
-          >
-            {tiles.map((t, i) => {
-              const pc = t.dormant ? '#6a6a66' : stageColors[t.stage];
-              const sc = t.dormant ? '#57574f' : '#4a5a45';
-              const op = t.dormant ? 0.45 : 1;
-              return (
-                <div
-                  key={i}
-                  onMouseEnter={() =>
-                    setHover({
-                      word: t.word + (t.dormant ? ' · dormant' : ''),
-                      meta: `stage ${t.stage} · health ${t.health} · stability ${t.stability} d\n${
-                        t.stage >= 3 ? `${t.spontaneousUses} spontaneous uses` : 'no conversational use yet'
-                      }`,
-                    })
-                  }
-                  className="absolute"
-                  style={{
-                    left: t.x,
-                    top: t.y,
-                    width: 60,
-                    height: 60,
-                    background: t.checker ? 'var(--tile)' : 'var(--tileB)',
-                    border: `1px solid ${night ? 'rgba(255,255,255,.03)' : 'rgba(0,0,0,.03)'}`,
-                    transformStyle: 'preserve-3d',
-                  }}
-                >
-                  <div
-                    className="pointer-events-none absolute left-1/2 flex flex-col items-center"
-                    style={{
-                      bottom: 26,
-                      transform: 'translateX(-50%) rotateZ(-45deg) rotateX(-58deg)',
-                      transformOrigin: 'bottom center',
-                    }}
-                  >
-                    <div
-                      className="rounded-full"
-                      style={{ width: STAGE_CANOPY[t.stage], height: STAGE_CANOPY[t.stage], background: pc, opacity: op }}
-                    />
-                    <div style={{ width: 2, height: STAGE_STEM[t.stage], background: sc, opacity: op }} />
-                  </div>
+        <div className="relative min-h-0 flex-1 overflow-hidden rounded-panel border border-line2">
+          {trees.length === 0 ? (
+            <div className="grid h-full place-items-center px-6 text-center">
+              <div>
+                <p className="font-sans text-[13px] text-tx2">Nothing grows here yet.</p>
+                <p className="mt-[6px] max-w-[380px] font-mono text-[10px] leading-[1.7] text-tx3">
+                  Every word you save becomes a tree, and it grows each time you remember it. Save
+                  one while watching or reading and it will be standing here.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <Suspense
+              fallback={
+                <div className="grid h-full place-items-center font-mono text-[11px] text-tx3">
+                  growing the forest…
                 </div>
-              );
-            })}
+              }
+            >
+              <ForestScene
+                trees={trees}
+                focusWord={focusWord}
+                markedWord={marked}
+                onHover={setHover}
+                onSelect={setPicked}
+              />
+            </Suspense>
+          )}
+
+          {shown && (
+            <button
+              onClick={() => goWord(shown.word)}
+              /* Solid and dark rather than a translucent panel. This sits over
+               * bright grass, not over the app's own background, so theme
+               * colours meant for a page had almost no contrast against it.
+               *
+               * The background is an inline style, not a class. As an
+               * arbitrary Tailwind colour with an opacity modifier
+               * (`bg-[#12160f]/92`) it silently produced no background at all —
+               * computed style said rgba(0,0,0,0) — leaving pale text floating
+               * on green and looking exactly like the bug it was meant to fix. */
+              style={{ backgroundColor: 'rgba(17, 21, 14, 0.94)' }}
+              className="absolute left-[12px] top-[12px] max-w-[300px] rounded-field p-[12px] text-left shadow-lg ring-1 ring-white/10"
+            >
+              <div className="font-sans text-[13.5px] font-semibold text-white">{shown.word}</div>
+              <div className="mt-[4px] font-mono text-[10px] leading-[1.7] text-white/70">
+                {forest.stage_names[shown.stage]} · holds for {shown.stability.toFixed(1)} days
+                <br />
+                health {shown.health}%
+                {shown.lapses > 0 && ` · forgotten ${shown.lapses}×`}
+                {shown.spontaneous_uses > 0 && ` · said unprompted ${shown.spontaneous_uses}×`}
+                {shown.dormant && ' · dormant'}
+              </div>
+              {shown.dormant && (
+                <span
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void spend('revive', shown.vocab_word_id);
+                  }}
+                  className="mt-[9px] inline-block rounded-field bg-accSolid px-[11px] py-[5px] font-sans text-[11px] font-semibold text-white"
+                >
+                  Revive · {forest.costs.revive} sunlight
+                </span>
+              )}
+            </button>
+          )}
+
+          <div
+            style={{ backgroundColor: 'rgba(17, 21, 14, 0.78)' }}
+            className="pointer-events-none absolute bottom-[10px] right-[12px] rounded-full px-[11px] py-[5px] font-mono text-[10px] text-white/80"
+          >
+            drag to orbit · scroll to zoom
           </div>
         </div>
 
-        <div className="pointer-events-none absolute bottom-4 left-[var(--pad)] z-[5] font-mono text-[10px] leading-[1.7] text-tx3">
-          positions are the 2D projection of each word's embedding —
-          <br />a dense thicket is a mastered semantic field, bare seeds are a gap
-        </div>
-        {hover && (
-          <div className="absolute bottom-4 right-[var(--pad)] z-[6] rounded-field border border-line2 bg-panel px-[13px] py-[11px] shadow-panel">
-            <div className="font-sans text-[13px] font-semibold text-tx">{hover.word}</div>
-            <div className="mt-1 whitespace-pre-line font-mono text-[10px] leading-[1.6] text-tx3">{hover.meta}</div>
+        {error && (
+          <div className="mt-[10px] rounded-field border border-line2 px-[12px] py-[8px] font-sans text-[11.5px] text-[#e06c6c]">
+            {error}
           </div>
         )}
       </div>
 
-      <aside className="flex w-[264px] flex-none flex-col gap-[18px] overflow-y-auto border-l border-line2 bg-panel p-[18px]">
+      <aside className="flex w-[260px] flex-none flex-col gap-[16px] overflow-y-auto border-l border-line2 p-[16px]">
         <div>
-          <div className="flex items-baseline gap-2">
-            <div className="font-sans text-[30px] font-light tracking-[-0.03em] text-tx">{FOREST_LEVEL.level}</div>
-            <div className="font-mono text-[11px] text-tx3">level · {FOREST_LEVEL.xp.toLocaleString()} XP</div>
+          <Label>Sunlight</Label>
+          <div className="mt-[5px] flex items-baseline gap-[7px]">
+            <span className="font-mono text-[22px] tabular-nums text-tx">☀ {forest.sunlight}</span>
+            <span className="font-sans text-[11px] text-tx3">{forest.sunlight_earned} earned</span>
           </div>
-          <div className="mt-2 h-1 rounded-field bg-line2">
-            <div className="h-1 rounded-field bg-acc" style={{ width: `${xpPct}%` }} />
-          </div>
-          <div className="mt-[6px] font-mono text-[10px] text-tx3">
-            ☀ {FOREST_LEVEL.sunlight} sunlight · {FOREST_LEVEL.streakFreezes} streak freezes held
+          <p className="mt-[5px] font-mono text-[9px] leading-[1.7] text-tx3">
+            earned by remembering words, most of all by saying one nobody prompted you with
+          </p>
+          <button
+            onClick={() => void spend('streak_freeze')}
+            disabled={forest.sunlight < forest.costs.streak_freeze}
+            className="mt-[9px] w-full rounded-field border border-line px-[11px] py-[7px] font-sans text-[11px] text-tx2 hover:border-acc hover:text-acc disabled:opacity-45"
+          >
+            Hold a streak freeze · {forest.costs.streak_freeze}
+          </button>
+          <div className="mt-[5px] font-mono text-[9.5px] text-tx3">
+            {forest.streak_freezes} held
           </div>
         </div>
 
         <div>
-          <div className="mb-[10px] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
-            Growth stages
-          </div>
-          <div className="flex flex-col gap-[7px]">
-            {GROWTH_STAGES.map((s, i) => (
-              <div key={s.n} className="flex items-center gap-[9px]">
-                <span
-                  className="flex-none rounded-full"
-                  style={{ width: s.dot, height: s.dot, background: night ? STAGE_COLOR_NIGHT[i] : STAGE_COLOR_DAY[i] }}
-                />
-                <span className="flex-1 font-sans text-[11.5px] font-medium text-tx">{s.n}</span>
-                <span className="font-mono text-[10px] text-tx3">{s.count}</span>
+          <Label>Growth</Label>
+          <div className="mt-[7px] flex flex-col gap-[4px]">
+            {forest.stage_names.map((name, i) => (
+              <div key={name} className="flex items-center justify-between gap-2">
+                <span className="font-sans text-[11.5px] text-tx2">{name}</span>
+                <span className="font-mono text-[11px] tabular-nums text-tx3">
+                  {forest.stages[i]}
+                </span>
               </div>
             ))}
           </div>
-          <div className="mt-[10px] border-t border-line2 pt-[9px] font-mono text-[10px] leading-[1.6] text-tx3">
-            stage 3+ is unreachable by flashcards alone — it requires correct use in conversation
-          </div>
+          {forest.dormant > 0 && (
+            <p className="mt-[7px] font-mono text-[9.5px] leading-[1.6] text-[#d0a05a]">
+              {forest.dormant} dormant — a month or more past due
+            </p>
+          )}
         </div>
 
-        <div>
-          <div className="mb-[10px] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
-            Focus session
-          </div>
-          <div className="rounded-field border border-line2 p-3">
-            <div className="flex gap-[5px]">
-              {FOCUS_DURATIONS.map((d) => {
-                const on = d === focusDuration;
-                return (
-                  <button
-                    key={d}
-                    onClick={() => setFocusDuration(d)}
-                    className="flex-1 rounded-field border py-[6px] font-mono text-[10.5px] font-medium"
-                    style={{
-                      borderColor: on ? 'var(--accLine)' : 'var(--line2)',
-                      background: on ? 'var(--accSoft)' : 'transparent',
-                      color: on ? 'var(--acc)' : 'var(--tx2)',
-                    }}
-                  >
-                    {d}m
-                  </button>
-                );
-              })}
-            </div>
-            <div className="mt-[10px] font-mono text-[10px] leading-[1.6] text-tx3">
-              success = time in app + engagement (≥3 saves while watching). We do not monitor other apps.
-            </div>
+        {tallest && tallest.stage > 0 && (
+          <div>
+            <Label>Tallest tree</Label>
             <button
-              onClick={() => setPlanted(true)}
-              className="mt-[10px] w-full rounded-field bg-acc py-2 font-sans text-[11.5px] font-semibold text-white hover:brightness-110"
+              onClick={() => goWord(tallest.word)}
+              className="mt-[5px] block text-left font-sans text-[13px] font-semibold text-tx hover:text-acc"
             >
-              {planted ? `${focusDuration}m session queued ✓` : 'Plant a memorial tree'}
+              {tallest.word}
             </button>
+            <div className="font-mono text-[9.5px] text-tx3">
+              {forest.stage_names[tallest.stage]} · {tallest.stability.toFixed(0)} days
+            </div>
           </div>
-        </div>
+        )}
 
         <div>
-          <div className="mb-[10px] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
-            Weekly challenge
-          </div>
-          <div className="font-sans text-[12px] leading-[1.6] text-tx2">{WEEKLY_CHALLENGE.label}</div>
-          <div className="mt-2 h-1 rounded-field bg-line2">
-            <div className="h-1 rounded-field bg-acc" style={{ width: `${challengePct}%` }} />
-          </div>
-          <div className="mt-[5px] font-mono text-[10px] text-tx3">
-            {WEEKLY_CHALLENGE.done} / {WEEKLY_CHALLENGE.target} · +{WEEKLY_CHALLENGE.xp} XP
-          </div>
+          <Label>Focus session</Label>
+          {focus && !focus.completed_at ? (
+            <div className="mt-[6px]">
+              <p className="font-sans text-[11.5px] text-tx2">{focus.minutes} minutes running.</p>
+              <button
+                onClick={() => void completeFocus()}
+                className="mt-[7px] w-full rounded-field bg-accSolid px-[11px] py-[7px] font-sans text-[11px] font-semibold text-white"
+              >
+                I sat it through
+              </button>
+              <button
+                onClick={clearFocus}
+                className="mt-[5px] w-full font-mono text-[10px] text-tx3 hover:text-acc"
+              >
+                give up
+              </button>
+            </div>
+          ) : focus?.completed_at ? (
+            <div className="mt-[6px]">
+              <p className="font-sans text-[11.5px] text-tx2">
+                Done — ☀ {focus.sunlight} earned.
+              </p>
+              <button
+                onClick={clearFocus}
+                className="mt-[6px] font-mono text-[10px] text-acc hover:underline"
+              >
+                another
+              </button>
+            </div>
+          ) : (
+            <div className="mt-[6px] flex flex-wrap gap-[5px]">
+              {FOCUS_DURATIONS.map((d) => (
+                <button
+                  key={d}
+                  onClick={() => void startFocus(d)}
+                  className="rounded-field border border-line2 px-[10px] py-[5px] font-mono text-[10.5px] text-tx2 hover:border-acc hover:text-acc"
+                >
+                  {d}m
+                </button>
+              ))}
+            </div>
+          )}
         </div>
+
+        <p className="mt-auto font-mono text-[9px] leading-[1.7] text-tx3">
+          a tree is one word, and its height is how long you can go before forgetting it
+        </p>
       </aside>
+    </div>
+  );
+}
+
+function Chip({
+  on,
+  onClick,
+  title,
+  children,
+}: {
+  on: boolean;
+  onClick: () => void;
+  title?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className="rounded-field border px-[12px] py-[6px] font-sans text-[11.5px] font-medium"
+      style={{
+        borderColor: on ? 'var(--accLine)' : 'var(--line2)',
+        background: on ? 'var(--accSoft)' : 'transparent',
+        color: on ? 'var(--acc)' : 'var(--tx2)',
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Count({ n }: { n: number }) {
+  return <span className="ml-[5px] font-mono text-[9.5px] opacity-65">{n}</span>;
+}
+
+function Label({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
+      {children}
     </div>
   );
 }

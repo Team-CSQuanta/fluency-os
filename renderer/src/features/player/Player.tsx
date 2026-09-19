@@ -81,6 +81,18 @@ export function Player() {
   const [muted, setMuted] = useState(false);
   const [rate, setRate] = useState(1);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // The picture cannot be decoded — see onLoadedMetadata.
+  const [undecodable, setUndecodable] = useState(false);
+  // Cleared when the file changes, so one undecodable item does not leave the
+  // warning sitting over the next, perfectly playable, one.
+  //
+  // It has to live up here with the other hooks: this component early-returns
+  // four times below (no media, loading, error, no detail), and a hook placed
+  // after those runs on some renders and not others. React counts hooks per
+  // render, so that mismatch throws and takes the whole screen with it — which
+  // is exactly what it did.
+  useEffect(() => setUndecodable(false), [mediaId]);
+
   const [lookup, setLookup] = useState<{ term: string; cue: CueOut | null } | null>(null);
   // null closes the panel. The lookup itself is kept either way, so reopening
   // the tab shows the last word rather than an empty panel.
@@ -496,6 +508,16 @@ export function Player() {
               onDoubleClick={() => void toggleFullscreen()}
               onLoadedMetadata={(e) => {
                 const video = e.currentTarget;
+                /* A video track Chromium cannot decode reports NO error at all.
+                 *
+                 * Measured on an HEVC file: readyState reaches 4, currentTime
+                 * advances, the AAC audio plays — and videoWidth stays 0 with
+                 * totalVideoFrames stuck at 0, because not one frame was ever
+                 * decoded. On screen that is a frozen picture with sound and a
+                 * running clock, which reads as the app being broken rather
+                 * than as the file being in a format it cannot open. Nothing
+                 * fires to say so, so it has to be noticed here. */
+                setUndecodable(video.videoWidth === 0 && video.videoHeight === 0);
                 setDurationMs(video.duration * 1000);
                 video.playbackRate = rate;
                 // Chromium keeps pitch correction on by default, but it is the
@@ -528,7 +550,10 @@ export function Player() {
               onEnded={() => flushProgress(true)}
               onError={() =>
                 setVideoError(
-                  'This file’s video or audio codec isn’t one Chromium can decode. It plays in VLC but not here.',
+                  'This player can’t open this file. It reads MP4, M4V and WebM; Matroska (.mkv), ' +
+                    '.avi, .wmv, .flv and .mpg are not formats it can read at all, whatever is ' +
+                    'inside them. Repackaging into MP4 is usually instant and lossless: ' +
+                    'ffmpeg -i input.mkv -c copy output.mp4',
                 )
               }
             />
@@ -568,7 +593,29 @@ export function Player() {
             )}
           </div>
 
-          {!missing && targetCues.length === 0 && (
+          {undecodable && (
+            <div className="absolute inset-0 grid place-items-center bg-black/80 p-6">
+              <div className="max-w-[440px] text-center">
+                <div className="font-sans text-[14px] font-semibold text-white">
+                  The sound plays, but this picture can’t be decoded
+                </div>
+                <p className="mt-[8px] font-sans text-[12.5px] leading-[1.65] text-white/70">
+                  The audio decoded and the video did not, which is why you can hear it while the
+                  frame stays still and the clock keeps running. H.265 plays here when the graphics
+                  card can decode it — if this machine’s cannot, or the track is an older codec like
+                  Xvid, MPEG-2 or VC-1, there is no decoder for it.
+                </p>
+                <p className="mt-[10px] font-mono text-[10.5px] leading-[1.7] text-white/55">
+                  Re-encoding the picture to H.264 fixes it, and copies the sound across untouched:
+                </p>
+                <code className="mt-[7px] block select-text rounded-field border border-white/15 bg-black/60 px-[10px] py-[8px] text-left font-mono text-[10px] leading-[1.6] text-white/80">
+                  ffmpeg -i input.mp4 -c:v libx264 -crf 20 -c:a copy output.mp4
+                </code>
+              </div>
+            </div>
+          )}
+
+          {!missing && !undecodable && targetCues.length === 0 && (
             <div className="absolute inset-x-0 bottom-[90px] mx-auto w-fit rounded-panel bg-black/70 px-4 py-[10px] text-center">
               <div className="font-sans text-[12px] text-white/80">No subtitles for this file yet.</div>
               <button

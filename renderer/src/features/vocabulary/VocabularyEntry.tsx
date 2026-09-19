@@ -24,7 +24,7 @@ import { ClipContext } from '@/features/vocabulary/ClipContext';
 export function VocabularyEntry() {
   const word = useShellStore((s) => s.selectedWord);
   const goScreen = useShellStore((s) => s.goScreen);
-  const goForest = () => goScreen('forest');
+  const goForest = useShellStore((s) => s.goForest);
 
   const selectedDetail = useVocabularyStore((s) => s.selectedDetail);
   const detailStatus = useVocabularyStore((s) => s.detailStatus);
@@ -690,7 +690,7 @@ export function VocabularyEntry() {
             </div>
 
             <button
-              onClick={goForest}
+              onClick={() => goForest(word)}
               className="rounded-field border border-accLine bg-accSoft py-[9px] font-mono text-[11px] text-acc"
             >
               see plant

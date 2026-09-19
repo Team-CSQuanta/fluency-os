@@ -8,8 +8,10 @@ from app.db import get_connection
 from app.migrations.runner import run_migrations
 from app.routers import (
     books,
+    challenge,
     conversation,
     engine,
+    forest,
     hardware,
     health,
     media,
@@ -21,6 +23,7 @@ from app.routers import (
 )
 from app.services.book_search import ensure_fts_backfilled
 from app.services.media.library import backfill_index_at_end
+from app.services.vatex_scenes import ensure_imported as ensure_scenes_imported
 from app.services.vocabulary import backfill_context_hashes, backfill_missing_cefr
 
 configure_from_argv()
@@ -35,6 +38,7 @@ async def lifespan(_app: FastAPI):
         backfill_missing_cefr(conn)
         backfill_index_at_end(conn)
         backfill_context_hashes(conn)
+        ensure_scenes_imported(conn)
     finally:
         conn.close()
     yield
@@ -50,11 +54,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(forest.router)
 app.include_router(health.router)
 app.include_router(users.router)
 app.include_router(placement.router)
 app.include_router(hardware.router)
 app.include_router(books.router)
+app.include_router(challenge.router)
 app.include_router(media.router)
 app.include_router(media.file_router)
 app.include_router(reading.router)

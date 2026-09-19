@@ -888,3 +888,181 @@ export interface MediaStorageOut {
   ffmpeg_version: string | null;
   stt_ready: boolean;
 }
+
+// --- Scene Description Challenge (spec §6.4) ----------------------------
+
+export type ChallengeKind = 'describe' | 'predict' | 'roleplay' | 'interrogate' | 'reword';
+export type ChallengeSource = 'library' | 'vatex';
+export type ChallengeStatus = 'open' | 'scored' | 'abandoned';
+
+export interface SceneWordOut {
+  word: string;
+  cefr: string;
+  /** Already in the learner's vocabulary. Unknown words are an offer: the
+   * interface fetches a meaning on demand and can save it. */
+  known: boolean;
+}
+
+/** A word from the reference descriptions, with how many of the ten describers
+ * used it. The count is shown: "six people said this" tells the learner how
+ * central it is in a way a bare word does not. */
+export interface AgreedWordOut {
+  word: string;
+  describers: number;
+}
+
+export interface HintsOut {
+  /** Library rounds. */
+  target_words: string[];
+  scene_words: SceneWordOut[];
+  /** VATEX rounds: graded reveals from the ten reference descriptions. Every
+   * tier costs points, and `next_penalty` prices the NEXT one so the button
+   * can say what it will cost before it is pressed. */
+  level: number;
+  max_level: number;
+  penalty: number;
+  next_penalty: number | null;
+  consensus_words: AgreedWordOut[];
+  detail_words: AgreedWordOut[];
+  example_caption: string | null;
+  describer_count: number;
+}
+
+export interface ChallengeFeedbackOut {
+  note: string;
+  corrections: Array<{ said: string; better: string }>;
+  target_words_used: string[];
+  target_words_missed: string[];
+}
+
+export interface ChallengeRoundOut {
+  id: string;
+  kind: ChallengeKind;
+  source: ChallengeSource;
+  /** VATEX rounds only. Built server-side so the host and the parameters that
+   * keep playback inside the scene live in one place. */
+  video_id: string | null;
+  embed_url: string | null;
+  start_s: number | null;
+  end_s: number | null;
+  prompt: string;
+  media_item_id: string | null;
+  clip_id: string | null;
+  media_title: string;
+  start_ms: number;
+  end_ms: number;
+  status: ChallengeStatus;
+  target_word_count: number;
+  started_at: string;
+  transcript: string | null;
+  speech_seconds: number | null;
+  target_coverage: number | null;
+  duration_score: number | null;
+  grammar_score: number | null;
+  relevance_score: number | null;
+  detail_score: number | null;
+  /** The deterministic counterpart to detail_score: the share of the
+   * describers' collective observations the learner reached, weighted by how
+   * many of them made each one. Recorded alongside the judged figure so the
+   * two can be compared on real rounds. */
+  content_recall: number | null;
+  /** What the description scored before hints were deducted, and what they
+   * cost. Both are sent so the learner sees the two separately. */
+  raw_overall: number | null;
+  hint_level: number;
+  hint_penalty: number;
+  overall: number | null;
+  feedback: ChallengeFeedbackOut | null;
+  /** Both withheld until the attempt is scored — they are the answer. */
+  cue_text: string | null;
+  target_words: string[];
+  /** The ten human descriptions. Empty until the attempt is scored. */
+  reference_captions: string[];
+}
+
+/** One of the learner's own words that the enriched description actually used.
+ * Verified against the text server-side — a model asked which words it used
+ * will name ones it did not. */
+export interface EnrichedWordOut {
+  word: string;
+  vocab_word_id: string;
+  why: string;
+}
+
+export interface EnrichmentOut {
+  description: string;
+  used_words: EnrichedWordOut[];
+  /** Came back from the round rather than a fresh model call. */
+  cached: boolean;
+}
+
+export interface ChallengeStatsOut {
+  personal_bests: Record<string, number>;
+  rounds_played: number;
+  stt_ready: boolean;
+  scenes_available: number;
+  /** Playing a VATEX scene contacts youtube-nocookie.com. Off until asked for. */
+  embeds_enabled: boolean;
+  scene_pool: ScenePoolOut;
+}
+
+/** How much of the corpus is reachable right now. `available` is the honest
+ * number: total, minus videos withdrawn as unplayable, minus the ones resting
+ * inside this learner's own cooldown. */
+export interface ScenePoolOut {
+  total: number;
+  unavailable: number;
+  resting: number;
+  available: number;
+  cooldown_days: number;
+}
+
+// ---------------------------------------------------------------------------
+// Forest (spec §8)
+// ---------------------------------------------------------------------------
+
+/** One vocabulary word, drawn as a tree.
+ *
+ * Every field is derived from the scheduler — there is nothing here the client
+ * can send back to make a tree grow. See backend services/forest.py. */
+export interface TreeOut {
+  vocab_word_id: string;
+  word: string;
+  biome: string;
+  /** 0-5: Seed, Sprout, Seedling, Sapling, Young tree, Ancient tree. */
+  stage: number;
+  /** FSRS days-until-90%-recall, which is what the stage is a band of. */
+  stability: number;
+  health: number;
+  dormant: boolean;
+  lapses: number;
+  spontaneous_uses: number;
+  due: string | null;
+}
+
+export interface BiomeOut {
+  key: string;
+  label: string;
+  blurb: string;
+  count: number;
+}
+
+export interface ForestOut {
+  trees: TreeOut[];
+  biomes: BiomeOut[];
+  stages: number[];
+  stage_names: string[];
+  sunlight: number;
+  sunlight_earned: number;
+  streak_freezes: number;
+  dormant: number;
+  costs: Record<string, number>;
+}
+
+export interface FocusOut {
+  id: string;
+  minutes: number;
+  started_at: string;
+  completed_at: string | null;
+  sunlight: number;
+}
