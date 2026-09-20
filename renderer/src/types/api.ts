@@ -162,7 +162,13 @@ export interface ReaderPrefsOut {
   panel_tab: PanelTab;
   /** Show a PDF's own typeset page beside the extracted text. */
   page_view: boolean;
+  /** Whether those pages run down the screen or across it. */
+  page_scroll: PageScroll;
+  /** A multiple of the width that fits the window, so 1 is a whole page. */
+  page_zoom: number;
 }
+
+export type PageScroll = 'vertical' | 'horizontal';
 
 export interface LeveledSegmentOut {
   text: string;
@@ -1128,4 +1134,56 @@ export type AppSettingsPatch = Partial<
 export interface DictionaryCacheOut {
   entries: number;
   last_cached_at: string | null;
+}
+
+// --- The selectable layer over a printed page ---------------------------
+
+export interface PageWordOut {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  t: string;
+  /** Which line of the page. Used to tell a line break from a space. */
+  ln: number;
+}
+
+export interface PageTextLayerOut {
+  /** The rendered image's own pixels — scale the layer to the drawn width. */
+  width: number;
+  height: number;
+  words: PageWordOut[];
+}
+
+export interface HighlightRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export type HighlightStyle = 'highlight' | 'underline';
+
+export interface PageHighlightOut {
+  id: string;
+  book_id: string;
+  user_id: string;
+  page: number;
+  rects: HighlightRect[];
+  colour: string;
+  style: HighlightStyle;
+  quoted_text: string;
+  note: string | null;
+  created_at: string;
+}
+
+export interface PageLabelOut {
+  id: string;
+  book_id: string;
+  page: number;
+  rects: HighlightRect[];
+  original_text: string;
+  simple_text: string;
+  mode: string;
+  created_at: string;
 }

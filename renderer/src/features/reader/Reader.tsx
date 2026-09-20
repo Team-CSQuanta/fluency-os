@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { BlockText } from '@/features/reader/BlockText';
+import { PageScroller, ZOOM_STEPS, zoomIn, zoomOut } from '@/features/reader/PageScroller';
+import { HIGHLIGHT_COLOURS } from '@/features/reader/PageSelectionToolbar';
 import {
   HIGHLIGHT_COLORS,
   LEVEL_MODES,
@@ -8,7 +10,6 @@ import {
 } from '@/features/reader/readerConstants';
 import { getBlockSelectionRanges } from '@/features/reader/useSelectionRange';
 import { useReadingSession } from '@/features/reader/useReadingSession';
-import { fetchBlobUrl } from '@/lib/apiClient';
 import { useReaderStore } from '@/store/readerStore';
 import { useShellStore } from '@/store/shellStore';
 import { useVocabularyStore } from '@/store/vocabularyStore';
@@ -36,6 +37,13 @@ const TAB_META: Record<Tab, { label: string; title: string; hint: string }> = {
 
 type PageTheme = 'auto' | 'light' | 'sepia' | 'dark';
 
+/** Which way the printed pages run. Named for what the reader sees rather
+ * than for the axis: "down" and "across" need no explaining. */
+const PAGE_SCROLLS = [
+  { key: 'vertical' as const, label: 'down', title: 'Pages run down the screen, like a document' },
+  { key: 'horizontal' as const, label: 'across', title: 'Pages run across the screen, side by side' },
+];
+
 // "auto" reads var(--bg)/var(--tx) directly, so it always matches the rest
 // of the app's current theme — live, not just at the moment the book was
 // opened — which is why it's the default rather than a fixed theme.
@@ -55,6 +63,11 @@ function TabIcon({ tab, color }: { tab: Tab; color: string }) {
     </svg>
   );
 }
+
+/** The swatch for a page mark, falling back rather than rendering nothing
+ * for a colour added after this build. */
+const PAGE_MARK_COLOUR = (key: string): string =>
+  HIGHLIGHT_COLOURS.find((c) => c.key === key)?.value ?? 'var(--line)';
 
 export function Reader() {
   const bookId = useShellStore((s) => s.readerBookId);
@@ -85,6 +98,8 @@ export function Reader() {
   const deleteBookmark = useReaderStore((s) => s.deleteBookmark);
   const searchQuery = useReaderStore((s) => s.searchQuery);
   const searchHits = useReaderStore((s) => s.searchHits);
+  const allPageHighlights = useReaderStore((s) => s.allPageHighlights);
+  const removePageHighlight = useReaderStore((s) => s.removePageHighlight);
   const searchStatus = useReaderStore((s) => s.searchStatus);
   const setSearchQuery = useReaderStore((s) => s.setSearchQuery);
   const heat = useReaderStore((s) => s.heat);
@@ -123,8 +138,7 @@ export function Reader() {
    * PDFs have one — every other format is reflowable and never had a page. */
   const canShowPage = Boolean(book?.has_page_images);
   const showingPage = prefs.page_view && canShowPage;
-  const [pageImageState, setPageImageState] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [pageImage, setPageImage] = useState<string | null>(null);
+  const zoom = prefs.page_zoom;
   // null while not being edited, so the box shows wherever the reader
   // actually is rather than the last thing they typed into it.
   const [pageDraft, setPageDraft] = useState<string | null>(null);
@@ -192,38 +206,6 @@ export function Reader() {
     setPageDraft(null);
   }, [page, bookId]);
 
-  /* Fetched into a blob rather than pointed at with a <img src>.
-   *
-   * The book routes take the handshake token in a header only — the `?t=`
-   * form exists for <video src>, where a whole film could not be held in
-   * memory. A page render is a few hundred kilobytes, so it can be fetched
-   * properly and the token stays out of the URL. */
-  useEffect(() => {
-    if (!showingPage || !bookId) {
-      setPageImage(null);
-      return;
-    }
-    let objectUrl: string | null = null;
-    let cancelled = false;
-    setPageImageState('loading');
-    void fetchBlobUrl(`/books/${bookId}/page/${page}/image`)
-      .then((url) => {
-        objectUrl = url;
-        if (cancelled) return;
-        setPageImage(url);
-        setPageImageState('ready');
-      })
-      .catch(() => {
-        if (!cancelled) setPageImageState('error');
-      });
-    return () => {
-      cancelled = true;
-      // Object URLs are held by the document until revoked by hand; a reader
-      // turning through a long book would otherwise keep every page it saw.
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [showingPage, bookId, page]);
-
   const commitPageDraft = () => {
     const wanted = Number(pageDraft);
     setPageDraft(null);
@@ -232,16 +214,48 @@ export function Reader() {
     if (clamped !== page) void goToPage(clamped);
   };
 
-  // Left/Right arrow keys turn pages, like an e-reader.
+  /** Where the reader has scrolled to, once they stop.
+   *
+   * Settling rather than reporting every page that goes by: scrolling
+   * through thirty pages to reach a figure should not write thirty reading
+   * positions, or fetch thirty pages of text nobody looked at. */
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleScrolledTo = useCallback(
+    (reached: number) => {
+      if (settleTimer.current) clearTimeout(settleTimer.current);
+      settleTimer.current = setTimeout(() => {
+        settleTimer.current = null;
+        void goToPage(reached);
+      }, 400);
+    },
+    [goToPage],
+  );
+  useEffect(() => () => {
+    if (settleTimer.current) clearTimeout(settleTimer.current);
+  }, []);
+
+  /* Keys. On the printed page the arrows scroll it, as they do in any
+   * document — the pages run continuously, so there is nothing to turn. In
+   * the text view, which is still a page at a time, they still turn it. */
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (showingPage) {
+        if (!(e.ctrlKey || e.metaKey)) return;
+        const at = useReaderStore.getState().prefs.page_zoom;
+        if (e.key === '+' || e.key === '=') setPrefs({ page_zoom: zoomIn(at) });
+        else if (e.key === '-') setPrefs({ page_zoom: zoomOut(at) });
+        else if (e.key === '0') setPrefs({ page_zoom: 1 });
+        else return;
+        e.preventDefault();
+        return;
+      }
       if (e.key === 'ArrowRight') void nextPage();
       else if (e.key === 'ArrowLeft') void prevPage();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [nextPage, prevPage]);
+  }, [nextPage, prevPage, showingPage, setPrefs]);
 
   // Heat spans for the blocks on screen, indexed for O(1) lookup per block.
   // The panel's own switch gates it on top of the per-book heat_overlay flag.
@@ -328,20 +342,44 @@ export function Reader() {
     goScreen('bookshelf');
   };
 
+  /* Finishing a book belongs at the end of it, so this sits after the last
+   * page — under the text in the text view, after the last sheet in the
+   * page view. One definition, because it is the same button either way. */
+  const finishBlock = (
+    <div className="mt-auto flex flex-col items-center gap-[7px] border-t border-line2 pt-4">
+      <button
+        onClick={() => void setFinished(!book?.finished_at)}
+        className="w-full rounded-field border py-[10px] font-sans text-[12px] font-semibold transition-colors"
+        style={{
+          borderColor: book?.finished_at ? 'var(--accLine)' : 'var(--line)',
+          background: book?.finished_at ? 'var(--accSoft)' : 'transparent',
+          color: book?.finished_at ? 'var(--acc)' : 'var(--tx2)',
+        }}
+      >
+        {book?.finished_at ? '✓ Finished — mark as unread' : 'Mark as finished'}
+      </button>
+      <span className="font-mono text-[9.5px] text-tx3">
+        {book?.finished_at
+          ? `finished ${new Date(book.finished_at).toLocaleDateString()}`
+          : 'that was the last page'}
+      </span>
+    </div>
+  );
+
   const tabs: Tab[] = ['toc', 'search', 'marks', 'text', 'ai', 'level'];
   const isTurning = readerStatus === 'loading' && blocks.length > 0;
 
   return (
     <div className="flex h-full min-h-0 w-full">
+      {/* The book's own frame: two fixed bars and, under them, whatever is
+          being read. The bars used to scroll with the text and be pinned
+          back in place; with pages running continuously underneath they are
+          simply the top of the window. */}
       <div
-        ref={scrollRef}
-        className="flex min-h-0 min-w-0 flex-1 flex-col items-center overflow-y-auto px-6 pb-9 transition-colors duration-200"
+        className="flex min-h-0 min-w-0 flex-1 flex-col transition-colors duration-200"
         style={{ background: READER_BG[pageTheme] }}
       >
-        <div
-          className="sticky top-0 z-[12] mb-[30px] flex w-full justify-center border-b border-line2 py-[10px] transition-colors duration-200"
-          style={{ background: READER_BG[pageTheme] }}
-        >
+        <div className="flex w-full flex-none justify-center border-b border-line2 px-6 py-[10px]">
           <div className="flex w-full max-w-[760px] flex-wrap items-center gap-[6px]">
             <button
               onClick={handleCloseBook}
@@ -371,9 +409,9 @@ export function Reader() {
           </div>
         </div>
 
-        <div className="flex w-full max-w-[640px] flex-1 flex-col">
-          <div className="mb-[26px] flex items-center justify-between gap-3 font-mono text-[10.5px] text-tx3">
-            <span className="flex flex-1 items-center gap-[5px] truncate">
+        <div className="flex w-full flex-none justify-center border-b border-line2 px-6 py-[7px]">
+          <div className="flex w-full max-w-[760px] flex-wrap items-center gap-[9px] font-mono text-[10.5px] text-tx3">
+            <span className="flex flex-none items-center gap-[5px]">
               page
               {/* Typing a number is how you get to page 400 of a 600-page
                   book. Stepping one at a time and the table of contents were
@@ -393,6 +431,63 @@ export function Reader() {
               />
               / {totalPages || '—'}
             </span>
+
+            {showingPage && (
+              <>
+                {/* Zoom. 100% is a whole page rather than a fixed size, so it
+                    means the same thing on a laptop and on a large monitor. */}
+                <span className="flex flex-none items-center gap-[3px]">
+                  <button
+                    onClick={() => setPrefs({ page_zoom: zoomOut(zoom) })}
+                    disabled={zoom <= ZOOM_STEPS[0]}
+                    title="Smaller — or hold Ctrl and turn the wheel"
+                    className="h-[21px] w-[21px] rounded-[4px] border border-line2 text-tx2 transition-colors hover:border-acc hover:text-acc disabled:opacity-30 disabled:hover:border-line2 disabled:hover:text-tx2"
+                  >
+                    −
+                  </button>
+                  <button
+                    onClick={() => setPrefs({ page_zoom: 1 })}
+                    title="Back to a whole page"
+                    className="min-w-[46px] rounded-[4px] border border-line2 px-[5px] py-[2px] text-tx2 transition-colors hover:border-acc hover:text-acc"
+                  >
+                    {Math.round(zoom * 100)}%
+                  </button>
+                  <button
+                    onClick={() => setPrefs({ page_zoom: zoomIn(zoom) })}
+                    disabled={zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1]}
+                    title="Larger — or hold Ctrl and turn the wheel"
+                    className="h-[21px] w-[21px] rounded-[4px] border border-line2 text-tx2 transition-colors hover:border-acc hover:text-acc disabled:opacity-30 disabled:hover:border-line2 disabled:hover:text-tx2"
+                  >
+                    +
+                  </button>
+                </span>
+
+                {/* Which way the pages run. Also in Settings → Reading, for
+                    someone who wants it set before opening anything. */}
+                <span className="flex flex-none items-center gap-[3px]">
+                  {PAGE_SCROLLS.map((dir) => {
+                    const on = prefs.page_scroll === dir.key;
+                    return (
+                      <button
+                        key={dir.key}
+                        onClick={() => setPrefs({ page_scroll: dir.key })}
+                        title={dir.title}
+                        className="rounded-[4px] border px-[7px] py-[2px] transition-colors"
+                        style={{
+                          borderColor: on ? 'var(--accLine)' : 'var(--line2)',
+                          background: on ? 'var(--accSoft)' : 'transparent',
+                          color: on ? 'var(--acc)' : 'var(--tx3)',
+                        }}
+                      >
+                        {dir.label}
+                      </button>
+                    );
+                  })}
+                </span>
+              </>
+            )}
+
+            <span className="min-w-0 flex-1" />
             {canShowPage && (
               <button
                 onClick={() => setPrefs({ page_view: !prefs.page_view })}
@@ -413,42 +508,45 @@ export function Reader() {
             )}
             <span className="flex-none">{Math.round(percent)}% read</span>
           </div>
+        </div>
 
-          {readerStatus === 'loading' && blocks.length === 0 && (
-            <div className="py-16 text-center font-mono text-[11px] text-tx3">opening book…</div>
-          )}
-          {readerStatus === 'error' && (
-            <div className="py-16 text-center font-mono text-[11px] text-tx3">
-              couldn't open this book{readerError ? ` — ${readerError}` : ''}
-            </div>
-          )}
+        {/* Both views need these, so they sit above the fork: a book that
+            failed to open would otherwise show an empty frame and no reason. */}
+        {readerStatus === 'loading' && blocks.length === 0 && (
+          <div className="py-16 text-center font-mono text-[11px] text-tx3">opening book…</div>
+        )}
+        {readerStatus === 'error' && (
+          <div className="py-16 text-center font-mono text-[11px] text-tx3">
+            couldn't open this book{readerError ? ` — ${readerError}` : ''}
+          </div>
+        )}
 
-          {showingPage ? (
-            <div className="flex flex-col items-center">
-              {pageImageState === 'error' && (
-                <div className="py-16 text-center font-mono text-[11px] text-tx3">
-                  this page couldn't be rendered
-                </div>
-              )}
-              {pageImageState === 'loading' && (
-                <div className="py-16 text-center font-mono text-[11px] text-tx3">
-                  rendering page {page}…
-                </div>
-              )}
-              {pageImage && pageImageState === 'ready' && (
-                <img
-                  src={pageImage}
-                  alt={`Page ${page} as printed`}
-                  className="w-full rounded-[4px] border border-line2"
-                  style={{ background: '#fff' }}
-                />
-              )}
-              <span className="mt-[10px] text-center font-mono text-[9.5px] leading-[1.7] text-tx3">
-                the page as printed · word lookup, highlighting and the difficulty
-                overlay work in the text view
-              </span>
-            </div>
-          ) : (
+        {showingPage && bookId ? (
+          <PageScroller
+            bookId={bookId}
+            total={totalPages}
+            page={page}
+            zoom={zoom}
+            scroll={prefs.page_scroll}
+            onPage={handleScrolledTo}
+            onZoom={(next) => setPrefs({ page_zoom: next })}
+            tail={
+              <div className="mx-auto w-full max-w-[420px] flex-none pt-3">
+                {finishBlock}
+                <p className="pt-[10px] text-center font-mono text-[9.5px] leading-[1.7] text-tx3">
+                  select any text to highlight it, look it up, or ask for it in simpler
+                  words · the difficulty overlay still works in the text view
+                </p>
+              </div>
+            }
+          />
+        ) : (
+          <div
+            ref={scrollRef}
+            className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-6 pb-9"
+          >
+            <div className="flex w-full max-w-[640px] flex-1 flex-col pt-[24px]">
+
             <div
               onMouseUp={handleBlocksMouseUp}
               style={{ opacity: isTurning ? 0.5 : 1, transition: 'opacity 120ms ease' }}
@@ -488,31 +586,12 @@ export function Reader() {
                   )}
                 </div>
               )}
-            </div>
-          )}
+              </div>
 
-          {/* The end of the last page is where finishing a book actually
-              happens, so the action lives here rather than only on the shelf. */}
-          {totalPages > 0 && !hasNext && (
-            <div className="mt-auto flex flex-col items-center gap-[7px] border-t border-line2 pt-4">
-              <button
-                onClick={() => void setFinished(!book?.finished_at)}
-                className="w-full rounded-field border py-[10px] font-sans text-[12px] font-semibold transition-colors"
-                style={{
-                  borderColor: book?.finished_at ? 'var(--accLine)' : 'var(--line)',
-                  background: book?.finished_at ? 'var(--accSoft)' : 'transparent',
-                  color: book?.finished_at ? 'var(--acc)' : 'var(--tx2)',
-                }}
-              >
-                {book?.finished_at ? '✓ Finished — mark as unread' : 'Mark as finished'}
-              </button>
-              <span className="font-mono text-[9.5px] text-tx3">
-                {book?.finished_at
-                  ? `finished ${new Date(book.finished_at).toLocaleDateString()}`
-                  : 'that was the last page'}
-              </span>
-            </div>
-          )}
+              {/* The end of the last page is where finishing a book actually
+                  happens, so the action lives here rather than only on the
+                  shelf. */}
+              {totalPages > 0 && !hasNext && finishBlock}
 
           {totalPages > 0 && (
             <div
@@ -559,7 +638,9 @@ export function Reader() {
               </button>
             </div>
           )}
-        </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {!panelOpen && (
@@ -764,12 +845,42 @@ export function Reader() {
                 </div>
                 <div className="border-t border-line2 pt-3">
                   <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
-                    All highlights · {highlights.length}
+                    All highlights · {highlights.length + allPageHighlights.length}
                   </div>
                   <div className="flex flex-col gap-2">
-                    {highlights.length === 0 && (
+                    {highlights.length + allPageHighlights.length === 0 && (
                       <div className="font-mono text-[10px] text-tx3">No highlights yet.</div>
                     )}
+                    {/* Marks drawn on the printed page. Listed alongside the
+                        ones made in the text view rather than in a section of
+                        their own: they are the same act to the reader, and
+                        which view a passage was marked in is not something
+                        anyone remembers a week later. */}
+                    {allPageHighlights.map((h) => (
+                      <div
+                        key={h.id}
+                        className="rounded-field border border-line2 px-[10px] py-[10px]"
+                        style={{ borderLeft: `3px solid ${PAGE_MARK_COLOUR(h.colour)}` }}
+                      >
+                        <button onClick={() => void goToPage(h.page)} className="block w-full text-left">
+                          <span className="font-sans text-[11px] leading-[1.6] text-tx2">
+                            "{h.quoted_text.slice(0, 220)}
+                            {h.quoted_text.length > 220 ? '…' : ''}"
+                          </span>
+                        </button>
+                        <div className="mt-[6px] flex items-center justify-between gap-2">
+                          <span className="font-mono text-[9px] text-tx3">
+                            page {h.page} · on the printed page
+                          </span>
+                          <button
+                            onClick={() => void removePageHighlight(h.id)}
+                            className="font-mono text-[9px] text-tx3 hover:text-acc"
+                          >
+                            remove
+                          </button>
+                        </div>
+                      </div>
+                    ))}
                     {highlights.map((h) => (
                       <div
                         key={h.id}

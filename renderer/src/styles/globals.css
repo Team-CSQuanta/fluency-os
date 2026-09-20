@@ -192,3 +192,38 @@ body {
   outline: 2px solid var(--accLine);
   outline-offset: 4px;
 }
+
+/* The invisible text over a rendered book page.
+ *
+ * The glyphs are never seen — the page image underneath has the real ones —
+ * so the only thing drawn here is the selection itself. A solid colour would
+ * hide the print it is meant to be marking, so the colour is laid on the page
+ * the way a highlighter pen is: it darkens what is under it and cannot make
+ * anything lighter, which leaves the ink readable through it.
+ *
+ * That is also why the colour is opaque rather than a wash. A see-through
+ * colour painted twice over the same spot comes out deeper, and these marks
+ * DO overlap: the browser paints a selection over the height the font can
+ * reach, not the line box, so every line bleeds a few pixels into the next
+ * one. With a wash, those few pixels showed up as dark stripes between the
+ * lines. An opaque colour simply covers itself, so twice is the same as once
+ * — and because the whole layer is blended with the page in one go, the
+ * whole selection comes out one even tone however many marks made it.
+ */
+.fos-text-layer {
+  /* Nothing here should catch a click meant for the page, except the text
+     itself, which needs to be draggable. */
+  pointer-events: none;
+  /* On the parent, not the marks: it groups the layer and blends it with the
+     page once. On each mark it would blend them with each other as well. */
+  mix-blend-mode: multiply;
+}
+.fos-text-layer span {
+  pointer-events: auto;
+}
+.fos-text-layer ::selection {
+  background: #b9d4ff;
+}
+.fos-text-layer ::-moz-selection {
+  background: #b9d4ff;
+}

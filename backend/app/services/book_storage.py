@@ -43,6 +43,15 @@ def page_image_path(book_id: str, page: int) -> Path:
     return page_images_dir(book_id) / f"{page}.png"
 
 
+def page_text_layer_path(book_id: str, page: int) -> Path:
+    """Where a page's word boxes are cached, beside its rendered image.
+
+    Same directory and the same lifetime: the two are read together and are
+    only meaningful together, so deleting a book's page images must not leave
+    a text layer describing pages that no longer exist."""
+    return page_images_dir(book_id) / f"{page}.words.json"
+
+
 def store_book_file(source_path: Path, book_id: str) -> Path:
     """Copies the source file into books/<id>.<ext>, returns the new path."""
     ext = source_path.suffix.lstrip(".").lower()

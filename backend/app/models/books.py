@@ -92,3 +92,60 @@ class PageOut(BaseModel):
     has_prev: bool
     has_next: bool
     first_block_index: int
+
+
+class PageWordOut(BaseModel):
+    """One word, boxed, in the rendered page image's own pixels.
+
+    Short names because a dense page carries two or three thousand of these
+    and the JSON is on the critical path for turning a page.
+    """
+
+    x: float
+    y: float
+    w: float
+    h: float
+    t: str
+    #: Which line of the page it belongs to. The browser needs this to know
+    #: where one line ends and the next begins — without it, selecting across
+    #: a line break yields two words run together with no space.
+    ln: int
+
+
+class PageTextLayerOut(BaseModel):
+    """The selectable text sitting over a rendered page.
+
+    A rendered page is a picture. Everything a reader expects to be able to do
+    to text — select it, look a word up, highlight it, copy it — needs to know
+    where the words are, and a picture does not say. This is what a PDF viewer
+    builds invisibly over the page, and it is why text in one can be selected
+    at all.
+    """
+
+    #: The image these coordinates belong to, so the client can scale the
+    #: layer to however wide it ends up drawing the page.
+    width: float
+    height: float
+    words: list[PageWordOut]
+
+
+class PageLabelCreate(BaseModel):
+    user_id: str
+    page: int
+    rects: list[dict]
+    original_text: str
+    simple_text: str
+    mode: str
+
+
+class PageLabelOut(BaseModel):
+    """A passage on the page, shown in plainer words."""
+
+    id: str
+    book_id: str
+    page: int
+    rects: list[dict]
+    original_text: str
+    simple_text: str
+    mode: str
+    created_at: str

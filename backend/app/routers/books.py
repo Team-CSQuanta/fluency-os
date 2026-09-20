@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from pathlib import Path
 
@@ -6,6 +7,10 @@ from fastapi.responses import FileResponse
 
 from app.db import get_connection, get_db
 from app.models.books import (
+    PageLabelCreate,
+    PageLabelOut,
+    PageTextLayerOut,
+    PageWordOut,
     BlockOut,
     BookCountsOut,
     BookImportRequest,
@@ -17,6 +22,10 @@ from app.models.books import (
     PositionUpdate,
 )
 from app.models.highlights import (
+    HighlightRect,
+    PageHighlightCreate,
+    PageHighlightOut,
+    PageHighlightUpdate,
     BookmarkCreate,
     BookmarkOut,
     HighlightCreate,
@@ -284,6 +293,79 @@ def get_page_image(
     return FileResponse(cached, media_type="image/png")
 
 
+@router.get("/{book_id}/page/{page}/text-layer", response_model=PageTextLayerOut)
+def get_page_text_layer(
+    book_id: str, page: int, conn: sqlite3.Connection = Depends(get_db)
+) -> PageTextLayerOut:
+    """Where every word on the rendered page is.
+
+    The page image is a picture, so nothing on it can be selected, looked up
+    or highlighted — which is why the reader had to tell people that those
+    things "work in the text view". This is the missing half: the same words,
+    boxed, in the image's own pixels, so the client can lay an invisible
+    selectable layer over the picture. It is how every PDF viewer does it.
+
+    Cached beside the image, because both are derived from the same page and
+    a re-read of a page should not re-parse it.
+    """
+    row = _get_book_row(conn, book_id)
+    source = _page_image_source(row)
+    if page < 1:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such page")
+
+    cached = book_storage.page_text_layer_path(book_id, page)
+    if cached.is_file():
+        try:
+            return PageTextLayerOut(**json.loads(cached.read_text()))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            # A cache we can no longer read is a cache problem, not a reader
+            # problem: fall through and rebuild it.
+            cached.unlink(missing_ok=True)
+
+    import fitz  # imported here so a non-PDF install never pays for it
+
+    try:
+        doc = fitz.open(str(source))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="This book's file could not be opened."
+        ) from exc
+    try:
+        if page > doc.page_count:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such page")
+        loaded = doc.load_page(page - 1)
+        scale = _PAGE_RENDER_SCALE
+        words = [
+            PageWordOut(
+                x=round(w[0] * scale, 2),
+                y=round(w[1] * scale, 2),
+                w=round((w[2] - w[0]) * scale, 2),
+                h=round((w[3] - w[1]) * scale, 2),
+                t=w[4],
+                # PyMuPDF numbers lines within a block, so the pair is what
+                # actually identifies a line on the page.
+                ln=w[5] * 1000 + w[6],
+            )
+            # sort=True returns them in reading order, which is the order the
+            # browser will join them in when a selection is copied. Unsorted,
+            # a two-column page copies as one interleaved mess.
+            for w in loaded.get_text("words", sort=True)
+            if w[4].strip()
+        ]
+        layer = PageTextLayerOut(
+            width=round(loaded.rect.width * scale, 2),
+            height=round(loaded.rect.height * scale, 2),
+            words=words,
+        )
+    finally:
+        doc.close()
+
+    partial = cached.with_suffix(f".{uuid7()}.part")
+    partial.write_text(layer.model_dump_json())
+    partial.replace(cached)
+    return layer
+
+
 @router.get("/{book_id}/toc", response_model=list[ChapterOut])
 def get_toc(book_id: str, conn: sqlite3.Connection = Depends(get_db)) -> list[ChapterOut]:
     book = _get_book_row(conn, book_id)
@@ -518,6 +600,214 @@ def list_highlights(book_id: str, user_id: str, conn: sqlite3.Connection = Depen
         (book_id, user_id),
     ).fetchall()
     return [_row_to_highlight(conn, book, row) for row in rows]
+
+
+# --------------------------------------------------------------------------
+# Highlights drawn on the page as printed.
+#
+# Kept apart from the block-anchored ones above: see 0031_page_highlights.sql
+# for why one table cannot honestly hold both.
+
+
+def _row_to_page_highlight(row: sqlite3.Row) -> PageHighlightOut:
+    return PageHighlightOut(
+        id=row["id"],
+        book_id=row["book_id"],
+        user_id=row["user_id"],
+        page=row["page"],
+        rects=[HighlightRect(**r) for r in json.loads(row["rects"])],
+        colour=row["colour"],
+        style=row["style"],
+        quoted_text=row["quoted_text"],
+        note=row["note"],
+        created_at=row["created_at"],
+    )
+
+
+@router.get("/{book_id}/page-highlights", response_model=list[PageHighlightOut])
+def list_page_highlights(
+    book_id: str, user_id: str, page: int | None = None, conn: sqlite3.Connection = Depends(get_db)
+) -> list[PageHighlightOut]:
+    """Every page highlight in the book, or just one page's.
+
+    The reader asks per page while reading — a 938-page textbook's whole set
+    is not worth sending to draw one page — and asks for all of them to fill
+    the highlights panel.
+    """
+    _get_book_row(conn, book_id)
+    sql = "SELECT * FROM book_page_highlights WHERE book_id = ? AND user_id = ?"
+    args: list[object] = [book_id, user_id]
+    if page is not None:
+        sql += " AND page = ?"
+        args.append(page)
+    rows = conn.execute(sql + " ORDER BY page, created_at", args).fetchall()
+    return [_row_to_page_highlight(row) for row in rows]
+
+
+@router.post(
+    "/{book_id}/page-highlights",
+    response_model=PageHighlightOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_page_highlight(
+    book_id: str, payload: PageHighlightCreate, conn: sqlite3.Connection = Depends(get_db)
+) -> PageHighlightOut:
+    row = _get_book_row(conn, book_id)
+    # Only a PDF has a printed page to draw on. Refused here rather than
+    # stored and silently never shown.
+    _page_image_source(row)
+    if payload.page < 1:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such page")
+    if not payload.rects:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A highlight needs at least one area to mark.",
+        )
+
+    highlight_id = uuid7()
+    conn.execute(
+        """
+        INSERT INTO book_page_highlights
+            (id, book_id, user_id, page, rects, colour, style, quoted_text, note, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            highlight_id,
+            book_id,
+            payload.user_id,
+            payload.page,
+            json.dumps([r.model_dump() for r in payload.rects]),
+            payload.colour,
+            payload.style,
+            payload.quoted_text,
+            payload.note,
+            iso8601_utc_now(),
+        ),
+    )
+    created = conn.execute(
+        "SELECT * FROM book_page_highlights WHERE id = ?", (highlight_id,)
+    ).fetchone()
+    return _row_to_page_highlight(created)
+
+
+@router.patch("/{book_id}/page-highlights/{highlight_id}", response_model=PageHighlightOut)
+def update_page_highlight(
+    book_id: str,
+    highlight_id: str,
+    payload: PageHighlightUpdate,
+    conn: sqlite3.Connection = Depends(get_db),
+) -> PageHighlightOut:
+    row = conn.execute(
+        "SELECT * FROM book_page_highlights WHERE id = ? AND book_id = ?", (highlight_id, book_id)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Highlight not found")
+    fields = payload.model_dump(exclude_unset=True)
+    if fields:
+        assignments = ", ".join(f"{name} = ?" for name in fields)
+        conn.execute(
+            f"UPDATE book_page_highlights SET {assignments} WHERE id = ?",
+            (*fields.values(), highlight_id),
+        )
+        row = conn.execute(
+            "SELECT * FROM book_page_highlights WHERE id = ?", (highlight_id,)
+        ).fetchone()
+    return _row_to_page_highlight(row)
+
+
+@router.delete("/{book_id}/page-highlights/{highlight_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_page_highlight(
+    book_id: str, highlight_id: str, conn: sqlite3.Connection = Depends(get_db)
+) -> None:
+    cur = conn.execute(
+        "DELETE FROM book_page_highlights WHERE id = ? AND book_id = ?", (highlight_id, book_id)
+    )
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Highlight not found")
+
+
+# --------------------------------------------------------------------------
+# Plainer words pinned over the page. See 0032_page_labels.sql.
+
+
+def _row_to_page_label(row: sqlite3.Row) -> PageLabelOut:
+    return PageLabelOut(
+        id=row["id"],
+        book_id=row["book_id"],
+        page=row["page"],
+        rects=json.loads(row["rects"]),
+        original_text=row["original_text"],
+        simple_text=row["simple_text"],
+        mode=row["mode"],
+        created_at=row["created_at"],
+    )
+
+
+@router.get("/{book_id}/page-labels", response_model=list[PageLabelOut])
+def list_page_labels(
+    book_id: str, user_id: str, page: int | None = None, conn: sqlite3.Connection = Depends(get_db)
+) -> list[PageLabelOut]:
+    _get_book_row(conn, book_id)
+    sql = "SELECT * FROM book_page_labels WHERE book_id = ? AND user_id = ?"
+    args: list[object] = [book_id, user_id]
+    if page is not None:
+        sql += " AND page = ?"
+        args.append(page)
+    rows = conn.execute(sql + " ORDER BY page, created_at", args).fetchall()
+    return [_row_to_page_label(row) for row in rows]
+
+
+@router.post(
+    "/{book_id}/page-labels", response_model=PageLabelOut, status_code=status.HTTP_201_CREATED
+)
+def create_page_label(
+    book_id: str, payload: PageLabelCreate, conn: sqlite3.Connection = Depends(get_db)
+) -> PageLabelOut:
+    row = _get_book_row(conn, book_id)
+    _page_image_source(row)
+    if not payload.rects:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="There is nowhere on the page to put this.",
+        )
+    if not payload.simple_text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="There are no simpler words to show.",
+        )
+
+    label_id = uuid7()
+    conn.execute(
+        """
+        INSERT INTO book_page_labels
+            (id, book_id, user_id, page, rects, original_text, simple_text, mode, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            label_id,
+            book_id,
+            payload.user_id,
+            payload.page,
+            json.dumps(payload.rects),
+            payload.original_text,
+            payload.simple_text,
+            payload.mode,
+            iso8601_utc_now(),
+        ),
+    )
+    created = conn.execute("SELECT * FROM book_page_labels WHERE id = ?", (label_id,)).fetchone()
+    return _row_to_page_label(created)
+
+
+@router.delete("/{book_id}/page-labels/{label_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_page_label(
+    book_id: str, label_id: str, conn: sqlite3.Connection = Depends(get_db)
+) -> None:
+    cur = conn.execute(
+        "DELETE FROM book_page_labels WHERE id = ? AND book_id = ?", (label_id, book_id)
+    )
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
 
 @router.post("/{book_id}/highlights", response_model=HighlightOut, status_code=status.HTTP_201_CREATED)

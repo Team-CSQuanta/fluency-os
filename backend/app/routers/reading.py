@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.db import get_db
 from app.models.reading import (
+    LevelTextRequest,
     BlockHeatOut,
     GoalDayOut,
     GoalUpdate,
@@ -32,6 +33,7 @@ from app.models.reading import (
 )
 from app.security import require_token
 from app.services import cefr_lexicon, dictionary, difficulty_heat, leveling, pronunciation, reading_goal
+from app.services.ingest.pipeline import normalise_text_hash
 from app.services.leveling import cache as level_cache
 from app.utils.time import local_date_today
 
@@ -296,7 +298,9 @@ def level_block(
         )
         return _to_out(result, cached=cached, requested_mode=mode)
 
-    engine = leveling.LlmEngine(leveling.configured_model(conn, payload.user_id))
+    engine = leveling.LlmEngine(
+        leveling.configured_model(conn, payload.user_id), conn=conn, user_id=payload.user_id
+    )
     try:
         result, cached = level_cache.get_or_generate(
             conn,
@@ -309,6 +313,88 @@ def level_block(
         return _to_out(result, cached=cached, requested_mode=mode)
     except leveling.EngineUnavailable as exc:
         return _unavailable(conn, row, mode=mode, target=target, reason=str(exc))
+
+
+#: A selection longer than this is a page, not a passage — and a local
+#: model asked for a page takes minutes and returns something worse.
+_MAX_LEVEL_TEXT = 1200
+
+
+@router.post("/level-text", response_model=LeveledTextOut)
+def level_text(payload: LevelTextRequest, conn: sqlite3.Connection = Depends(get_db)) -> LeveledTextOut:
+    """Simplify a passage the reader selected on the page.
+
+    Same engines, same cache, same modes as /level — the only difference is
+    where the text came from. A selection on a rendered page is not a block:
+    it can cross block boundaries, and it can cover a caption, a table cell or
+    an equation that the text extractor never recorded, which is exactly the
+    material a reader is most likely to want put in plainer words.
+
+    Keyed on the text itself, so two readers selecting the same sentence in
+    the same book share one generation, and so does the same reader coming
+    back to it.
+    """
+    text = (payload.text or "").strip()
+    if not text:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="There is no text to simplify."
+        )
+    if len(text) > _MAX_LEVEL_TEXT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="That is too much text to put in simpler words at once — "
+            "try a sentence or two.",
+        )
+    if payload.mode not in leveling.MODES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"mode must be one of {', '.join(leveling.MODES)}",
+        )
+
+    target = _resolve_target_cefr(conn, payload.user_id, payload.target_cefr)
+    text_hash = normalise_text_hash(text)
+    # A stand-in for the block row the fallback path expects, carrying the
+    # only two fields it reads.
+    row = {"text": text, "text_hash": text_hash}
+
+    if payload.mode in leveling.RULES_MODES:
+        if payload.require_model:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Simpler wording is written by the AI. Ask for one of the rewrites.",
+            )
+        result, cached = level_cache.get_or_generate(
+            conn,
+            text=text,
+            text_hash=text_hash,
+            mode=payload.mode,
+            target_cefr=target,
+            engine=leveling.rules,
+        )
+        return _to_out(result, cached=cached, requested_mode=payload.mode)
+
+    engine = leveling.LlmEngine(
+        leveling.configured_model(conn, payload.user_id), conn=conn, user_id=payload.user_id
+    )
+    try:
+        result, cached = level_cache.get_or_generate(
+            conn,
+            text=text,
+            text_hash=text_hash,
+            mode=payload.mode,
+            target_cefr=target,
+            engine=engine,
+        )
+        return _to_out(result, cached=cached, requested_mode=payload.mode)
+    except leveling.EngineUnavailable as exc:
+        # The caller that writes over the page would rather be told than be
+        # handed something else — and 503 is the answer the app already knows
+        # how to offer to start the AI from.
+        if payload.require_model:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+            ) from exc
+        return _unavailable(conn, row, mode=payload.mode, target=target, reason=str(exc))
 
 
 def _unavailable(
@@ -373,7 +459,8 @@ def get_reader_prefs(
     row = conn.execute(
         """
         SELECT reader_font_size, reader_page_theme, reader_heat_on,
-               reader_panel_open, reader_panel_tab, reader_page_view
+               reader_panel_open, reader_panel_tab, reader_page_view,
+               reader_page_scroll, reader_page_zoom
         FROM user_settings WHERE user_id = ?
         """,
         (user_id,),
@@ -387,6 +474,8 @@ def get_reader_prefs(
         panel_open=bool(row["reader_panel_open"]),
         panel_tab=row["reader_panel_tab"],
         page_view=bool(row["reader_page_view"]),
+        page_scroll=row["reader_page_scroll"],
+        page_zoom=row["reader_page_zoom"],
     )
 
 
@@ -404,16 +493,19 @@ def update_reader_prefs(
         """
         INSERT INTO user_settings (
           user_id, reader_font_size, reader_page_theme, reader_heat_on,
-          reader_panel_open, reader_panel_tab, reader_page_view
+          reader_panel_open, reader_panel_tab, reader_page_view,
+          reader_page_scroll, reader_page_zoom
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET
           reader_font_size = excluded.reader_font_size,
           reader_page_theme = excluded.reader_page_theme,
           reader_heat_on = excluded.reader_heat_on,
           reader_panel_open = excluded.reader_panel_open,
           reader_panel_tab = excluded.reader_panel_tab,
-          reader_page_view = excluded.reader_page_view
+          reader_page_view = excluded.reader_page_view,
+          reader_page_scroll = excluded.reader_page_scroll,
+          reader_page_zoom = excluded.reader_page_zoom
         """,
         (
             payload.user_id,
@@ -423,6 +515,8 @@ def update_reader_prefs(
             int(payload.panel_open),
             payload.panel_tab,
             int(payload.page_view),
+            payload.page_scroll,
+            payload.page_zoom,
         ),
     )
     return ReaderPrefsOut(
@@ -432,4 +526,6 @@ def update_reader_prefs(
         panel_open=payload.panel_open,
         panel_tab=payload.panel_tab,
         page_view=payload.page_view,
+        page_scroll=payload.page_scroll,
+        page_zoom=payload.page_zoom,
     )
