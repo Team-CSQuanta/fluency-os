@@ -148,7 +148,7 @@ def delete_llm(key: str) -> None:
 def delete_stt() -> None:
     _reject_if_downloading("stt")
     if not model_catalog.stt_delete():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Speech-to-text isn't downloaded")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="The model that turns speech into text hasn't been downloaded yet.")
     stt_engine.unload()
 
 
@@ -156,7 +156,7 @@ def delete_stt() -> None:
 def delete_tts() -> None:
     _reject_if_downloading("tts")
     if not model_catalog.tts_delete():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Text-to-speech isn't downloaded")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="The voice that reads replies aloud hasn't been downloaded yet.")
     tts_engine.unload()
 
 
@@ -164,7 +164,7 @@ def delete_tts() -> None:
 def delete_pocket_tts() -> None:
     _reject_if_downloading("pocket_tts")
     if not model_catalog.pocket_tts_delete():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pocket TTS isn't downloaded")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="That voice hasn't been downloaded yet.")
     pocket_tts_engine.unload()
 
 

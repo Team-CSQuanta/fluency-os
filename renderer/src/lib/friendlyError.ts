@@ -18,6 +18,9 @@ import { ApiError } from '@/lib/apiClient';
  */
 export interface FriendlyError {
   title: string;
+  /** The bare "what you were doing" phrase, without the rest of the title
+   * wrapped around it — for callers that write their own sentence. */
+  doing: string;
   body: string;
   technical: string | null;
   /** The AI is not running. The caller can offer to start it rather than
@@ -30,10 +33,22 @@ export interface FriendlyError {
  * name — so they are passed through rather than replaced by something vaguer. */
 function looksHumanWritten(detail: string): boolean {
   if (!detail || detail.length > 300) return false;
-  if (/^[a-z_]+\.[a-zA-Z]/.test(detail)) return false; // module.Thing
   if (/\b(Traceback|Exception|Error:|None|null|\{|\[)/.test(detail)) return false;
   if (/^(Internal Server Error|Not Found|Unprocessable|Bad Request|Forbidden)/i.test(detail)) return false;
-  return /[A-Z]/.test(detail[0]) || detail.includes(' ');
+  // snake_case is a field name, not a word. "block_index out of range" and
+  // "end_char must be greater than start_char" are addressed to whoever wrote
+  // the request, and the reader did not write the request.
+  if (/[a-z]_[a-z]/.test(detail)) return false;
+  // A sentence written for a person starts like one.
+  return /^[A-Z"“']/.test(detail);
+}
+
+/** Does this 503 mean "your AI is not running", as opposed to "the online
+ * dictionary is unreachable" or "something else is already using the
+ * transcriber"? Only the first has a dialog that can fix it. */
+function isAiUnavailable(detail: string): boolean {
+  if (/\b(dictionary|internet|connection|network|transcrib|being used)/i.test(detail)) return false;
+  return /\b(AI|model|launch|voice|engine|download(ed)?|Settings|installed)\b/i.test(detail);
 }
 
 /** The network stack failed before any reply came back — the backend is not
@@ -53,6 +68,7 @@ export function friendlyError(err: unknown, doing = 'That'): FriendlyError {
   if (isOffline(err)) {
     return {
       title: `${doing} didn't work`,
+      doing,
       body: 'FluencyOS could not reach its own background service. This usually clears up if you restart the app.',
       technical,
       needsAi: false,
@@ -62,22 +78,37 @@ export function friendlyError(err: unknown, doing = 'That'): FriendlyError {
   if (err instanceof ApiError) {
     const detail = (err.detail ?? '').trim();
 
-    // The AI is not loaded. Its own dialog handles this properly, with a
-    // button that starts it — this is only the fallback wording.
+    // 503 is not one thing. The AI not being loaded is one cause; the online
+    // dictionary being unreachable and a transcription already running are
+    // others, and sending someone to start their AI model because their wifi
+    // is down would be worse than saying nothing.
     if (err.status === 503) {
+      if (isAiUnavailable(detail)) {
+        return {
+          title: `${doing} needs the AI`,
+          doing,
+          body: looksHumanWritten(detail)
+            ? detail
+            : 'The AI is not running yet. Start it from the button in the top bar, then try again.',
+          technical,
+          needsAi: true,
+        };
+      }
       return {
-        title: `${doing} needs the AI`,
+        title: `${doing} didn't work`,
+      doing,
         body: looksHumanWritten(detail)
           ? detail
-          : 'The AI is not running yet. Start it from the button in the top bar, then try again.',
+          : 'Something FluencyOS needs was busy or unreachable just then. Trying again shortly usually works.',
         technical,
-        needsAi: true,
+        needsAi: false,
       };
     }
 
     if (err.status === 401 || err.status === 403) {
       return {
         title: `${doing} didn't work`,
+      doing,
         body: 'FluencyOS lost its connection to its own background service. Restarting the app will reconnect it.',
         technical,
         needsAi: false,
@@ -87,6 +118,7 @@ export function friendlyError(err: unknown, doing = 'That'): FriendlyError {
     if (err.status === 404) {
       return {
         title: `${doing} didn't work`,
+      doing,
         body: looksHumanWritten(detail)
           ? detail
           : 'The thing this was about is no longer there — it may have been deleted, or renamed outside FluencyOS.',
@@ -101,6 +133,7 @@ export function friendlyError(err: unknown, doing = 'That'): FriendlyError {
     if (err.status === 422) {
       return {
         title: `${doing} didn't work`,
+      doing,
         body: looksHumanWritten(detail)
           ? detail
           : "Something in that wasn't in a form FluencyOS could accept. Check anything you typed and try again.",
@@ -112,6 +145,7 @@ export function friendlyError(err: unknown, doing = 'That'): FriendlyError {
     if (err.status === 409) {
       return {
         title: `${doing} isn't possible yet`,
+      doing,
         body: looksHumanWritten(detail) ? detail : 'Something else has to happen first.',
         technical,
         needsAi: false,
@@ -121,6 +155,7 @@ export function friendlyError(err: unknown, doing = 'That'): FriendlyError {
     if (err.status >= 500) {
       return {
         title: `${doing} didn't work`,
+      doing,
         body: 'Something went wrong inside FluencyOS. Nothing you did caused it, and nothing was lost — trying again often works.',
         technical,
         needsAi: false,
@@ -129,6 +164,7 @@ export function friendlyError(err: unknown, doing = 'That'): FriendlyError {
 
     return {
       title: `${doing} didn't work`,
+      doing,
       body: looksHumanWritten(detail) ? detail : 'FluencyOS could not complete that. Trying again often works.',
       technical,
       needsAi: false,
@@ -140,6 +176,7 @@ export function friendlyError(err: unknown, doing = 'That'): FriendlyError {
   // into the details and the body says the useful part.
   return {
     title: `${doing} didn't work`,
+    doing,
     body: 'Something went wrong. Trying again often works — and if it keeps happening, the details below are worth reporting.',
     technical,
     needsAi: false,

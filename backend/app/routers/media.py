@@ -200,8 +200,8 @@ def import_media(
     if not ffmpeg.is_available():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="ffmpeg wasn't found on this machine — install it (or set FLUENCYOS_FFMPEG_DIR) "
-            "and restart FluencyOS. Videos can't be read without it.",
+            detail="FluencyOS can't read video files yet. It needs a free video tool called "
+            "ffmpeg, which isn't on this computer — install it and restart FluencyOS.",
         )
 
     out: list[sqlite3.Row] = []

@@ -33,7 +33,7 @@ def _load_llm_locked(repo_id: str, filename: str):
     model_path = model_manager.llm_model_path(repo_id, filename)
     if not model_path.exists():
         raise EngineUnavailable(
-            f"{filename} isn't downloaded yet — download it in Settings before starting a conversation."
+            "Your AI model isn't downloaded yet — download it in Settings before starting a conversation."
         )
     path = str(model_path)
     if _llm is not None and _loaded_path == path:
@@ -41,7 +41,11 @@ def _load_llm_locked(repo_id: str, filename: str):
     try:
         from llama_cpp import Llama
     except ImportError as err:
-        raise EngineUnavailable("llama-cpp-python isn't installed") from err
+        raise EngineUnavailable(
+            "This build of FluencyOS can't run a local AI model — the optional "
+            "component for it (llama-cpp-python) isn't installed. You can use a cloud "
+            "provider instead, in Settings."
+        ) from err
     # Release the outgoing model *before* allocating the replacement. Holding
     # both at once doubles peak memory for the length of the load, which on a
     # light machine is precisely when switching models runs out of RAM.

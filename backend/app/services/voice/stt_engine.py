@@ -41,10 +41,13 @@ def _load_model_locked():
     try:
         from faster_whisper import WhisperModel
     except ImportError as err:
-        raise EngineUnavailable("faster-whisper isn't installed") from err
+        raise EngineUnavailable(
+            "This build of FluencyOS can't turn speech into text — the optional "
+            "component for it (faster-whisper) isn't installed. You can still type."
+        ) from err
     cache = model_manager.whisper_cache_dir()
     if not any(cache.glob(f"models--Systran--faster-whisper-{MODEL_SIZE}/**/model.bin")):
-        raise EngineUnavailable("The local STT model isn't downloaded yet — download it in Settings first.")
+        raise EngineUnavailable("The model that turns speech into text isn't downloaded yet — download it in Settings first.")
     try:
         _model = WhisperModel(
             MODEL_SIZE,

@@ -105,7 +105,12 @@ export function App() {
     <div className="flex h-screen flex-col bg-bg text-tx" style={{ fontFamily: 'var(--sans)' }}>
       <AppTitleBar screenTitle={screenTitle} />
       {initError && (
-        <div className="p-6 font-mono text-[12px] text-red-400">Failed to reach backend: {initError}</div>
+        <div className="grid flex-1 place-items-center p-6">
+          <div className="max-w-[420px] text-center">
+            <div className="font-sans text-[15px] font-semibold text-tx">FluencyOS couldn’t start</div>
+            <p className="mt-[8px] font-sans text-[12.5px] leading-[1.7] text-tx2">{initError}</p>
+          </div>
+        </div>
       )}
       {!initError && !backendReady && (
         <div className="grid flex-1 place-items-center font-mono text-[12px] text-tx3">starting…</div>

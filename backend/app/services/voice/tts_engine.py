@@ -34,10 +34,13 @@ def _load_kokoro_locked():
     try:
         from kokoro_onnx import Kokoro
     except ImportError as err:
-        raise EngineUnavailable("kokoro-onnx isn't installed") from err
+        raise EngineUnavailable(
+            "This build of FluencyOS can't read replies aloud — the optional "
+            "component for it (kokoro-onnx) isn't installed."
+        ) from err
     model_path, voices_path = model_manager.tts_voice_paths()
     if not model_path.exists() or not voices_path.exists():
-        raise EngineUnavailable("The local TTS voice isn't downloaded yet — download it in Settings first.")
+        raise EngineUnavailable("The voice that reads replies aloud isn't downloaded yet — download it in Settings first.")
     try:
         import onnxruntime as ort
 

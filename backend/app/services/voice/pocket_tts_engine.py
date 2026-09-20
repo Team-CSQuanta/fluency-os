@@ -118,7 +118,7 @@ def _load_locked():
     # A missing package is a broken install, not a user error.
     weights, tokenizer, voice = model_manager.pocket_tts_paths()
     if not (weights.exists() and tokenizer.exists() and voice.exists()):
-        raise EngineUnavailable("Pocket TTS isn't downloaded yet — download it in Settings first.")
+        raise EngineUnavailable("That voice hasn't been downloaded yet — download it in Settings first.")
 
     try:
         from pocket_tts import TTSModel

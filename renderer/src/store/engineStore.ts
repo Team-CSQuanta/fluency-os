@@ -9,6 +9,7 @@ import type {
   ReadinessOut,
   TtsEngine,
 } from '@/types/api';
+import { friendlyMessage } from '@/lib/friendlyError';
 
 interface EngineState {
   catalog: ModelsCatalogOut | null;
@@ -239,7 +240,7 @@ export const useEngineStore = create<EngineState>((set, get) => {
         );
         set({ status, launching: false });
       } catch (err) {
-        set({ launching: false, launchError: err instanceof Error ? err.message : 'Could not launch AI' });
+        set({ launching: false, launchError: friendlyMessage(err, 'Starting the AI') });
         throw err;
       } finally {
         clearInterval(pollId);

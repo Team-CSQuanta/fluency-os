@@ -16,6 +16,7 @@ import type {
   UserOut,
   UserSettingsUpdate,
 } from '@/types/api';
+import { friendlyMessage } from '@/lib/friendlyError';
 
 export type OnboardingStep = 1 | 2 | 3 | 4 | 5;
 
@@ -285,7 +286,7 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
         submission: { status: 'idle', error: null },
       }));
     } catch (err) {
-      set({ submission: { status: 'error', error: err instanceof Error ? err.message : String(err) } });
+      set({ submission: { status: 'error', error: friendlyMessage(err, 'Saving your answers') } });
     }
   },
 }));

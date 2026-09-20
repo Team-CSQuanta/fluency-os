@@ -62,10 +62,10 @@ export function AiRequiredDialog({
       >
         <div className="font-sans text-[15px] font-semibold text-tx">The AI isn’t running yet</div>
         <p className="mt-[8px] font-sans text-[12.5px] leading-[1.65] text-tx2">
-          {what} needs the language model, and it isn’t loaded into memory right now.
+          {what} needs the AI, and it isn’t started right now.
           {configured
-            ? ' It only takes one click — the model is already on this machine.'
-            : ' There’s no model downloaded and no API key saved yet, so there’s nothing to start.'}
+            ? ' It only takes one click — it’s already on this computer.'
+            : ' Nothing has been set up for it yet, so there’s nothing to start.'}
         </p>
 
         {detail && (
@@ -85,7 +85,7 @@ export function AiRequiredDialog({
               disabled={launching}
               className="rounded-field bg-accSolid px-[15px] py-[8px] font-sans text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-60"
             >
-              {launching ? 'starting the AI…' : `Launch ${engineLabel}`}
+              {launching ? 'starting the AI…' : `Start ${engineLabel}`}
             </button>
           ) : (
             <button

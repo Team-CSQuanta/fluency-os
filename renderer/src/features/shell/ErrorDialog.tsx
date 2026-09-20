@@ -33,7 +33,7 @@ export function ErrorDialog() {
   if (current.needsAi) {
     return (
       <AiRequiredDialog
-        what={current.title}
+        what={current.doing}
         detail={current.body}
         onClose={dismiss}
         onLaunched={() => {
