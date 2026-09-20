@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useEngineStore } from '@/store/engineStore';
 import { useVocabularyStore } from '@/store/vocabularyStore';
 import type { AiEnrichOut, DictionarySenseOut } from '@/types/api';
+import { friendlyMessage } from '@/lib/friendlyError';
 
 /** Adding a word, with the dictionary and the local AI working on it
  * together rather than as two separate tabs you had to choose between.
@@ -94,7 +95,7 @@ export function AddWordModal({ onClose }: { onClose: () => void }) {
       setAi(result);
       setAiSense(forSense || null);
     } catch (err) {
-      setAiError(err instanceof Error ? err.message : 'Could not reach the local AI');
+      setAiError(friendlyMessage(err, 'Asking the AI'));
     } finally {
       setAiBusy(false);
     }
@@ -151,7 +152,7 @@ export function AddWordModal({ onClose }: { onClose: () => void }) {
       setSaved(alreadySaved ? 'already in your vocabulary' : 'saved');
       await Promise.all([fetchWords(), fetchOverview()]);
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Could not save this word');
+      setSaveError(friendlyMessage(err, 'Saving this word'));
     } finally {
       setSaving(false);
     }

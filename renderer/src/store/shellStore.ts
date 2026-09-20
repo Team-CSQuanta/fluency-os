@@ -14,7 +14,7 @@ function readStoredScale(): number {
   return 1;
 }
 import type { ScreenKey } from '@/features/shell/navConfig';
-import type { SettingsGroupName } from '@/features/settings/settingsMockData';
+import type { SettingsGroupName } from '@/features/settings/settingsGroups';
 
 interface ShellState {
   screen: ScreenKey;
@@ -98,7 +98,7 @@ export const useShellStore = create<ShellState>((set, get) => {
     forestFocus: null,
     convScenario: 'Free talk',
     reportOrigin: 'conv',
-    settingsGroup: 'Media',
+    settingsGroup: 'Account',
     convBusy: false,
     pendingNav: null,
 

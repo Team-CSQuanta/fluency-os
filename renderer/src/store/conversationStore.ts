@@ -10,6 +10,7 @@ import type {
   ScenarioKey,
   TurnSubmitOut,
 } from '@/types/api';
+import { friendlyMessage } from '@/lib/friendlyError';
 
 interface ConversationState {
   sessions: ConversationSessionOut[];
@@ -122,7 +123,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       set({ activeSession: detail, activeStatus: 'idle' });
     } catch (err) {
       if (lastRequestedSessionId !== sessionId) return;
-      set({ activeStatus: 'error', activeError: err instanceof Error ? err.message : String(err) });
+      set({ activeStatus: 'error', activeError: friendlyMessage(err, 'Opening this conversation') });
     }
   },
 
@@ -186,7 +187,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       );
       set({ report, reportStatus: 'idle' });
     } catch (err) {
-      set({ reportStatus: 'error', reportError: err instanceof Error ? err.message : String(err) });
+      set({ reportStatus: 'error', reportError: friendlyMessage(err, 'Opening this report') });
     }
   },
 
@@ -202,7 +203,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       set({ report, reportStatus: 'idle' });
     } catch (err) {
       // Keep the old report on screen — it's still the real one, just older.
-      set({ reportStatus: 'idle', reportError: err instanceof Error ? err.message : String(err) });
+      set({ reportStatus: 'idle', reportError: friendlyMessage(err, 'Bringing this report up to date') });
     }
   },
 

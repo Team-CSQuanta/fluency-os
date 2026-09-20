@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { reviewEmptyState } from '@/features/review/emptyState';
 import { useAppStore } from '@/store/appStore';
+import { clipThumbUrl, clipUrl } from '@/store/mediaStore';
 import { useReviewStore } from '@/store/reviewStore';
 import { useShellStore } from '@/store/shellStore';
 import type { ReviewCardOut, ReviewRating } from '@/types/api';
@@ -22,12 +23,120 @@ const RATINGS: Array<{ label: string; key: string; note: string }> = [
   { label: 'Easy', key: 'easy', note: 'stability +' },
 ];
 
+/** What the card is asking, said the way anyone would say it.
+ *
+ * These were the scheduler's own names — "cloze", "recognition", "production"
+ * — which describe the four card types accurately to someone who already
+ * knows what the four card types are. "Cloze" in particular is a word from
+ * language-testing research and means nothing at all otherwise. */
 const CARD_TYPE_LABEL: Record<string, string> = {
-  cloze: 'Front · cloze',
-  recognition: 'Front · recognition',
-  production: 'Front · production',
-  listening: 'Front · listening',
+  cloze: 'Fill the gap',
+  recognition: 'What does this mean?',
+  production: 'How do you say this?',
+  listening: 'Listen',
 };
+
+/** The same four, shortened for the chip beside the progress bar. */
+const CARD_TYPE_CHIP: Record<string, string> = {
+  cloze: 'fill the gap',
+  recognition: 'meaning',
+  production: 'recall',
+  listening: 'listening',
+};
+
+/** How long this word currently stays learnt, in words.
+ *
+ * The scheduler holds it as "stability", a number of days with a decimal
+ * point. A day and a half is a real and useful thing to know; "1.4 d" is a
+ * reading of an instrument. */
+function holdsFor(days: number): string {
+  if (days < 1) return 'a few hours';
+  if (days < 2) return 'a day';
+  if (days < 14) return `${Math.round(days)} days`;
+  if (days < 60) return `${Math.round(days / 7)} weeks`;
+  if (days < 365) return `${Math.round(days / 30)} months`;
+  const years = days / 365;
+  return years < 1.5 ? 'a year' : `${Math.round(years)} years`;
+}
+
+/** The moment the word was met, on the back of the card.
+ *
+ * A word saved while watching carries the line it was said in AND the few
+ * seconds of film around it. The card quoted the line as text and left the
+ * video sitting two screens away — so the one thing this app captures that a
+ * paper flashcard cannot was the one thing review never used.
+ *
+ * On the BACK only. The clip contains the word being spoken, so on the front
+ * it would not be a context, it would be the answer.
+ */
+function ClipReplay({ card }: { card: ReviewCardOut }) {
+  const [playing, setPlaying] = useState(false);
+  const [thumbFailed, setThumbFailed] = useState(false);
+
+  const playable = Boolean(card.clip_id) && (card.clip_status === 'ready' || card.clip_status === 'virtual');
+  const building = card.clip_status === 'queued' || card.clip_status === 'extracting';
+  // The line and the timecode are still the learner's; the film is not.
+  const orphaned = Boolean(card.clip_id) && !card.media_item_id;
+
+  if (!card.clip_id) return null;
+
+  if (playing && playable) {
+    return (
+      <video
+        src={clipUrl(card.clip_id)}
+        poster={thumbFailed ? undefined : clipThumbUrl(card.clip_id)}
+        controls
+        autoPlay
+        className="mt-[14px] w-full rounded-field border border-line2 bg-black"
+      />
+    );
+  }
+
+  return (
+    <button
+      onClick={() => playable && setPlaying(true)}
+      disabled={!playable}
+      title={
+        orphaned
+          ? 'the film this came from is no longer in your library'
+          : building
+            ? 'still being cut from the film'
+            : playable
+              ? 'play the moment this word was met'
+              : 'this clip could not be cut'
+      }
+      className="group relative mt-[14px] h-[132px] w-full overflow-hidden rounded-field border border-line2 bg-black disabled:cursor-default"
+    >
+      {!thumbFailed && (
+        <img
+          src={clipThumbUrl(card.clip_id)}
+          alt=""
+          onError={() => setThumbFailed(true)}
+          className="h-full w-full object-cover opacity-75 transition-opacity duration-150 group-hover:opacity-100"
+        />
+      )}
+      <span className="absolute inset-0 grid place-items-center">
+        {playable ? (
+          <span
+            className="grid h-[38px] w-[38px] place-items-center rounded-full border border-white/25 transition-colors duration-150 group-hover:border-white/60"
+            style={{ background: 'rgba(0,0,0,.52)' }}
+          >
+            <svg viewBox="0 0 12 12" className="h-[15px] w-[15px] translate-x-[1px]" aria-hidden>
+              <path d="M2.5 1.4 10 6l-7.5 4.6z" fill="rgba(255,255,255,.92)" />
+            </svg>
+          </span>
+        ) : (
+          <span
+            className="rounded-field px-[10px] py-[5px] font-mono text-[10px] text-white/75"
+            style={{ background: 'rgba(0,0,0,.6)' }}
+          >
+            {orphaned ? 'the film is no longer in your library' : building ? 'still being cut…' : 'clip unavailable'}
+          </span>
+        )}
+      </span>
+    </button>
+  );
+}
 
 /** What the learner is asked, which is the whole difference between the four
  * card types — the back is identical. */
@@ -207,11 +316,17 @@ export function Review() {
           {index + 1} / {total}
         </span>
         <span className="rounded-full bg-accSoft px-2 py-[3px] font-mono text-[9.5px] font-medium text-acc">
-          {card.card_type}
+          {CARD_TYPE_CHIP[card.card_type] ?? card.card_type}
         </span>
+        {/* "Leech" is what a spaced-repetition scheduler calls a card that
+            keeps being forgotten. It is a term of art, and the thing it
+            describes is worth telling someone about, so it says the thing. */}
         {card.is_leech && (
-          <span className="rounded-full border border-[#c0563f] px-2 py-[3px] font-mono text-[9.5px] text-[#c0563f]">
-            leech
+          <span
+            className="rounded-full border border-[#c0563f] px-2 py-[3px] font-mono text-[9.5px] text-[#c0563f]"
+            title="You have forgotten this one several times — it may be worth rewriting the card, or meeting the word somewhere real."
+          >
+            keeps slipping
           </span>
         )}
       </div>
@@ -219,7 +334,7 @@ export function Review() {
       <div className="flex min-h-0 w-full max-w-[760px] flex-1 flex-col overflow-hidden rounded-panel border border-line2 bg-panel shadow-panel">
         <div className="border-b border-line2 px-[34px] pb-6 pt-[34px] text-center">
           <div className="mb-4 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
-            {CARD_TYPE_LABEL[card.card_type]}
+            {CARD_TYPE_LABEL[card.card_type] ?? card.card_type}
           </div>
           <CardFront card={card} />
         </div>
@@ -237,8 +352,11 @@ export function Review() {
               {card.simpler && (
                 <div className="mt-[10px] font-sans text-[12.5px] leading-[1.65] text-tx3">{card.simpler}</div>
               )}
+              {/* Keyed on the word: a new card must not inherit the previous
+                  one's open video. */}
+              <ClipReplay key={card.vocab_word_id} card={card} />
               {card.context_snippet && (
-                <div className="mt-[14px] rounded-field border border-line2 px-3 py-[10px]">
+                <div className="mt-[10px] rounded-field border border-line2 px-3 py-[10px]">
                   <div className="font-sans text-[12.5px] italic leading-[1.65] text-tx2">
                     “{card.context_snippet}”
                   </div>
@@ -271,12 +389,16 @@ export function Review() {
                   </div>
                 )}
               </div>
+              {/* The scheduler's own numbers, in words rather than in its
+                  vocabulary. "Stability 1.4 d · difficulty 2.7 · reps 1 ·
+                  lapses 0" is four terms of art in eleven characters each. */}
               <div className="mt-3 font-mono text-[10.5px] leading-[1.75] text-tx3">
-                stability {card.stability_days} d · difficulty {card.difficulty}
+                seen {card.reps} time{card.reps === 1 ? '' : 's'}
+                {card.lapses > 0 && ` · forgotten ${card.lapses}×`}
                 <br />
-                reps {card.reps} · lapses {card.lapses}
+                remembered for about {holdsFor(card.stability_days)} at the moment
                 <br />
-                {card.spontaneous_sessions} spontaneous conversation
+                used in {card.spontaneous_sessions} real conversation
                 {card.spontaneous_sessions === 1 ? '' : 's'}
               </div>
               <button

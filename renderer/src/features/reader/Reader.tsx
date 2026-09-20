@@ -6,8 +6,9 @@ import {
   MODE_LABELS,
   OFFLINE_MODES,
 } from '@/features/reader/readerConstants';
-import { getBlockSelectionRange } from '@/features/reader/useSelectionRange';
+import { getBlockSelectionRanges } from '@/features/reader/useSelectionRange';
 import { useReadingSession } from '@/features/reader/useReadingSession';
+import { fetchBlobUrl } from '@/lib/apiClient';
 import { useReaderStore } from '@/store/readerStore';
 import { useShellStore } from '@/store/shellStore';
 import { useVocabularyStore } from '@/store/vocabularyStore';
@@ -74,6 +75,7 @@ export function Reader() {
   const jumpToChapter = useReaderStore((s) => s.jumpToChapter);
   const nextPage = useReaderStore((s) => s.nextPage);
   const prevPage = useReaderStore((s) => s.prevPage);
+  const goToPage = useReaderStore((s) => s.goToPage);
   const highlights = useReaderStore((s) => s.highlights);
   const bookmarks = useReaderStore((s) => s.bookmarks);
   const createHighlight = useReaderStore((s) => s.createHighlight);
@@ -115,6 +117,17 @@ export function Reader() {
   const setTab = (next: Tab) => setPrefs({ panel_tab: next });
   const setPanelOpen = (next: boolean) => setPrefs({ panel_open: next });
   const [showOriginal, setShowOriginal] = useState(false);
+
+  /* The book's own typeset page, for the things the text pipeline cannot
+   * carry: figures, plates, equations set as images, the layout itself. Only
+   * PDFs have one — every other format is reflowable and never had a page. */
+  const canShowPage = Boolean(book?.has_page_images);
+  const showingPage = prefs.page_view && canShowPage;
+  const [pageImageState, setPageImageState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [pageImage, setPageImage] = useState<string | null>(null);
+  // null while not being edited, so the box shows wherever the reader
+  // actually is rather than the last thing they typed into it.
+  const [pageDraft, setPageDraft] = useState<string | null>(null);
   const [highlighterColor, setHighlighterColor] = useState<HighlightColour | null>(null);
   const saveWord = useVocabularyStore((s) => s.saveWord);
   const [toast, setToast] = useState('');
@@ -175,6 +188,50 @@ export function Reader() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, selectedPara, bookId]);
 
+  useEffect(() => {
+    setPageDraft(null);
+  }, [page, bookId]);
+
+  /* Fetched into a blob rather than pointed at with a <img src>.
+   *
+   * The book routes take the handshake token in a header only — the `?t=`
+   * form exists for <video src>, where a whole film could not be held in
+   * memory. A page render is a few hundred kilobytes, so it can be fetched
+   * properly and the token stays out of the URL. */
+  useEffect(() => {
+    if (!showingPage || !bookId) {
+      setPageImage(null);
+      return;
+    }
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    setPageImageState('loading');
+    void fetchBlobUrl(`/books/${bookId}/page/${page}/image`)
+      .then((url) => {
+        objectUrl = url;
+        if (cancelled) return;
+        setPageImage(url);
+        setPageImageState('ready');
+      })
+      .catch(() => {
+        if (!cancelled) setPageImageState('error');
+      });
+    return () => {
+      cancelled = true;
+      // Object URLs are held by the document until revoked by hand; a reader
+      // turning through a long book would otherwise keep every page it saw.
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [showingPage, bookId, page]);
+
+  const commitPageDraft = () => {
+    const wanted = Number(pageDraft);
+    setPageDraft(null);
+    if (!pageDraft || Number.isNaN(wanted)) return;
+    const clamped = Math.max(1, Math.min(wanted, totalPages || wanted));
+    if (clamped !== page) void goToPage(clamped);
+  };
+
   // Left/Right arrow keys turn pages, like an e-reader.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -231,16 +288,21 @@ export function Reader() {
   // fallback for when there's no drag, only a plain click.
   const handleBlocksMouseUp = () => {
     if (!highlighterColor) return;
-    const range = getBlockSelectionRange();
-    if (!range) return;
+    // One highlight per paragraph covered. A drag across a paragraph break
+    // used to produce nothing at all, which reads as broken rather than as a
+    // limit — and sentences run across breaks often enough to hit it early.
+    const ranges = getBlockSelectionRanges();
+    if (ranges.length === 0) return;
     justDraggedRef.current = true;
-    void createHighlight({
-      blockIndex: range.blockIndex,
-      startChar: range.startChar,
-      endChar: range.endChar,
-      colour: highlighterColor,
-      quotedText: range.quotedText,
-    });
+    for (const range of ranges) {
+      void createHighlight({
+        blockIndex: range.blockIndex,
+        startChar: range.startChar,
+        endChar: range.endChar,
+        colour: highlighterColor,
+        quotedText: range.quotedText,
+      });
+    }
     window.getSelection()?.removeAllRanges();
   };
 
@@ -311,8 +373,45 @@ export function Reader() {
 
         <div className="flex w-full max-w-[640px] flex-1 flex-col">
           <div className="mb-[26px] flex items-center justify-between gap-3 font-mono text-[10.5px] text-tx3">
-            <span className="flex-1 truncate">page {page} / {totalPages || '—'}</span>
-            <span>{Math.round(percent)}% read</span>
+            <span className="flex flex-1 items-center gap-[5px] truncate">
+              page
+              {/* Typing a number is how you get to page 400 of a 600-page
+                  book. Stepping one at a time and the table of contents were
+                  the only ways here before, and neither is one. */}
+              <input
+                value={pageDraft ?? String(page)}
+                onChange={(e) => setPageDraft(e.target.value.replace(/[^0-9]/g, ''))}
+                onFocus={(e) => e.currentTarget.select()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commitPageDraft();
+                  else if (e.key === 'Escape') setPageDraft(null);
+                }}
+                onBlur={commitPageDraft}
+                aria-label="Go to page"
+                title="Type a page number and press Enter"
+                className="w-[46px] rounded-[4px] border border-line2 bg-transparent px-[5px] py-[2px] text-center font-mono text-[10.5px] text-tx2 outline-none transition-colors focus:border-acc focus:text-acc"
+              />
+              / {totalPages || '—'}
+            </span>
+            {canShowPage && (
+              <button
+                onClick={() => setPrefs({ page_view: !prefs.page_view })}
+                title={
+                  showingPage
+                    ? 'Back to the text, where lookup and highlighting live'
+                    : "Show the book's own page, with its figures and layout"
+                }
+                className="flex-none rounded-field border px-[9px] py-[3px] font-mono text-[10px] transition-colors"
+                style={{
+                  borderColor: showingPage ? 'var(--accLine)' : 'var(--line2)',
+                  background: showingPage ? 'var(--accSoft)' : 'transparent',
+                  color: showingPage ? 'var(--acc)' : 'var(--tx3)',
+                }}
+              >
+                {showingPage ? 'original page' : 'show original page'}
+              </button>
+            )}
+            <span className="flex-none">{Math.round(percent)}% read</span>
           </div>
 
           {readerStatus === 'loading' && blocks.length === 0 && (
@@ -324,28 +423,77 @@ export function Reader() {
             </div>
           )}
 
-          <div
-            onMouseUp={handleBlocksMouseUp}
-            style={{ opacity: isTurning ? 0.5 : 1, transition: 'opacity 120ms ease' }}
-          >
-            {blocks.map((b) => (
-              <BlockText
-                key={b.block_index}
-                block={b}
-                highlights={highlights.filter((h) => h.block_index === b.block_index)}
-                heatSpans={showHeat ? (heatByBlock.get(b.block_index) ?? []) : []}
-                onWordClick={handleWordClick}
-                selected={selectedPara === b.block_index}
-                fontSize={fontSize}
-                textColor={READER_TX[pageTheme]}
-                onClick={handleParaClick}
-              />
-            ))}
-          </div>
+          {showingPage ? (
+            <div className="flex flex-col items-center">
+              {pageImageState === 'error' && (
+                <div className="py-16 text-center font-mono text-[11px] text-tx3">
+                  this page couldn't be rendered
+                </div>
+              )}
+              {pageImageState === 'loading' && (
+                <div className="py-16 text-center font-mono text-[11px] text-tx3">
+                  rendering page {page}…
+                </div>
+              )}
+              {pageImage && pageImageState === 'ready' && (
+                <img
+                  src={pageImage}
+                  alt={`Page ${page} as printed`}
+                  className="w-full rounded-[4px] border border-line2"
+                  style={{ background: '#fff' }}
+                />
+              )}
+              <span className="mt-[10px] text-center font-mono text-[9.5px] leading-[1.7] text-tx3">
+                the page as printed · word lookup, highlighting and the difficulty
+                overlay work in the text view
+              </span>
+            </div>
+          ) : (
+            <div
+              onMouseUp={handleBlocksMouseUp}
+              style={{ opacity: isTurning ? 0.5 : 1, transition: 'opacity 120ms ease' }}
+            >
+              {blocks.map((b) => (
+                <BlockText
+                  key={b.block_index}
+                  block={b}
+                  highlights={highlights.filter((h) => h.block_index === b.block_index)}
+                  heatSpans={showHeat ? (heatByBlock.get(b.block_index) ?? []) : []}
+                  onWordClick={handleWordClick}
+                  selected={selectedPara === b.block_index}
+                  fontSize={fontSize}
+                  textColor={READER_TX[pageTheme]}
+                  onClick={handleParaClick}
+                />
+              ))}
+
+              {/* A page can legitimately hold no prose — a plate, a full-page
+                  figure, a blank leaf. It used to render as an empty screen
+                  with no explanation AND no way off it, because the pager
+                  below was hidden along with the text. */}
+              {readerStatus === 'ready' && blocks.length === 0 && (
+                <div className="py-14 text-center">
+                  <div className="font-mono text-[11px] text-tx2">no text on this page</div>
+                  <p className="mx-auto mt-[7px] max-w-[330px] font-sans text-[11.5px] leading-[1.7] text-tx3">
+                    It's a full-page image, a plate, or a blank leaf — there was no prose
+                    here to extract.
+                  </p>
+                  {canShowPage && (
+                    <button
+                      onClick={() => setPrefs({ page_view: true })}
+                      className="mt-[11px] rounded-field border border-line px-[13px] py-[7px] font-mono text-[10.5px] text-tx2 transition-colors hover:border-acc hover:text-acc"
+                    >
+                      show the original page
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* The end of the last page is where finishing a book actually
               happens, so the action lives here rather than only on the shelf. */}
-          {blocks.length > 0 && !hasNext && (
+          {totalPages > 0 && !hasNext && (
             <div className="mt-auto flex flex-col items-center gap-[7px] border-t border-line2 pt-4">
               <button
                 onClick={() => void setFinished(!book?.finished_at)}
@@ -366,7 +514,7 @@ export function Reader() {
             </div>
           )}
 
-          {blocks.length > 0 && (
+          {totalPages > 0 && (
             <div
               className={`flex items-center justify-between gap-3 border-t border-line2 pt-4 ${
                 hasNext ? 'mt-auto' : 'mt-4'
@@ -706,8 +854,9 @@ export function Reader() {
 
                     {!lookup.found ? (
                       <div className="rounded-field border border-line2 px-[10px] py-[9px] font-sans text-[11px] leading-[1.6] text-tx2">
-                        "{lookup.word}" isn't in the offline dictionary. It may be a name, or a
-                        word the bundled list doesn't cover yet.
+                        No dictionary here has "{lookup.word}". It may be a name, a typo, or a
+                        word none of them cover — and if you were offline just now, trying again
+                        with a connection may find it.
                       </div>
                     ) : (
                       <>
@@ -1004,10 +1153,10 @@ export function Reader() {
                       one that says why it can't. */}
                   <button
                     disabled
-                    title="Text-to-speech ships with the TTS increment"
+                    title="Reading the page aloud isn’t built yet"
                     className="w-full cursor-default rounded-field border border-line py-2 font-mono text-[11px] text-tx3 opacity-60"
                   >
-                    ▶ Kokoro TTS · not installed yet
+                    ▶ Read this aloud · not built yet
                   </button>
                 </div>
               </div>

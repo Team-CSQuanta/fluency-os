@@ -7,6 +7,8 @@ export interface SystemInfo {
   cpuCores: number;
   totalRamBytes: number;
   platform: string;
+  /** Where the database, clips, models and page images are kept. */
+  dataFolder: string;
 }
 
 export interface FluencyOSBridge {

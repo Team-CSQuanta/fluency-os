@@ -237,9 +237,15 @@ export function VocabularyList() {
                   {w.suspended && (
                     <span className="rounded-full bg-line2 px-[7px] py-[1px] font-mono text-[9px] text-tx3">suspended</span>
                   )}
+                  {/* A "lapse" is scheduler vocabulary for having forgotten
+                      it. The count is the useful part; the word was not. */}
                   {w.lapses >= 3 && !w.suspended && (
-                    <span className="rounded-full px-[7px] py-[1px] font-mono text-[9px]" style={{ color: '#c0563f', border: '1px solid #c0563f' }}>
-                      {w.lapses} lapses
+                    <span
+                      className="rounded-full px-[7px] py-[1px] font-mono text-[9px]"
+                      style={{ color: '#c0563f', border: '1px solid #c0563f' }}
+                      title="This one keeps slipping — it may be worth meeting it somewhere real rather than only on a card."
+                    >
+                      forgotten {w.lapses}×
                     </span>
                   )}
                 </div>

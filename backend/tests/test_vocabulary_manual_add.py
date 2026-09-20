@@ -11,6 +11,9 @@ from app.services import dictionary_lookup, vocabulary
 from app.services.dictionary_lookup import DictionaryResult, DictionarySense, DictionaryServiceUnavailable
 
 KNOWN_WORD = "abandon"  # in the bundled offline lexicon too — proves the cefr/simpler merge
+# In the wider band table but NOT the curated lexicon, so it is the online
+# dictionaries that have to answer for it.
+ONLINE_WORD = "abolish"
 UNKNOWN_LOCAL_WORD = "yeet"  # plausible modern word, not in the small bundled CEFR list
 
 
@@ -208,40 +211,121 @@ def test_dictionary_search_route_requires_token(client):
 
 
 def test_dictionary_search_route_merges_local_cefr(client, auth_headers, monkeypatch):
-    from app.routers import vocabulary as vocabulary_router
+    """A word the bundled lexicon has no definition for goes online, and the
+    band still comes from our own tables — no online dictionary has one.
+
+    ONLINE_WORD rather than KNOWN_WORD: a word the lexicon can define is now
+    answered from it and never reaches the network at all, which is what the
+    next test covers."""
+    from app.services import dictionary_lookup as transport
 
     monkeypatch.setattr(
-        vocabulary_router.dictionary_lookup,
+        transport,
         "search",
         lambda word, timeout=None: DictionaryResult(
             word=word,
             found=True,
-            ipa="/əˈbændən/",
+            ipa="/əˈbɒlɪʃ/",
             audio_url="https://example.test/audio.mp3",
-            senses=(DictionarySense(pos="verb", definition="To leave.", example=None),),
-            synonyms=("desert",),
+            senses=(DictionarySense(pos="verb", definition="To do away with.", example=None),),
+            synonyms=("scrap",),
         ),
     )
 
-    res = client.get("/vocabulary/dictionary-search", headers=auth_headers, params={"w": KNOWN_WORD})
+    res = client.get("/vocabulary/dictionary-search", headers=auth_headers, params={"w": ONLINE_WORD})
     assert res.status_code == 200
     body = res.json()
     assert body["found"] is True
-    assert body["ipa"] == "/əˈbændən/"
+    assert body["ipa"] == "/əˈbɒlɪʃ/"
     assert body["senses"][0]["pos"] == "verb"
-    # cefr/simpler are NOT from dictionaryapi.dev — they come from our own bundled lexicon
+    # cefr is NOT from the online dictionary — it comes from our own tables
+    assert body["cefr"] == "B2"
+
+
+def test_a_word_the_lexicon_can_define_never_goes_online(client, auth_headers, monkeypatch):
+    """The point of the whole ladder: the nearest source answers, and the
+    network is not touched. Every search used to pay for a round trip."""
+    from app.services import dictionary_lookup as transport
+
+    def _explode(word, timeout=None):
+        raise AssertionError(f"went online for {word!r}, which the lexicon knows")
+
+    monkeypatch.setattr(transport, "search", _explode)
+
+    body = client.get(
+        "/vocabulary/dictionary-search", headers=auth_headers, params={"w": KNOWN_WORD}
+    ).json()
+
+    assert body["found"] is True
+    assert "leave" in body["senses"][0]["definition"].lower()
     assert body["cefr"] == "B2"
     assert body["simpler"] == "leave"
 
 
+def test_an_online_answer_is_kept_and_reused(client, auth_headers, monkeypatch):
+    """Slow once, instant afterwards — the second search must not go out."""
+    from app.services import dictionary_lookup as transport
+
+    calls = []
+
+    def _once(word, timeout=None):
+        calls.append(word)
+        return DictionaryResult(
+            word=word,
+            found=True,
+            ipa="/əˈbɒlɪʃ/",
+            audio_url=None,
+            senses=(DictionarySense(pos="verb", definition="To do away with.", example=None),),
+            synonyms=("scrap",),
+        )
+
+    monkeypatch.setattr(transport, "search", _once)
+    first = client.get("/vocabulary/dictionary-search", headers=auth_headers, params={"w": ONLINE_WORD})
+
+    def _explode(word, timeout=None):
+        raise AssertionError("went online again for a word already looked up")
+
+    monkeypatch.setattr(transport, "search", _explode)
+    second = client.get("/vocabulary/dictionary-search", headers=auth_headers, params={"w": ONLINE_WORD})
+
+    assert calls == [ONLINE_WORD]
+    assert first.json()["senses"] == second.json()["senses"]
+    assert second.json()["ipa"] == "/əˈbɒlɪʃ/"
+
+
+def test_a_miss_is_not_kept(client, auth_headers, monkeypatch):
+    """Caching "not a word" would freeze a dictionary's gap — including the
+    gaps a flaky network invents — so a miss is paid for again."""
+    from app.services import dictionary_lookup as transport
+
+    calls = []
+
+    def _miss(word, timeout=None):
+        calls.append(word)
+        return DictionaryResult(
+            word=word, found=False, ipa=None, audio_url=None, senses=(), synonyms=()
+        )
+
+    monkeypatch.setattr(transport, "search", _miss)
+    for _ in range(2):
+        assert (
+            client.get(
+                "/vocabulary/dictionary-search", headers=auth_headers, params={"w": "zzqqxx"}
+            ).json()["found"]
+            is False
+        )
+
+    assert calls == ["zzqqxx", "zzqqxx"]
+
+
 def test_dictionary_search_route_service_unavailable_returns_503(client, auth_headers, monkeypatch):
-    from app.routers import vocabulary as vocabulary_router
+    from app.services import dictionary_lookup as transport
 
     def _raise(word, timeout=None):
         raise DictionaryServiceUnavailable("timed out")
 
-    monkeypatch.setattr(vocabulary_router.dictionary_lookup, "search", _raise)
-    res = client.get("/vocabulary/dictionary-search", headers=auth_headers, params={"w": KNOWN_WORD})
+    monkeypatch.setattr(transport, "search", _raise)
+    res = client.get("/vocabulary/dictionary-search", headers=auth_headers, params={"w": ONLINE_WORD})
     assert res.status_code == 503
 
 

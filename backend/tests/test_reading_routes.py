@@ -154,13 +154,88 @@ def test_lookup_resolves_an_inflected_form(client, auth_headers):
     assert body["lemma"] == "ossify"
 
 
-def test_lookup_reports_an_unknown_word_honestly(client, auth_headers):
+def _offline(monkeypatch):
+    """No test may reach the real internet. Patches the transport the whole
+    lookup ladder ends at, so the local layers run for real and the network
+    layer answers however the test wants."""
+    from app.services import dictionary_lookup as transport
+
+    def _set(fn):
+        monkeypatch.setattr(transport, "search", fn)
+
+    return _set
+
+
+def test_lookup_reports_an_unknown_word_honestly(client, auth_headers, monkeypatch):
+    from app.services.dictionary_lookup import DictionaryResult
+
+    _offline(monkeypatch)(
+        lambda word, timeout=None: DictionaryResult(
+            word=word, found=False, ipa=None, audio_url=None, senses=(), synonyms=()
+        )
+    )
+
     res = client.get("/reading/lookup", headers=auth_headers, params={"w": "zzzxqv"})
     body = res.json()
 
     assert body["found"] is False
     assert body["senses"] == []
     assert body["cefr"] is None
+
+
+def test_lookup_falls_back_to_the_online_dictionary(client, auth_headers, monkeypatch):
+    """The reader used to consult the bundled list alone, which defines a few
+    hundred words — so nearly every word in a real novel came back unknown
+    while an answer was a second away."""
+    from app.services.dictionary_lookup import DictionaryResult, DictionarySense
+
+    _offline(monkeypatch)(
+        lambda word, timeout=None: DictionaryResult(
+            word=word,
+            found=True,
+            ipa=None,
+            audio_url=None,
+            senses=(DictionarySense(pos="verb", definition="To do away with.", example=None),),
+            synonyms=("scrap",),
+        )
+    )
+
+    body = client.get("/reading/lookup", headers=auth_headers, params={"w": "abolish"}).json()
+
+    assert body["found"] is True
+    assert body["senses"][0]["definition"] == "To do away with."
+    # Still ours, because no online dictionary carries a CEFR band.
+    assert body["cefr"] == "B2"
+
+
+def test_lookup_prefers_the_bundled_lexicon_over_the_network(client, auth_headers, monkeypatch):
+    def _explode(word, timeout=None):
+        raise AssertionError(f"went online for {word!r}, which the lexicon knows")
+
+    _offline(monkeypatch)(_explode)
+
+    body = client.get("/reading/lookup", headers=auth_headers, params={"w": "reticent"}).json()
+
+    assert body["found"] is True
+    assert body["lemma"] == "reticent"
+
+
+def test_lookup_survives_the_dictionary_being_unreachable(client, auth_headers, monkeypatch):
+    """Reading is an offline activity. A dictionary that cannot be reached
+    must not turn clicking a word into an error."""
+    from app.services.dictionary_lookup import DictionaryServiceUnavailable
+
+    def _down(word, timeout=None):
+        raise DictionaryServiceUnavailable("no network")
+
+    _offline(monkeypatch)(_down)
+
+    res = client.get("/reading/lookup", headers=auth_headers, params={"w": "abolish"})
+
+    assert res.status_code == 200
+    assert res.json()["found"] is False
+    # The band table is local, so it still knows how hard the word is.
+    assert res.json()["cefr"] == "B2"
 
 
 def test_lookup_rejects_an_empty_word(client, auth_headers):

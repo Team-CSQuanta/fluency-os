@@ -61,6 +61,7 @@ def _row_to_book(row: sqlite3.Row) -> BookOut:
         heat_overlay=bool(row["heat_overlay"]),
         imported_at=row["imported_at"],
         finished_at=row["finished_at"],
+        has_page_images=row["format"] == "pdf",
     )
 
 
@@ -213,6 +214,76 @@ def get_cover(book_id: str, conn: sqlite3.Connection = Depends(get_db)) -> FileR
     return FileResponse(row["cover_path"])
 
 
+# Rendered at roughly 150dpi: sharp on a high-density display at the width a
+# reader pane gives it, and small enough that a page arrives without a wait.
+# The browser handles zoom from there, so nothing here is re-rendered for it.
+_PAGE_RENDER_SCALE = 2.0
+
+
+def _page_image_source(row: sqlite3.Row) -> Path:
+    """The stored PDF a page can be rendered from, or 404.
+
+    Only PDFs have pages to render. Everything else is reflowable — there is
+    no original page to show, because the format never had one."""
+    if row["format"] != "pdf":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Only PDFs have original pages to show.",
+        )
+    stored = row["stored_path"]
+    if not stored or not Path(stored).is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="This book's file is missing."
+        )
+    return Path(stored)
+
+
+@router.get("/{book_id}/page/{page}/image")
+def get_page_image(
+    book_id: str, page: int, conn: sqlite3.Connection = Depends(get_db)
+) -> FileResponse:
+    """The book's own page, as it was typeset.
+
+    The text pipeline necessarily throws away everything that is not prose —
+    figures, plates, equations set as images, the layout itself — so this is
+    the only way to see what a page actually contained. Rendered on demand
+    rather than at ingest: a 600-page book is 600 renders and most readers
+    open a handful of them.
+    """
+    row = _get_book_row(conn, book_id)
+    source = _page_image_source(row)
+    if page < 1:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such page")
+
+    cached = book_storage.page_image_path(book_id, page)
+    if cached.is_file():
+        return FileResponse(cached, media_type="image/png")
+
+    import fitz  # imported here so a non-PDF install never pays for it
+
+    try:
+        doc = fitz.open(str(source))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="This book's file could not be opened."
+        ) from exc
+    try:
+        if page > doc.page_count:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such page")
+        pixmap = doc.load_page(page - 1).get_pixmap(
+            matrix=fitz.Matrix(_PAGE_RENDER_SCALE, _PAGE_RENDER_SCALE), alpha=False
+        )
+        # Written aside and moved into place, so that two readers asking for
+        # the same page at once cannot serve each other half a file.
+        partial = cached.with_suffix(f".{uuid7()}.part")
+        partial.write_bytes(pixmap.tobytes("png"))
+        partial.replace(cached)
+    finally:
+        doc.close()
+
+    return FileResponse(cached, media_type="image/png")
+
+
 @router.get("/{book_id}/toc", response_model=list[ChapterOut])
 def get_toc(book_id: str, conn: sqlite3.Connection = Depends(get_db)) -> list[ChapterOut]:
     book = _get_book_row(conn, book_id)
@@ -331,6 +402,13 @@ def _uses_native_pages(book: sqlite3.Row) -> bool:
 
 def _total_pages(conn: sqlite3.Connection, book: sqlite3.Row) -> int:
     if _uses_native_pages(book):
+        # The document's own page count, recorded at ingest. Counting the
+        # highest page that produced a block — which this did — loses every
+        # page after the last one with prose on it, so a book ending in
+        # plates simply stopped early and there was no way to reach them.
+        stored = book["page_estimate"] or 0
+        if stored:
+            return stored
         row = conn.execute(
             "SELECT COALESCE(MAX(page_number), 0) AS p FROM book_blocks WHERE book_id = ?",
             (book["id"],),
@@ -600,7 +678,7 @@ def update_book(book_id: str, payload: BookUpdate, conn: sqlite3.Connection = De
 @router.delete("/{book_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_book(book_id: str, conn: sqlite3.Connection = Depends(get_db)) -> None:
     row = _get_book_row(conn, book_id)
-    book_storage.delete_book_files(row["stored_path"], row["cover_path"])
+    book_storage.delete_book_files(row["stored_path"], row["cover_path"], book_id)
     conn.execute("DELETE FROM books WHERE id = ?", (book_id,))
 
 

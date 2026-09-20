@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { initApiClient, api } from '@/lib/apiClient';
 import type { UserOut } from '@/types/api';
+import { friendlyMessage } from '@/lib/friendlyError';
 
 const STORAGE_KEY = 'fluencyos.currentUserId';
 
@@ -46,7 +47,7 @@ export const useAppStore = create<AppState>((set) => ({
         set({ currentUserId: null, onboardingCompleted: false });
       }
     } catch (err) {
-      set({ initError: err instanceof Error ? err.message : String(err) });
+      set({ initError: friendlyMessage(err, 'Starting FluencyOS') });
     }
   },
 

@@ -119,8 +119,16 @@ def ingest_book(conn: sqlite3.Connection, book_id: str) -> None:
         # A format with real pages reports its true page count on the shelf
         # tile, rather than a word-count estimate that would contradict the
         # page numbers printed in the document.
+        #
+        # The parser's own count, not the highest page that produced text.
+        # A plate, a full-page figure or a blank leaf yields no blocks, so
+        # counting blocks ends the book at its last page of prose and makes
+        # every page after it unreachable. Falls back for a parser that does
+        # not report one.
         native_pages = (
-            max((b.page_number or 0) for b in parsed.blocks) if parsed.uses_native_pages else 0
+            (parsed.page_count or max((b.page_number or 0) for b in parsed.blocks))
+            if parsed.uses_native_pages
+            else 0
         )
 
         cover_path: str | None = None

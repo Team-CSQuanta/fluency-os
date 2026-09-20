@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import { api } from '@/lib/apiClient';
 import { useAppStore } from '@/store/appStore';
 import type { RateCardOut, ReviewCardOut, ReviewRating, ReviewStatsOut } from '@/types/api';
+import { friendlyMessage } from '@/lib/friendlyError';
+import { reportError } from '@/store/errorStore';
 
 interface ReviewState {
   queue: ReviewCardOut[];
@@ -58,7 +60,7 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       const queue = await api.get<ReviewCardOut[]>(`/review/queue?user_id=${encodeURIComponent(userId)}`);
       set({ queue, queueStatus: 'idle' });
     } catch (err) {
-      set({ queueStatus: 'error', queueError: err instanceof Error ? err.message : String(err) });
+      set({ queueStatus: 'error', queueError: friendlyMessage(err, 'Building your review session') });
     }
   },
 
@@ -83,8 +85,11 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       set((s) => ({
         index: Math.max(0, s.index - 1),
         answered: Math.max(0, s.answered - 1),
-        queueError: err instanceof Error ? err.message : String(err),
       }));
+      // Said out loud, because the rollback on its own is invisible: the card
+      // simply reappears. queueError is only ever drawn on the finished
+      // screen, so mid-session this failed in complete silence.
+      reportError(err, 'Saving that answer', () => void get().rate(rating));
     }
   },
 

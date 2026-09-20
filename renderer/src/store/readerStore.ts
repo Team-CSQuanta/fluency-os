@@ -21,6 +21,7 @@ import type {
   SessionOut,
   WordLookupOut,
 } from '@/types/api';
+import { friendlyMessage } from '@/lib/friendlyError';
 
 const SEARCH_DEBOUNCE_MS = 200;
 const PREFS_SAVE_DEBOUNCE_MS = 400;
@@ -185,7 +186,49 @@ const DEFAULT_PREFS: ReaderPrefsOut = {
   heat_on: true,
   panel_open: true,
   panel_tab: 'toc',
+  page_view: false,
 };
+
+/* Recently fetched pages, keyed `<bookId>:<page>`.
+ *
+ * Every page turn was a network round trip with the text dimmed until it
+ * landed, and turning back re-fetched a page just read. Small on purpose: the
+ * point is that the page either side of where you are is already here, not
+ * that a whole book is held in memory. */
+const PAGE_CACHE_LIMIT = 12;
+const pageCache = new Map<string, PageOut>();
+
+function cacheKey(bookId: string, page: number): string {
+  return `${bookId}:${page}`;
+}
+
+function rememberPage(bookId: string, data: PageOut): void {
+  const key = cacheKey(bookId, data.page);
+  // Deleted first so that re-reading a page moves it to the end and the
+  // eviction below takes the genuinely least recent one.
+  pageCache.delete(key);
+  pageCache.set(key, data);
+  while (pageCache.size > PAGE_CACHE_LIMIT) {
+    const oldest = pageCache.keys().next().value;
+    if (oldest === undefined) break;
+    pageCache.delete(oldest);
+  }
+}
+
+/** Fetch the page after this one into the cache, without disturbing the view.
+ *
+ * Deliberately fire-and-forget and deliberately silent: it is a guess about
+ * what happens next, so a failure must do nothing at all rather than surface
+ * an error for a page nobody asked for yet. */
+function prefetchNext(bookId: string, page: number, totalPages: number): void {
+  const next = page + 1;
+  if (next > totalPages) return;
+  if (pageCache.has(cacheKey(bookId, next))) return;
+  void api
+    .get<PageOut>(`/books/${bookId}/page?page=${next}`)
+    .then((data) => rememberPage(bookId, data))
+    .catch(() => undefined);
+}
 
 let prefsSaveTimer: ReturnType<typeof setTimeout> | null = null;
 // Set the moment the reader touches a control. loadPrefs resolving after that
@@ -217,7 +260,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
 
       await loadPage(bookId, position.page || 1, { get, set, savePosition: false });
     } catch (err) {
-      set({ status: 'error', error: err instanceof Error ? err.message : String(err) });
+      set({ status: 'error', error: friendlyMessage(err, 'Opening this book') });
     }
   },
 
@@ -511,10 +554,15 @@ async function loadPage(
   },
 ): Promise<void> {
   const { get, set, savePosition } = opts;
-  set({ status: 'loading' });
+  const cached = pageCache.get(cacheKey(bookId, pageNum));
+  // Only the *text* comes from the cache. Heat spans and the reading position
+  // are still re-fetched below, because both can have changed since the page
+  // was last seen — a word saved to vocabulary changes the overlay.
+  if (!cached) set({ status: 'loading' });
   try {
-    const pageData = await api.get<PageOut>(`/books/${bookId}/page?page=${pageNum}`);
+    const pageData = cached ?? (await api.get<PageOut>(`/books/${bookId}/page?page=${pageNum}`));
     if (get().bookId !== bookId) return;
+    rememberPage(bookId, pageData);
 
     set({
       blocks: pageData.blocks,
@@ -530,6 +578,7 @@ async function loadPage(
     });
 
     void loadHeat(bookId, { get, set });
+    prefetchNext(bookId, pageData.page, pageData.total_pages);
 
     // Page turns are discrete, deliberate actions — write position
     // immediately rather than debouncing, unlike a continuous-scroll reader.
@@ -546,6 +595,6 @@ async function loadPage(
       set({ percent: position.percent });
     }
   } catch (err) {
-    set({ status: 'error', error: err instanceof Error ? err.message : String(err) });
+    set({ status: 'error', error: friendlyMessage(err, 'Closing this book') });
   }
 }

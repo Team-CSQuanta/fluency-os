@@ -4,6 +4,7 @@ import { useConversationStore } from '@/store/conversationStore';
 import { useEngineStore } from '@/store/engineStore';
 import { useShellStore } from '@/store/shellStore';
 import type { ConversationSessionOut } from '@/types/api';
+import { friendlyMessage } from '@/lib/friendlyError';
 
 const SCENARIO_LABEL: Record<string, string> = Object.fromEntries(CONV_SCENARIOS.map((s) => [s.key, s.n]));
 
@@ -93,7 +94,7 @@ export function ConversationList() {
       await startSession(scenarioKey, 'voice');
       goConvLive(SCENARIO_LABEL[scenarioKey]);
     } catch (err) {
-      setStartError(err instanceof Error ? err.message : 'Could not start a conversation');
+      setStartError(friendlyMessage(err, 'Starting a conversation'));
     } finally {
       setStarting(null);
     }

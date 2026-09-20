@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api } from '@/lib/apiClient';
 import { useAppStore } from '@/store/appStore';
 import type { AgreedWordOut, DictionarySearchOut, HintsOut, SceneWordOut } from '@/types/api';
+import { friendlyMessage } from '@/lib/friendlyError';
 
 /** Hints, and what they cost.
  *
@@ -184,7 +185,7 @@ function SceneWordChip({ entry }: { entry: SceneWordOut }) {
     try {
       setResult(await api.get<DictionarySearchOut>(`/vocabulary/dictionary-search?w=${encodeURIComponent(entry.word)}`));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not reach the dictionary');
+      setError(friendlyMessage(err, 'Looking that up'));
     } finally {
       setBusy(false);
     }
@@ -206,7 +207,7 @@ function SceneWordChip({ entry }: { entry: SceneWordOut }) {
       });
       setSaved(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save this word');
+      setError(friendlyMessage(err, 'Saving this word'));
     } finally {
       setBusy(false);
     }

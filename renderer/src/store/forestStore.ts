@@ -1,7 +1,8 @@
 import { create } from 'zustand';
-import { api, ApiError } from '@/lib/apiClient';
+import { api } from '@/lib/apiClient';
 import { useAppStore } from '@/store/appStore';
 import type { FocusOut, ForestOut, TreeOut } from '@/types/api';
+import { friendlyMessage } from '@/lib/friendlyError';
 
 function requireUserId(): string {
   const id = useAppStore.getState().currentUserId;
@@ -40,7 +41,7 @@ export const useForestStore = create<ForestState>((set, get) => ({
       );
       set({ forest, loading: false });
     } catch (err) {
-      set({ loading: false, error: err instanceof ApiError ? err.detail : String(err) });
+      set({ loading: false, error: friendlyMessage(err, 'Loading your forest') });
     }
   },
 
@@ -58,7 +59,7 @@ export const useForestStore = create<ForestState>((set, get) => ({
       // up disagreeing with the server.
       await get().fetchForest();
     } catch (err) {
-      set({ error: err instanceof ApiError ? err.detail : String(err) });
+      set({ error: friendlyMessage(err, 'Loading your forest') });
     }
   },
 
@@ -70,7 +71,7 @@ export const useForestStore = create<ForestState>((set, get) => ({
       });
       set({ focus, error: null });
     } catch (err) {
-      set({ error: err instanceof ApiError ? err.detail : String(err) });
+      set({ error: friendlyMessage(err, 'Loading your forest') });
     }
   },
 
@@ -87,7 +88,7 @@ export const useForestStore = create<ForestState>((set, get) => ({
     } catch (err) {
       // The server refuses to pay out early, which is the point — surface it
       // rather than pretending the session finished.
-      set({ error: err instanceof ApiError ? err.detail : String(err) });
+      set({ error: friendlyMessage(err, 'Loading your forest') });
     }
   },
 

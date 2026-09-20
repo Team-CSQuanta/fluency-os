@@ -779,3 +779,70 @@ def test_another_learners_import_does_not_adopt_your_moments(client, auth_header
     _other_id, _other_media = _import(client, auth_headers, video)
 
     assert _context(client, auth_headers, user_id)["media_item_id"] is None
+
+
+def test_a_clip_kept_as_timecodes_only_still_has_a_thumbnail(client, auth_headers, video):
+    """The card offers a still to click on, and under the timecodes-only
+    storage policy — and after a purge — there is no stored clip to take one
+    from. A frame comes from the source file instead, so the picture survives
+    the files being freed.
+    """
+    user_id, media_id = _import(client, auth_headers, video)
+    detail = client.get(f"/media/{media_id}", headers=auth_headers).json()
+    cue = client.get(
+        f"/media/tracks/{detail['prefs']['target_track_id']}/cues", headers=auth_headers
+    ).json()[0]
+    res = client.post(
+        f"/media/{media_id}/save-word",
+        headers=auth_headers,
+        json={
+            "user_id": user_id,
+            "word": "reticent",
+            "cue_id": cue["id"],
+            "cue_text": cue["text"],
+            "start_ms": cue["start_ms"],
+            "end_ms": cue["end_ms"],
+        },
+    )
+    clip_id = res.json()["clip"]["id"]
+    assert client.get(f"/media/clips/{clip_id}/thumbnail?t=test-token").status_code == 200
+
+    # Free the files: the row survives, demoted to 'virtual', with no clip and
+    # no thumbnail left on disk.
+    purge = client.post(f"/media/clips/purge-files?user_id={user_id}", headers=auth_headers)
+    assert purge.status_code == 200
+    clips = client.get(f"/media/clips/list?user_id={user_id}", headers=auth_headers).json()
+    assert clips[0]["status"] == "virtual"
+
+    again = client.get(f"/media/clips/{clip_id}/thumbnail?t=test-token")
+
+    assert again.status_code == 200
+    assert again.headers["content-type"] == "image/jpeg"
+    assert len(again.content) > 0
+
+
+def test_a_clip_whose_source_is_gone_has_no_thumbnail(client, auth_headers, video, tmp_path):
+    """No file to grab a frame from is a 404, not a broken image — the card
+    drops the picture and keeps its play control."""
+    user_id, media_id = _import(client, auth_headers, video)
+    detail = client.get(f"/media/{media_id}", headers=auth_headers).json()
+    cue = client.get(
+        f"/media/tracks/{detail['prefs']['target_track_id']}/cues", headers=auth_headers
+    ).json()[0]
+    res = client.post(
+        f"/media/{media_id}/save-word",
+        headers=auth_headers,
+        json={
+            "user_id": user_id,
+            "word": "reticent",
+            "cue_id": cue["id"],
+            "cue_text": cue["text"],
+            "start_ms": cue["start_ms"],
+            "end_ms": cue["end_ms"],
+        },
+    )
+    clip_id = res.json()["clip"]["id"]
+    client.post(f"/media/clips/purge-files?user_id={user_id}", headers=auth_headers)
+    video.unlink()
+
+    assert client.get(f"/media/clips/{clip_id}/thumbnail?t=test-token").status_code == 404

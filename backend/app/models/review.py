@@ -16,6 +16,14 @@ class ReviewCardOut(BaseModel):
     audio_url: str | None = None
     context_snippet: str | None = None
     context_source: str | None = None
+    #: The clip for that context, when the word was saved from a film. Status
+    #: is carried too: a clip can be queued, still extracting, or failed, and
+    #: the card says which rather than offering a control that does nothing.
+    clip_id: str | None = None
+    clip_status: str | None = None
+    #: The film it came from — null when it has since been removed from the
+    #: library, which is what distinguishes "not cut yet" from "gone".
+    media_item_id: str | None = None
     # Cloze cards only: the sentence either side of the blank.
     cloze_before: str | None = None
     cloze_after: str | None = None

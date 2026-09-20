@@ -16,6 +16,7 @@ import { ConversationList } from '@/features/conversation/ConversationList';
 import { ConversationLive } from '@/features/conversation/ConversationLive';
 import { LeaveConversationDialog } from '@/features/conversation/LeaveConversationDialog';
 import { CloseDuringDownloadDialog } from '@/features/shell/CloseDuringDownloadDialog';
+import { ErrorDialog } from '@/features/shell/ErrorDialog';
 import { Report } from '@/features/conversation/Report';
 import { Challenge } from '@/features/challenge/Challenge';
 import { Forest } from '@/features/forest/Forest';
@@ -76,6 +77,7 @@ function MainApp() {
       </div>
       <LeaveConversationDialog />
       <CloseDuringDownloadDialog />
+      <ErrorDialog />
     </div>
   );
 }

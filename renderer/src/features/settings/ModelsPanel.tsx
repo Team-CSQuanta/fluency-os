@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useEngineStore } from '@/store/engineStore';
 import type { DownloadStatusOut } from '@/types/api';
+import { friendlyMessage } from '@/lib/friendlyError';
 
 function formatMb(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
@@ -11,6 +12,13 @@ function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
   return `${bytes} B`;
 }
+
+/** The providers the page offers. Gemini was a third; it is gone from the
+ * interface, and the backend still understands the value only so that a
+ * settings row left on it from an earlier version can be moved off rather
+ * than leaving someone on a provider with no controls. */
+type Provider = 'local' | 'openrouter';
+const PROVIDERS = ['local', 'openrouter'] as const;
 
 // A second click within this window commits the delete — no native
 // confirm() dialog, but an accidental single click can't nuke a multi-GB
@@ -97,23 +105,28 @@ function DownloadButton({
   );
 }
 
+/** Where the text model runs. The tab is the setting, not a preview of it:
+ * choosing one switches the provider, and only that provider's options are
+ * shown underneath. They used to be listed all at once, so the page offered
+ * three configurations when exactly one of them was in use. */
 function ProviderToggle({
   provider,
   onChange,
   disabled,
 }: {
-  provider: 'local' | 'openrouter' | 'gemini';
-  onChange: (p: 'local' | 'openrouter' | 'gemini') => void;
+  /** The stored provider, which may be one this page no longer offers — then
+   * no tab is active and both stay clickable, which is the way out. */
+  provider: string;
+  onChange: (p: Provider) => void;
   disabled: boolean;
 }) {
-  const labels: Record<'local' | 'openrouter' | 'gemini', string> = {
+  const labels: Record<Provider, string> = {
     local: 'Local (this device)',
     openrouter: 'Cloud (OpenRouter)',
-    gemini: 'Cloud (Gemini)',
   };
   return (
     <div className="inline-flex overflow-hidden rounded-field border border-line2">
-      {(['local', 'openrouter', 'gemini'] as const).map((p) => (
+      {PROVIDERS.map((p) => (
         <button
           key={p}
           onClick={() => onChange(p)}
@@ -132,7 +145,6 @@ function ProviderToggle({
 }
 
 interface CloudProviderConfig {
-  provider: 'openrouter' | 'gemini';
   title: string;
   description: ReactNode;
   keyLabel: string;
@@ -144,7 +156,7 @@ interface CloudProviderConfig {
   model: string;
 }
 
-function CloudProviderCard({ active, config }: { active: boolean; config: CloudProviderConfig }) {
+function CloudProviderCard({ config }: { config: CloudProviderConfig }) {
   const setLlmProvider = useEngineStore((s) => s.setLlmProvider);
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [modelInput, setModelInput] = useState('');
@@ -154,44 +166,34 @@ function CloudProviderCard({ active, config }: { active: boolean; config: CloudP
 
   useEffect(() => {
     setModelInput(config.model);
-    // Only re-sync when the provider identity or its saved model changes —
-    // not on every store update, which would stomp on in-progress typing.
+    // Only re-sync when the saved model changes — not on every store update,
+    // which would stomp on in-progress typing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config.provider, config.model]);
+  }, [config.model]);
 
   const handleSave = async () => {
     setSaving(true);
     setError(null);
     setSaved(false);
     try {
-      await setLlmProvider(
-        config.provider,
-        config.provider === 'gemini'
-          ? { geminiApiKey: apiKeyInput.trim() || undefined, geminiModel: modelInput.trim() || undefined }
-          : { openrouterApiKey: apiKeyInput.trim() || undefined, openrouterModel: modelInput.trim() || undefined },
-      );
+      await setLlmProvider('openrouter', {
+        openrouterApiKey: apiKeyInput.trim() || undefined,
+        openrouterModel: modelInput.trim() || undefined,
+      });
       setApiKeyInput('');
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save');
+      setError(friendlyMessage(err, 'Saving this'));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div
-      className="rounded-panel border p-4"
-      style={{ borderColor: active ? 'var(--accLine)' : 'var(--line2)', background: active ? 'var(--accSoft)' : 'var(--panel)' }}
-    >
-      <div className="mb-[10px] flex items-center gap-[8px] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
+    <div className="rounded-panel border border-accLine bg-panel p-4">
+      <div className="mb-[10px] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
         {config.title}
-        {active && (
-          <span className="rounded-full bg-accSoft px-[7px] py-[2px] font-mono text-[8.5px] font-semibold normal-case tracking-normal text-acc">
-            active
-          </span>
-        )}
       </div>
       <div className="mb-[10px] font-sans text-[12px] leading-[1.6] text-tx2">{config.description}</div>
       <div className="flex flex-col gap-[8px]">
@@ -221,7 +223,7 @@ function CloudProviderCard({ active, config }: { active: boolean; config: CloudP
             disabled={saving}
             className="rounded-field bg-accSolid px-[14px] py-[8px] font-sans text-[11px] font-semibold text-white hover:brightness-110 disabled:opacity-50"
           >
-            {saving ? 'saving…' : `save & use ${config.provider === 'gemini' ? 'gemini' : 'openrouter'}`}
+            {saving ? 'saving…' : 'save & use openrouter'}
           </button>
           {saved && <span className="font-mono text-[10.5px] font-medium text-acc">✓ saved</span>}
           {error && <span className="font-mono text-[10.5px] text-[#c0563f]">{error}</span>}
@@ -267,7 +269,13 @@ export function ModelsPanel() {
     catalog.stt.download.error ||
     catalog.tts_options.find((o) => o.download.status === 'error')?.download.error;
 
-  const handleToggleProvider = async (p: 'local' | 'openrouter' | 'gemini') => {
+  // A settings row left on a provider this page no longer offers. Nothing in
+  // the tab strip selects it, so without this the strip would show no active
+  // tab and the AI would appear to be configured as nothing at all.
+  const stranded = Boolean(llmProvider) && !(PROVIDERS as readonly string[]).includes(llmProvider!.provider);
+  const showLocal = !llmProvider || llmProvider.provider === 'local' || stranded;
+
+  const handleToggleProvider = async (p: Provider) => {
     setSwitchingProvider(true);
     try {
       await setLlmProvider(p);
@@ -283,15 +291,25 @@ export function ModelsPanel() {
           <div className="mb-2 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
             AI provider — which engine Conversation and Vocabulary's AI features actually use
           </div>
-          <ProviderToggle provider={llmProvider.provider} onChange={(p) => void handleToggleProvider(p)} disabled={switchingProvider} />
+          <ProviderToggle
+            provider={llmProvider.provider}
+            onChange={(p) => void handleToggleProvider(p)}
+            disabled={switchingProvider}
+          />
+          {/* Only reachable on a settings row left on a provider this page no
+              longer offers. Better than a tab strip with nothing selected and
+              no way to understand why the AI stopped working. */}
+          {stranded && (
+            <div className="mt-2 rounded-field border border-dashed border-line px-3 py-2 font-mono text-[10px] leading-[1.6] text-tx3">
+              This account is set to a provider that is no longer offered here. Pick one above to move it.
+            </div>
+          )}
         </div>
       )}
 
-      {llmProvider && (
+      {llmProvider && llmProvider.provider === 'openrouter' && (
         <CloudProviderCard
-          active={llmProvider.provider === 'openrouter'}
           config={{
-            provider: 'openrouter',
             title: 'Cloud (OpenRouter)',
             description: (
               <>
@@ -312,43 +330,16 @@ export function ModelsPanel() {
         />
       )}
 
-      {llmProvider && (
-        <CloudProviderCard
-          active={llmProvider.provider === 'gemini'}
-          config={{
-            provider: 'gemini',
-            title: 'Cloud (Gemini)',
-            description: (
-              <>
-                Uses Google's Gemini API (<span className="font-medium text-tx">ai.google.dev</span>) instead of a
-                local download — a free API key with its own generous free-tier quota, separate from OpenRouter's
-                shared one. Nothing here is stored anywhere but this device's own local database.
-              </>
-            ),
-            keyLabel: 'Gemini API key',
-            keyPlaceholder: 'AIza…',
-            modelPlaceholder: 'gemini-2.0-flash',
-            modelHint: 'any Gemini model id — e.g. gemini-2.0-flash, gemini-1.5-flash, gemini-1.5-pro',
-            hasKey: llmProvider.has_gemini_key,
-            keyPreview: llmProvider.gemini_key_preview,
-            model: llmProvider.gemini_model,
-          }}
-        />
-      )}
-
+      {/* The downloadable models belong to the Local tab. Listed under a cloud
+          provider they looked like a choice that changed nothing — while the
+          radio buttons in fact DID change something, switching the provider
+          back to local without the tab above saying so. */}
+      {showLocal && (
       <div>
-        <div className="mb-2 flex items-center gap-[8px] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
+        <div className="mb-2 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
           Conversation model — pick one, download it, then it's used automatically
-          {llmProvider?.provider === 'local' && (
-            <span className="rounded-full bg-accSoft px-[7px] py-[2px] font-mono text-[8.5px] font-semibold normal-case tracking-normal text-acc">
-              active
-            </span>
-          )}
         </div>
-        <div
-          className="flex flex-col gap-[1px] overflow-hidden rounded-panel border bg-panel"
-          style={{ borderColor: llmProvider?.provider === 'local' ? 'var(--accLine)' : 'var(--line2)' }}
-        >
+        <div className="flex flex-col gap-[1px] overflow-hidden rounded-panel border border-accLine bg-panel">
           {catalog.llm.map((o) => (
             <div key={o.key} className="flex items-center justify-between gap-4 border-b border-line2 px-4 py-[13px] last:border-b-0">
               <div className="flex min-w-0 items-center gap-[10px]">
@@ -378,6 +369,8 @@ export function ModelsPanel() {
           ))}
         </div>
       </div>
+
+      )}
 
       <div>
         <div className="mb-2 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">

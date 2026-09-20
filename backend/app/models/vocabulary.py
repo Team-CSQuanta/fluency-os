@@ -195,3 +195,11 @@ class AiEnrichOut(BaseModel):
     mnemonic: str
     usage_note: str
     synonyms: list[str]
+
+
+class DictionaryCacheOut(BaseModel):
+    """The local dictionary cache, as the settings page reports it."""
+
+    entries: int
+    #: None when nothing has been cached yet — a fresh install, or just cleared.
+    last_cached_at: str | None

@@ -188,6 +188,9 @@ class SaveFromVideoOut(BaseModel):
 
 
 class PlayerPrefsOut(BaseModel):
+    # Whether subtitles are drawn at all. Defaulted so a settings row written
+    # before this existed still validates rather than 500-ing the player.
+    subs_on: bool = True
     dual_subs: bool
     blur_subs: bool
     auto_pause: bool
@@ -205,6 +208,7 @@ class PlayerPrefsOut(BaseModel):
 
 
 class PlayerPrefsUpdate(BaseModel):
+    subs_on: bool | None = None
     dual_subs: bool | None = None
     blur_subs: bool | None = None
     auto_pause: bool | None = None

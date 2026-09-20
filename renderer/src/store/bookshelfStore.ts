@@ -8,6 +8,7 @@ import type {
   BookOut,
   ReadingStatsOut,
 } from '@/types/api';
+import { friendlyMessage } from '@/lib/friendlyError';
 
 export interface ImportQueueItem {
   path: string;
@@ -84,7 +85,7 @@ export const useBookshelfStore = create<BookshelfState>((set, get) => ({
       const books = await api.get<BookOut[]>(`/books?user_id=${encodeURIComponent(userId)}`);
       set({ books, booksStatus: 'idle' });
     } catch (err) {
-      set({ booksStatus: 'error', booksError: err instanceof Error ? err.message : String(err) });
+      set({ booksStatus: 'error', booksError: friendlyMessage(err, 'Loading your bookshelf') });
     }
   },
 
@@ -143,7 +144,7 @@ export const useBookshelfStore = create<BookshelfState>((set, get) => ({
     try {
       accepted = await api.post<BookOut[]>('/books/import', payload);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = friendlyMessage(err, 'Adding those books');
       set((s) => ({
         importQueue: s.importQueue.map((q) =>
           paths.includes(q.path) ? { ...q, status: 'failed', error: message } : q,

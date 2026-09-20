@@ -20,6 +20,19 @@ import { POS_FULL } from '@/features/vocabulary/vocabMockData';
 import { useShellStore } from '@/store/shellStore';
 import { useVocabularyStore } from '@/store/vocabularyStore';
 import { ClipContext } from '@/features/vocabulary/ClipContext';
+import { friendlyMessage } from '@/lib/friendlyError';
+
+/** How long this word currently stays learnt, in words rather than in the
+ * scheduler's decimal days. */
+function holdsFor(days: number): string {
+  if (days < 1) return 'a few hours';
+  if (days < 2) return 'a day';
+  if (days < 14) return `${Math.round(days)} days`;
+  if (days < 60) return `${Math.round(days / 7)} weeks`;
+  if (days < 365) return `${Math.round(days / 30)} months`;
+  const years = days / 365;
+  return years < 1.5 ? 'a year' : `${Math.round(years)} years`;
+}
 
 export function VocabularyEntry() {
   const word = useShellStore((s) => s.selectedWord);
@@ -69,7 +82,7 @@ export function VocabularyEntry() {
         void audio.play().catch(() => resolve());
       });
     } catch (err) {
-      setSpeakError(err instanceof Error ? err.message : 'Could not speak this — is the AI launched?');
+      setSpeakError(friendlyMessage(err, 'Reading this aloud'));
     } finally {
       if (url) URL.revokeObjectURL(url);
       setPlaying(null);
@@ -93,7 +106,7 @@ export function VocabularyEntry() {
       });
     } catch (err) {
       setSpeakError(
-        err instanceof Error ? err.message : 'Could not speak this — is the AI launched?',
+        friendlyMessage(err, 'Reading this aloud'),
       );
     } finally {
       // The clip is a blob the browser holds until it is explicitly released;
@@ -138,7 +151,7 @@ export function VocabularyEntry() {
     try {
       await generateMnemonic(vocabWordId);
     } catch (err) {
-      setMnemonicError(err instanceof Error ? err.message : 'Could not reach the local AI');
+      setMnemonicError(friendlyMessage(err, 'Asking the AI'));
     } finally {
       setMnemonicLoading(false);
     }
@@ -150,7 +163,7 @@ export function VocabularyEntry() {
     try {
       setExamples(await fetchAiExamples(vocabWordId));
     } catch (err) {
-      setExamplesError(err instanceof Error ? err.message : 'Could not reach the local AI');
+      setExamplesError(friendlyMessage(err, 'Asking the AI'));
     } finally {
       setExamplesLoading(false);
     }
@@ -164,7 +177,7 @@ export function VocabularyEntry() {
     try {
       setPracticeQuestion(await fetchAiPractice(vocabWordId));
     } catch (err) {
-      setPracticeError(err instanceof Error ? err.message : 'Could not reach the local AI');
+      setPracticeError(friendlyMessage(err, 'Asking the AI'));
     } finally {
       setPracticeLoading(false);
     }
@@ -521,11 +534,13 @@ export function VocabularyEntry() {
                   <div className="mt-[8px] font-mono text-[10.5px] leading-[1.8] text-tx3">
                     next review {dueLabel(detail.due, detail.card_state)}
                     <br />
-                    stability {detail.stability_days ?? 0} d · difficulty {detail.difficulty ?? 0}
+                    {/* Was "stability 12.4 d · difficulty 5.1 · 3 reviews ·
+                        1 lapse" — the scheduler's internals, printed. */}
+                    remembered for about {holdsFor(detail.stability_days ?? 0)} at the moment
                     <br />
-                    {detail.reps} review{detail.reps === 1 ? '' : 's'} · {detail.lapses} lapse
-                    {detail.lapses === 1 ? '' : 's'}
-                    {detail.suspended && <> · suspended</>}
+                    reviewed {detail.reps} time{detail.reps === 1 ? '' : 's'}
+                    {(detail.lapses ?? 0) > 0 && <> · forgotten {detail.lapses}×</>}
+                    {detail.suspended && <> · paused</>}
                   </div>
                   {/* The project's central claim, stated where it applies to
                       this specific word rather than only in the spec. */}

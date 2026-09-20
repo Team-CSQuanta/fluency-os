@@ -16,6 +16,7 @@ import type {
   VocabWordOut,
   VocabWordSaveOut,
 } from '@/types/api';
+import { friendlyMessage } from '@/lib/friendlyError';
 
 interface VocabularyState {
   words: VocabWordOut[];
@@ -140,7 +141,7 @@ export const useVocabularyStore = create<VocabularyState>((set, get) => ({
       set({ words, wordsStatus: 'idle' });
     } catch (err) {
       if (token !== lastWordsRequest) return;
-      set({ wordsStatus: 'error', wordsError: err instanceof Error ? err.message : String(err) });
+      set({ wordsStatus: 'error', wordsError: friendlyMessage(err, 'Loading your vocabulary') });
     }
   },
 
@@ -203,7 +204,7 @@ export const useVocabularyStore = create<VocabularyState>((set, get) => ({
       // A 404 here is a real, expected outcome — selectedWord can point at a
       // word from Dashboard's separate mock "Recent words" list that was
       // never actually saved, not just a network failure.
-      set({ detailStatus: 'error', detailError: err instanceof Error ? err.message : String(err) });
+      set({ detailStatus: 'error', detailError: friendlyMessage(err, 'Opening this word') });
     }
   },
 
@@ -299,7 +300,7 @@ export const useVocabularyStore = create<VocabularyState>((set, get) => ({
       const result = await api.get<DictionarySearchOut>(`/vocabulary/dictionary-search?w=${encodeURIComponent(clean)}`);
       set({ searchResult: result, searchStatus: result.found ? 'idle' : 'not-found' });
     } catch (err) {
-      set({ searchStatus: 'error', searchError: err instanceof Error ? err.message : String(err) });
+      set({ searchStatus: 'error', searchError: friendlyMessage(err, 'Looking that word up') });
     }
   },
 

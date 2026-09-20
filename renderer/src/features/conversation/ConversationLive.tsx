@@ -3,9 +3,12 @@ import { SpokenText, type SpeakingState } from './SpokenText';
 import { spokenCount, timeWords } from './spokenTiming';
 import { useMicRecorder } from '@/features/conversation/useMicRecorder';
 import { useVadRecorder } from '@/features/conversation/useVadRecorder';
+import { DEFAULT_PROFILE, type ListeningProfile } from '@/features/conversation/vadGate';
 import { useConversationStore } from '@/store/conversationStore';
 import { useEngineStore } from '@/store/engineStore';
+import { useSettingsStore } from '@/store/settingsStore';
 import { useShellStore } from '@/store/shellStore';
+import { friendlyMessage } from '@/lib/friendlyError';
 
 type MicState = 'idle' | 'recording' | 'thinking' | 'speaking' | 'listening' | 'hearing';
 
@@ -294,7 +297,7 @@ export function ConversationLive() {
       }
     } catch (err) {
       setPendingUserText(null);
-      setError(err instanceof Error ? err.message : 'Something went wrong');
+      setError(friendlyMessage(err, 'Sending that'));
       setMicState('idle');
       // A failed turn can mean the engine itself is no longer usable (key
       // revoked, quota gone) — refresh so the header indicator says so now
@@ -303,12 +306,31 @@ export function ConversationLive() {
     }
   };
 
+  // Settings → Conversation. Read here rather than inside the recorder so the
+  // hook stays a hook about microphones, with no idea where its numbers came
+  // from — which is what let it be simulated without a browser.
+  //
+  // Fetched from here as well as from the settings page: someone can open a
+  // conversation without ever visiting settings, and the tuned defaults are
+  // what they would get anyway, so a slow or failed read costs nothing.
+  const settings = useSettingsStore((s) => s.settings);
+  const fetchSettings = useSettingsStore((s) => s.fetch);
+  useEffect(() => {
+    if (!settings) void fetchSettings();
+  }, [settings, fetchSettings]);
+
+  const listening: ListeningProfile = {
+    sensitivity: settings?.conversation_mic_sensitivity ?? DEFAULT_PROFILE.sensitivity,
+    pace: settings?.conversation_turn_pace ?? DEFAULT_PROFILE.pace,
+  };
+
   const vad = useVadRecorder({
     enabled: handsFree && isVoice && aiLaunched && activeSession !== null,
     paused: turnInFlight,
-    // While the reply is audible the bar is raised, so the AI's own voice
-    // leaking through the speakers doesn't read as the learner interrupting.
-    thresholdScale: micState === 'speaking' ? 2.4 : 1,
+    // While the reply is audible, interrupting takes sustained speech rather
+    // than any passing sound — see useVadRecorder for why the bar moves.
+    aiSpeaking: micState === 'speaking',
+    profile: listening,
     onSpeechStart: () => {
       if (stopPlayback()) setMicState('idle');
     },
@@ -366,7 +388,7 @@ export function ConversationLive() {
       // someone just typed makes a recoverable error feel like data loss —
       // they have to retype it to retry.
       setTextInput((current) => (current ? current : text));
-      setError(err instanceof Error ? err.message : 'Something went wrong');
+      setError(friendlyMessage(err, 'Sending that'));
       void fetchEngineGlobalStatus();
     }
   };
@@ -378,7 +400,7 @@ export function ConversationLive() {
       await endSession(activeSession.id);
       goReport();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not end the session');
+      setError(friendlyMessage(err, 'Ending this conversation'));
     } finally {
       setEnding(false);
     }

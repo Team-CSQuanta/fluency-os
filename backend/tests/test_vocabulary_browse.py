@@ -425,7 +425,6 @@ def test_dictionary_search_reports_a_band_from_the_wider_table(client, auth_head
     """The bug behind "CEFR —" on almost every entry: the search read the
     band off the curated lexicon only."""
     from app.services import dictionary_lookup
-    from app.routers import vocabulary as vocab_router
 
     class _Result:
         word = "abolish"
@@ -435,7 +434,7 @@ def test_dictionary_search_reports_a_band_from_the_wider_table(client, auth_head
         senses = ()
         synonyms = ()
 
-    monkeypatch.setattr(vocab_router.dictionary_lookup, "search", lambda w: _Result())
+    monkeypatch.setattr(dictionary_lookup, "search", lambda w, timeout=None: _Result())
     body = client.get("/vocabulary/dictionary-search", headers=auth_headers, params={"w": "abolish"}).json()
     assert body["cefr"] == "B2"
 

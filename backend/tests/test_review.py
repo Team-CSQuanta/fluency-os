@@ -418,3 +418,123 @@ def test_rating_someone_elses_card_is_a_404(client, auth_headers):
         "/review/cards/not-mine/rate", headers=auth_headers, json={"user_id": user_id, "rating": 3}
     )
     assert res.status_code == 404
+
+
+# --- the clip a word was met in --------------------------------------------
+#
+# A word saved from a film carries the moment it was said. The review card
+# quoted that line as text and left the video unused, which is the one thing
+# this app captures that a paper flashcard cannot.
+
+
+def _film(conn, item_id="m1", title="Arrival (2016)"):
+    conn.execute(
+        "INSERT INTO media_items (id, user_id, title, kind, source_path, file_hash, duration_ms,"
+        " added_at) VALUES (?, 'u1', ?, 'local', '/tmp/a.mkv', ?, 600000, '2026-01-01T00:00:00Z')",
+        (item_id, title, item_id),
+    )
+
+
+def _context(conn, wid, *, cid, kind, snippet, at, media_item_id=None, clip_status=None):
+    conn.execute(
+        "INSERT INTO vocab_contexts (id, vocab_word_id, kind, snippet, source_label,"
+        " media_item_id, created_at) VALUES (?, ?, ?, ?, 'src', ?, ?)",
+        (cid, wid, kind, snippet, media_item_id, at),
+    )
+    if clip_status is not None:
+        conn.execute(
+            "INSERT INTO media_clips (id, media_item_id, vocab_word_id, vocab_context_id,"
+            " cue_text, start_ms, end_ms, status, created_at)"
+            " VALUES (?, ?, ?, ?, ?, 1000, 4000, ?, ?)",
+            (f"clip-{cid}", media_item_id, wid, cid, snippet, clip_status, at),
+        )
+    conn.commit()
+
+
+def _card(conn, wid):
+    queue = review.build_queue(conn, "u1", limit=20, new_limit=20, now=T0)
+    return next(c for c in queue if c["vocab_word_id"] == wid)
+
+
+def test_a_word_saved_from_a_film_carries_its_clip(tmp_path):
+    conn = _conn(tmp_path)
+    _film(conn)
+    wid = _word(conn, "mitigate")
+    _context(
+        conn, wid, cid="c1", kind="clip", snippet="We can mitigate it.",
+        at="2026-01-02T00:00:00Z", media_item_id="m1", clip_status="ready",
+    )
+    card = _card(conn, wid)
+    assert card["clip_id"] == "clip-c1"
+    assert card["clip_status"] == "ready"
+    assert card["media_item_id"] == "m1"
+    assert card["context_snippet"] == "We can mitigate it."
+
+
+def test_a_word_with_no_clip_says_so_rather_than_guessing(tmp_path):
+    conn = _conn(tmp_path)
+    wid = _word(conn, "mitigate")
+    _context(conn, wid, cid="c1", kind="page", snippet="From a book.", at="2026-01-02T00:00:00Z")
+    card = _card(conn, wid)
+    assert card["clip_id"] is None
+    assert card["clip_status"] is None
+    assert card["context_snippet"] == "From a book."
+
+
+def test_the_clip_wins_over_a_more_recent_page(tmp_path):
+    """Preference, not recency. The moment from a film is the richer context,
+    and a word met again in a book should not hide it."""
+    conn = _conn(tmp_path)
+    _film(conn)
+    wid = _word(conn, "mitigate")
+    _context(
+        conn, wid, cid="c-clip", kind="clip", snippet="Said in the film.",
+        at="2026-01-02T00:00:00Z", media_item_id="m1", clip_status="ready",
+    )
+    _context(conn, wid, cid="c-page", kind="page", snippet="Read in a book.", at="2026-06-01T00:00:00Z")
+    card = _card(conn, wid)
+    assert card["clip_id"] == "clip-c-clip"
+    # The line quoted and the clip played must come from the same context, or
+    # the card shows one sentence and plays another.
+    assert card["context_snippet"] == "Said in the film."
+
+
+def test_the_newest_still_wins_among_contexts_that_are_alike(tmp_path):
+    conn = _conn(tmp_path)
+    wid = _word(conn, "mitigate")
+    _context(conn, wid, cid="c-old", kind="page", snippet="Older.", at="2026-01-02T00:00:00Z")
+    _context(conn, wid, cid="c-new", kind="page", snippet="Newer.", at="2026-06-01T00:00:00Z")
+    assert _card(conn, wid)["context_snippet"] == "Newer."
+
+
+def test_a_clip_still_being_cut_is_reported_as_such(tmp_path):
+    """Queued, extracting and failed are all real states. The card needs to
+    distinguish them so it never offers a play button that does nothing."""
+    conn = _conn(tmp_path)
+    _film(conn)
+    wid = _word(conn, "mitigate")
+    _context(
+        conn, wid, cid="c1", kind="clip", snippet="Not cut yet.",
+        at="2026-01-02T00:00:00Z", media_item_id="m1", clip_status="queued",
+    )
+    card = _card(conn, wid)
+    assert card["clip_status"] == "queued"
+    assert card["clip_id"] is not None
+
+
+def test_a_clip_whose_film_was_removed_reports_no_media_item(tmp_path):
+    """The line and the timecode are still the learner's; the video is not.
+    media_item_id going null is what tells the card to say so."""
+    conn = _conn(tmp_path)
+    _film(conn)
+    wid = _word(conn, "mitigate")
+    _context(
+        conn, wid, cid="c1", kind="clip", snippet="From a film since removed.",
+        at="2026-01-02T00:00:00Z", media_item_id="m1", clip_status="ready",
+    )
+    conn.execute("DELETE FROM media_items WHERE id = 'm1'")
+    conn.commit()
+
+    card = _card(conn, wid)
+    assert card["media_item_id"] is None
+    assert card["context_snippet"] == "From a film since removed."

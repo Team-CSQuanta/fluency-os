@@ -31,7 +31,7 @@ from app.models.reading import (
     WordSenseOut,
 )
 from app.security import require_token
-from app.services import cefr_lexicon, difficulty_heat, leveling, reading_goal
+from app.services import cefr_lexicon, dictionary, difficulty_heat, leveling, pronunciation, reading_goal
 from app.services.leveling import cache as level_cache
 from app.utils.time import local_date_today
 
@@ -160,7 +160,16 @@ def lookup_word(
     user_id: str | None = None,
     conn: sqlite3.Connection = Depends(get_db),
 ) -> WordLookupOut:
-    """The AI panel's dictionary payload, from the bundled lexicon.
+    """The AI panel's dictionary payload.
+
+    Nearest source first: the bundled lexicon, then whatever this machine has
+    already looked up, and only then the network. Clicking a word in a book
+    used to consult the bundled list alone, which carries definitions for a
+    few hundred words — so nearly every word in a real novel came back "not
+    in the dictionary" while an answer was a second away.
+
+    The CEFR band and the simpler synonym still come from the lexicon
+    whatever answered, because no online dictionary has them.
 
     `ctx` (the sentence the word appeared in) is accepted now so the client
     contract doesn't change when contextual explanation lands in Phase 7 —
@@ -171,14 +180,36 @@ def lookup_word(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="w is required")
 
     entry = cefr_lexicon.lookup(word)
+    try:
+        answer = dictionary.look_up(conn, word)
+    except dictionary.DictionaryServiceUnavailable:
+        # Reading is an offline activity and must stay one. A dictionary that
+        # cannot be reached falls back to whatever the lexicon knows rather
+        # than turning a click on a word into an error.
+        answer = None
 
-    if entry is None:
+    senses: list[WordSenseOut] = []
+    synonyms: list[str] = []
+    ipa: str | None = None
+    if answer is not None and answer.result.found:
+        senses = [
+            WordSenseOut(definition=sense.definition, example=sense.example)
+            for sense in answer.result.senses
+            if sense.definition
+        ]
+        synonyms = list(answer.result.synonyms)
+        ipa = answer.result.ipa
+    elif entry is not None and entry.definition:
+        senses = [WordSenseOut(definition=entry.definition, example=entry.example)]
+        synonyms = list(entry.synonyms)
+
+    if not senses and entry is None:
         return WordLookupOut(
             word=word,
             lemma=None,
             pos=None,
-            cefr=None,
-            ipa=None,
+            cefr=cefr_lexicon.band_of(word),
+            ipa=pronunciation.display(pronunciation.ipa_for(word)),
             senses=[],
             synonyms=[],
             simpler=None,
@@ -187,22 +218,19 @@ def lookup_word(
             context_note=None,
         )
 
-    senses: list[WordSenseOut] = []
-    if entry.definition:
-        senses.append(WordSenseOut(definition=entry.definition, example=entry.example))
-
     return WordLookupOut(
         word=word,
-        lemma=entry.lemma,
-        pos=entry.pos or None,
-        cefr=entry.cefr,
-        # No pronunciation data in the bundled list yet — the panel hides the
-        # slot rather than inventing an IPA transcription.
-        ipa=None,
+        lemma=entry.lemma if entry is not None else None,
+        pos=(entry.pos or None) if entry is not None else None,
+        # band_of covers the ~8.8k-word band table, not just the curated list.
+        cefr=(entry.cefr if entry is not None else None) or cefr_lexicon.band_of(word),
+        # CMUdict, offline, for 126k words — used whenever the source that
+        # answered had no phonetics of its own.
+        ipa=pronunciation.display(ipa or pronunciation.ipa_for(word)),
         senses=senses,
-        synonyms=list(entry.synonyms),
-        simpler=entry.simpler,
-        found=True,
+        synonyms=synonyms,
+        simpler=entry.simpler if entry is not None else None,
+        found=bool(senses),
         # Needs generation (Phase 7); never faked.
         context_available=False,
         context_note=None,
@@ -345,7 +373,7 @@ def get_reader_prefs(
     row = conn.execute(
         """
         SELECT reader_font_size, reader_page_theme, reader_heat_on,
-               reader_panel_open, reader_panel_tab
+               reader_panel_open, reader_panel_tab, reader_page_view
         FROM user_settings WHERE user_id = ?
         """,
         (user_id,),
@@ -358,6 +386,7 @@ def get_reader_prefs(
         heat_on=bool(row["reader_heat_on"]),
         panel_open=bool(row["reader_panel_open"]),
         panel_tab=row["reader_panel_tab"],
+        page_view=bool(row["reader_page_view"]),
     )
 
 
@@ -375,15 +404,16 @@ def update_reader_prefs(
         """
         INSERT INTO user_settings (
           user_id, reader_font_size, reader_page_theme, reader_heat_on,
-          reader_panel_open, reader_panel_tab
+          reader_panel_open, reader_panel_tab, reader_page_view
         )
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET
           reader_font_size = excluded.reader_font_size,
           reader_page_theme = excluded.reader_page_theme,
           reader_heat_on = excluded.reader_heat_on,
           reader_panel_open = excluded.reader_panel_open,
-          reader_panel_tab = excluded.reader_panel_tab
+          reader_panel_tab = excluded.reader_panel_tab,
+          reader_page_view = excluded.reader_page_view
         """,
         (
             payload.user_id,
@@ -392,6 +422,7 @@ def update_reader_prefs(
             int(payload.heat_on),
             int(payload.panel_open),
             payload.panel_tab,
+            int(payload.page_view),
         ),
     )
     return ReaderPrefsOut(
@@ -400,4 +431,5 @@ def update_reader_prefs(
         heat_on=payload.heat_on,
         panel_open=payload.panel_open,
         panel_tab=payload.panel_tab,
+        page_view=payload.page_view,
     )

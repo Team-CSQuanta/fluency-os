@@ -217,14 +217,41 @@ def build_queue(
     return out
 
 
+def _review_context(conn: sqlite3.Connection, vocab_word_id: str) -> sqlite3.Row | None:
+    """The one context a review card shows, with its clip if it has one.
+
+    A word met in a film carries the moment it was said, and until now the
+    review card quoted that line as text while the video sat unused two
+    screens away — which is the whole argument for capturing it.
+
+    Preference, not just recency: a clip-bearing context wins over a more
+    recent page of a book. The snippet and the clip then come from the SAME
+    row, so the card never quotes one line and plays another. Among contexts
+    that are alike, the newest still wins.
+
+    Joined LEFT because a clip context is complete without its video —
+    extraction is queued behind the save and may still be running, may have
+    been declined by the storage policy, or may have failed because the source
+    moved. All three still show the line.
+    """
+    return conn.execute(
+        """
+        SELECT c.snippet, c.source_label, c.kind, c.media_item_id,
+               k.id AS clip_id, k.status AS clip_status
+          FROM vocab_contexts c
+          LEFT JOIN media_clips k ON k.vocab_context_id = c.id
+         WHERE c.vocab_word_id = ?
+         ORDER BY (k.id IS NOT NULL) DESC, c.created_at DESC
+         LIMIT 1
+        """,
+        (vocab_word_id,),
+    ).fetchone()
+
+
 def _card_out(
     conn: sqlite3.Connection, row: sqlite3.Row, position: int, retention: float, now: datetime
 ) -> dict:
-    context = conn.execute(
-        "SELECT snippet, source_label FROM vocab_contexts WHERE vocab_word_id = ? "
-        "ORDER BY created_at DESC LIMIT 1",
-        (row["vocab_word_id"],),
-    ).fetchone()
+    context = _review_context(conn, row["vocab_word_id"])
 
     card = card_from_row(row)
     card_type = _card_type_for(row, context, position)
@@ -257,6 +284,10 @@ def _card_out(
         "audio_url": row["audio_url"],
         "context_snippet": context["snippet"] if context else None,
         "context_source": context["source_label"] if context else None,
+        # The moment itself, when the word was met in a film.
+        "clip_id": context["clip_id"] if context else None,
+        "clip_status": context["clip_status"] if context else None,
+        "media_item_id": context["media_item_id"] if context else None,
         "cloze_before": before,
         "cloze_after": after,
         "state": row["state"],

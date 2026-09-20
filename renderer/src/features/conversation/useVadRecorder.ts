@@ -7,9 +7,16 @@ interface VadOptions {
   enabled: boolean;
   /** A turn is already being submitted — keep the stream open but capture nothing. */
   paused: boolean;
-  /** Raised while the AI's reply is audible so its own voice through the
-   * speakers is far less likely to trip detection and interrupt itself. */
-  thresholdScale: number;
+  /** True while the AI's reply is audible.
+   *
+   * Detection is deliberately much harder here. Interrupting is not the same
+   * decision as starting to talk into silence: getting it wrong costs the
+   * learner the rest of the reply, and the room contains the AI's own voice
+   * coming back through the speakers. */
+  aiSpeaking: boolean;
+  /** How sensitive the microphone is and how long a pause ends a turn, from
+   * the learner's settings. Applied live — see SpeechGate.setProfile. */
+  profile: ListeningProfile;
   /** Fires the moment speech is detected — the barge-in signal. */
   onSpeechStart: () => void;
   /** A complete utterance, captured from before it began through to the pause
@@ -17,14 +24,8 @@ interface VadOptions {
   onUtterance: (blob: Blob) => void;
 }
 
-const FRAME_MS = 50;
-// Two consecutive loud frames before believing it's speech — one is too easy
-// to trip with a keyboard clack or a chair creak.
-const SPEECH_FRAMES = 2;
-// How long a pause has to last before the utterance counts as finished. Every
-// millisecond here is dead air the learner feels, so it is kept just long
-// enough that a normal mid-sentence breath doesn't cut them off.
-const SILENCE_MS = 400;
+import { FRAME_MS, SpeechGate, type ListeningProfile } from '@/features/conversation/vadGate';
+
 // Matches the backend's own too-short guard, so a blip never round-trips.
 const MIN_UTTERANCE_MS = 400;
 const MAX_UTTERANCE_MS = 30000;
@@ -34,11 +35,6 @@ const MAX_UTTERANCE_MS = 30000;
 // seconds of the AI's own reply (however well echo cancellation suppressed it)
 // to the transcriber as if the learner had said it.
 const IDLE_RESTART_MS = 1500;
-const NOISE_FLOOR_FRAMES = 10;
-// Ambient noise is measured per session, but a room this quiet still needs a
-// floor or the threshold collapses to near zero and everything reads as speech.
-const ABS_MIN_THRESHOLD = 0.012;
-const NOISE_FLOOR_MULTIPLE = 3;
 
 /** Continuous hands-free capture: holds the microphone open, watches the live
  * signal level, and emits one blob per utterance without anything being
@@ -46,7 +42,7 @@ const NOISE_FLOOR_MULTIPLE = 3;
  * floor — deliberately simple and fully local, with the real transcription
  * still done server-side by whisper (whose own VAD trims the padding this
  * leaves around each utterance). */
-export function useVadRecorder({ enabled, paused, thresholdScale, onSpeechStart, onUtterance }: VadOptions) {
+export function useVadRecorder({ enabled, paused, aiSpeaking, profile, onSpeechStart, onUtterance }: VadOptions) {
   const [phase, setPhase] = useState<VadPhase>('off');
   const [level, setLevel] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -57,8 +53,12 @@ export function useVadRecorder({ enabled, paused, thresholdScale, onSpeechStart,
   callbacksRef.current = { onSpeechStart, onUtterance };
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
-  const scaleRef = useRef(thresholdScale);
-  scaleRef.current = thresholdScale;
+  const aiSpeakingRef = useRef(aiSpeaking);
+  aiSpeakingRef.current = aiSpeaking;
+  // A ref, not an effect dependency: re-running the effect would tear the
+  // microphone down and back up mid-sentence just because a slider moved.
+  const profileRef = useRef(profile);
+  profileRef.current = profile;
 
   useEffect(() => {
     if (!enabled) {
@@ -73,12 +73,7 @@ export function useVadRecorder({ enabled, paused, thresholdScale, onSpeechStart,
     let chunks: Blob[] = [];
     let disposed = false;
 
-    let noiseFloor = 0;
-    let floorFrames = 0;
-    let loudFrames = 0;
-    let speaking = false;
-    let speechStartedAt = 0;
-    let lastLoudAt = 0;
+    const gate = new SpeechGate();
     let recorderStartedAt = 0;
 
     const startRecorder = () => {
@@ -111,9 +106,8 @@ export function useVadRecorder({ enabled, paused, thresholdScale, onSpeechStart,
       });
 
     const finishUtterance = () => {
-      const spokenMs = Date.now() - speechStartedAt;
-      speaking = false;
-      loudFrames = 0;
+      const spokenMs = Date.now() - gate.speechStartedAt;
+      gate.reset();
       setPhase('listening');
       void cutRecording().then((blob) => {
         if (disposed || !blob || spokenMs < MIN_UTTERANCE_MS) return;
@@ -129,22 +123,14 @@ export function useVadRecorder({ enabled, paused, thresholdScale, onSpeechStart,
       // Quantised so the live meter doesn't re-render the transcript 20x/second.
       setLevel((prev) => (Math.abs(prev - rms) > 0.004 ? rms : prev));
 
-      if (floorFrames < NOISE_FLOOR_FRAMES) {
-        floorFrames += 1;
-        noiseFloor += (rms - noiseFloor) / floorFrames;
-        return;
-      }
-
       const now = Date.now();
-      const threshold = Math.max(ABS_MIN_THRESHOLD, noiseFloor * NOISE_FLOOR_MULTIPLE) * scaleRef.current;
 
       if (pausedRef.current) {
         // Drop anything captured while a turn was mid-flight rather than
         // stitching it onto the next utterance — including the idle buffer,
         // which would otherwise grow for the whole round trip.
-        if (speaking) {
-          speaking = false;
-          loudFrames = 0;
+        if (gate.speaking) {
+          gate.reset();
           setPhase('listening');
           void cutRecording();
         } else if (now - recorderStartedAt > IDLE_RESTART_MS) {
@@ -153,27 +139,20 @@ export function useVadRecorder({ enabled, paused, thresholdScale, onSpeechStart,
         return;
       }
 
-      if (rms > threshold) {
-        loudFrames += 1;
-        lastLoudAt = now;
-        if (!speaking && loudFrames >= SPEECH_FRAMES) {
-          speaking = true;
-          speechStartedAt = now;
-          setPhase('capturing');
-          callbacksRef.current.onSpeechStart();
-        }
-      } else {
-        loudFrames = 0;
-        if (speaking && now - lastLoudAt >= SILENCE_MS) {
-          finishUtterance();
-          return;
-        }
-        if (!speaking && now - recorderStartedAt > IDLE_RESTART_MS) {
-          void cutRecording();
-        }
+      gate.setProfile(profileRef.current);
+      const event = gate.observe({ rms, now, aiSpeaking: aiSpeakingRef.current });
+
+      if (event === 'start') {
+        setPhase('capturing');
+        callbacksRef.current.onSpeechStart();
+      } else if (event === 'end') {
+        finishUtterance();
+        return;
+      } else if (!gate.speaking && now - recorderStartedAt > IDLE_RESTART_MS) {
+        void cutRecording();
       }
 
-      if (speaking && now - speechStartedAt > MAX_UTTERANCE_MS) finishUtterance();
+      if (gate.speaking && now - gate.speechStartedAt > MAX_UTTERANCE_MS) finishUtterance();
     };
 
     void (async () => {

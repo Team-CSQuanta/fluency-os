@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMediaStore } from '@/store/mediaStore';
 import type { MediaTrackOut } from '@/types/api';
+import { friendlyMessage } from '@/lib/friendlyError';
 
 const SHORTCUTS: Array<[string, string]> = [
   ['space / K', 'play · pause'],
@@ -52,7 +53,7 @@ export function PlayerSettings({ onClose }: { onClose: () => void }) {
     try {
       await run();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(friendlyMessage(err, 'Saving that setting'));
     } finally {
       setBusy(null);
     }

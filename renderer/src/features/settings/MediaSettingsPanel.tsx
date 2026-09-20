@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Pill, Row, Section, Segmented, Toggle } from '@/features/settings/controls';
 import { api } from '@/lib/apiClient';
 import { useAppStore } from '@/store/appStore';
 import { useMediaStore } from '@/store/mediaStore';
@@ -16,15 +17,20 @@ function humanBytes(bytes: number): string {
   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
 }
 
-/** Settings → Media, reading the clip engine's real configuration.
+/** The clip engine, and what watching is costing on disk.
  *
- * This panel replaces a mock list that displayed plausible-looking values
- * ("2 folders watched", "20 GB · 8.4 used") for settings that had no engine
- * behind them. Everything here is now the value the extractor actually uses.
+ * Everything here is read from the extractor rather than described: this
+ * panel replaced a mock list of plausible-looking numbers ("2 folders
+ * watched", "20 GB · 8.4 used") for settings that had nothing behind them.
+ *
+ * The clip timings that used to be listed here read-only are now sliders in
+ * the Watching panel above. They were the same setting shown twice, in two
+ * different shapes, which is how a page ends up disagreeing with itself.
  */
 export function MediaSettingsPanel() {
   const userId = useAppStore((s) => s.currentUserId);
-  const { playerPrefs, fetchPlayerPrefs, setPlayerPrefs } = useMediaStore();
+  const playerPrefs = useMediaStore((s) => s.playerPrefs);
+  const setPlayerPrefs = useMediaStore((s) => s.setPlayerPrefs);
   const [storage, setStorage] = useState<MediaStorageOut | null>(null);
   const [purging, setPurging] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -34,8 +40,9 @@ export function MediaSettingsPanel() {
     setStorage(await api.get<MediaStorageOut>(`/media/storage?user_id=${encodeURIComponent(userId)}`));
   };
 
+  // WatchingPanel, which renders this, owns the player-prefs fetch — one
+  // request on mount rather than two for the same row.
   useEffect(() => {
-    void fetchPlayerPrefs();
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
@@ -54,168 +61,114 @@ export function MediaSettingsPanel() {
   };
 
   return (
-    <div className="mt-5 flex flex-col gap-[14px]">
-      <div className="overflow-hidden rounded-panel border border-line2 bg-panel">
-        <Row
-          label="ffmpeg"
-          sub={
-            storage?.ffmpeg_available
-              ? (storage.ffmpeg_version ?? 'found')
-              : 'not found — video files cannot be read'
-          }
-          value={storage?.ffmpeg_available ? 'ready' : 'missing'}
-          tone={storage?.ffmpeg_available ? 'ok' : 'warn'}
-        />
-        <Row
-          label="Speech-to-text model"
-          sub="needed only to generate subtitles for files that have none"
-          value={storage?.stt_ready ? 'downloaded' : 'not downloaded'}
-          tone={storage?.stt_ready ? 'ok' : 'muted'}
-        />
-        <Row
-          label="Source files"
-          sub="read where you keep them — FluencyOS never copies or moves your videos"
-          value="in place"
-        />
-      </div>
-
+    <>
       {playerPrefs && (
-        <div className="overflow-hidden rounded-panel border border-line2 bg-panel">
+        <Section
+          title="How clips are cut"
+          note="Quality and whether the file is kept. The timings are above, next to the rest of the subtitle settings."
+        >
           <Row
-            label="Clip height"
-            sub="lower keeps the library small"
+            label="Clip quality"
+            sub="lower keeps the library small; these are clips of single lines, not films"
             control={
-              <select
+              <Segmented
                 value={playerPrefs.clip_height}
-                onChange={(e) => void setPlayerPrefs({ clip_height: Number(e.target.value) })}
-                className="rounded-field border border-line2 bg-transparent px-[9px] py-[5px] font-mono text-[11px] text-tx outline-none focus:border-acc"
-              >
-                {[360, 480, 720].map((h) => (
-                  <option key={h} value={h} className="bg-panel">
-                    {h}p
-                  </option>
-                ))}
-              </select>
+                options={[360, 480, 720].map((h) => ({ value: h, label: `${h}p` }))}
+                onChange={(h) => void setPlayerPrefs({ clip_height: h })}
+              />
             }
           />
           <Row
-            label="Clip padding before"
-            sub="clamped to the previous line, so a clip never opens mid-sentence"
-            value={`${playerPrefs.clip_pad_before_ms} ms`}
-          />
-          <Row label="Clip padding after" sub="" value={`${playerPrefs.clip_pad_after_ms} ms`} />
-          <Row
-            label="Maximum clip length"
-            sub="a long line loses its tail, not its opening"
-            value={`${Math.round(playerPrefs.clip_max_ms / 1000)} s`}
-          />
-          <Row
-            label="Storage mode"
+            label="Keep the clip file"
             sub={
               playerPrefs.clip_store_files
-                ? 'clips are cut and kept on disk'
-                : 'only the timecodes are kept; clips are rebuilt from the source when played'
+                ? 'Each saved moment is cut once and kept on disk — instant to replay, at the cost of the space below.'
+                : 'Only the timecodes are kept, and the clip is rebuilt from your video when you play it. No disk cost, a short wait, and nothing works if the file has moved.'
             }
             control={
-              <button
-                onClick={() => void setPlayerPrefs({ clip_store_files: !playerPrefs.clip_store_files })}
-                className="rounded-full border px-[11px] py-[4px] font-mono text-[10.5px]"
-                style={{
-                  borderColor: playerPrefs.clip_store_files ? 'var(--accLine)' : 'var(--line2)',
-                  background: playerPrefs.clip_store_files ? 'var(--accSoft)' : 'transparent',
-                  color: playerPrefs.clip_store_files ? 'var(--acc)' : 'var(--tx3)',
-                }}
-              >
-                {playerPrefs.clip_store_files ? 'store clip' : 'timecodes only'}
-              </button>
+              <Toggle
+                label="Keep the clip file"
+                checked={playerPrefs.clip_store_files}
+                onChange={(v) => void setPlayerPrefs({ clip_store_files: v })}
+              />
             }
           />
-          <div className="px-4 py-[10px] font-mono text-[10px] leading-[1.6] text-tx3">
-            padding and length are also on the ⚙ panel inside the player, where you can see their effect
-          </div>
-        </div>
+        </Section>
       )}
 
-      <div className="overflow-hidden rounded-panel border border-line2 bg-panel">
+      <Section title="What watching needs" note="Read from this machine, not assumed.">
+        <Row
+          label="Video tools"
+          sub={
+            storage?.ffmpeg_available
+              ? 'ffmpeg, the free tool that cuts your clips and reads subtitle tracks'
+              : 'FluencyOS needs a free tool called ffmpeg, and can’t find it — without it no video can be read'
+          }
+          control={
+            <Pill tone={storage?.ffmpeg_available ? 'ok' : 'warn'}>
+              {storage ? (storage.ffmpeg_available ? (storage.ffmpeg_version ?? 'found') : 'missing') : '…'}
+            </Pill>
+          }
+        />
+        <Row
+          label="Subtitle writer"
+          sub="a model that listens to a film and writes subtitles, for films that have none of their own"
+          control={
+            <Pill tone={storage?.stt_ready ? 'ok' : 'muted'}>
+              {storage ? (storage.stt_ready ? 'downloaded' : 'not downloaded') : '…'}
+            </Pill>
+          }
+        />
+        <Row
+          label="Your video files"
+          sub="read where you keep them — FluencyOS never copies or moves the originals"
+          control={<Pill tone="ok">left in place</Pill>}
+        />
+      </Section>
+
+      <Section title="Disk">
         <Row
           label="Saved moments"
-          sub={
-            storage
-              ? `${storage.stored_clips} of ${storage.clips} have a clip file on disk`
-              : 'counting…'
-          }
-          value={storage ? `${storage.clips}` : '—'}
+          sub={storage ? `${storage.stored_clips} of ${storage.clips} have a clip file on disk` : 'counting…'}
+          control={<Pill>{storage ? storage.clips : '…'}</Pill>}
         />
         <Row
-          label="On disk"
+          label="Space used"
           sub="clips, previews and extracted subtitle tracks"
-          value={storage ? humanBytes(storage.total_bytes) : '—'}
+          control={<Pill>{storage ? humanBytes(storage.total_bytes) : '…'}</Pill>}
         />
-        <div className="flex items-center justify-between gap-5 px-4 py-[14px]">
-          <div className="min-w-0">
-            <div className="font-sans text-[12.5px] font-medium text-tx">Free up space</div>
-            <div className="mt-[3px] font-mono text-[10.5px] leading-[1.6] text-tx3">
-              deletes the clip files but keeps every saved word, line and timecode — clips are rebuilt from your
-              videos when you next play them
-            </div>
-          </div>
-          {confirming ? (
-            <div className="flex flex-none items-center gap-2">
+        <Row
+          label="Free up space"
+          sub="Deletes the clip files and keeps every saved word, line and timecode — the clips are rebuilt from your videos when you next play them."
+          control={
+            confirming ? (
+              <div className="flex flex-none items-center gap-2">
+                <button
+                  onClick={() => setConfirming(false)}
+                  className="rounded-field border border-line2 px-[11px] py-[5px] font-mono text-[10.5px] text-tx2"
+                >
+                  cancel
+                </button>
+                <button
+                  onClick={() => void purge()}
+                  disabled={purging}
+                  className="rounded-field border border-[#e06c6c]/50 px-[11px] py-[5px] font-mono text-[10.5px] text-[#e06c6c] disabled:opacity-50"
+                >
+                  {purging ? 'deleting…' : `delete ${storage?.stored_clips ?? 0} clip files`}
+                </button>
+              </div>
+            ) : (
               <button
-                onClick={() => setConfirming(false)}
-                className="rounded-field border border-line2 px-[11px] py-[5px] font-mono text-[10.5px] text-tx2"
+                onClick={() => setConfirming(true)}
+                disabled={!storage || storage.stored_clips === 0}
+                className="flex-none rounded-field border border-line px-[12px] py-[5px] font-mono text-[10.5px] text-tx2 hover:border-acc hover:text-acc disabled:opacity-40"
               >
-                cancel
+                clean up
               </button>
-              <button
-                onClick={() => void purge()}
-                disabled={purging}
-                className="rounded-field border border-[#e06c6c]/50 px-[11px] py-[5px] font-mono text-[10.5px] text-[#e06c6c] disabled:opacity-50"
-              >
-                {purging ? 'deleting…' : 'delete clip files'}
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => setConfirming(true)}
-              disabled={!storage || storage.stored_clips === 0}
-              className="flex-none rounded-field border border-line px-[13px] py-[6px] font-mono text-[11px] text-tx2 hover:border-acc hover:text-acc disabled:opacity-40"
-            >
-              clean up
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Row({
-  label,
-  sub,
-  value,
-  control,
-  tone = 'default',
-}: {
-  label: string;
-  sub: string;
-  value?: string;
-  control?: React.ReactNode;
-  tone?: 'default' | 'ok' | 'warn' | 'muted';
-}) {
-  const colour =
-    tone === 'ok' ? 'var(--acc)' : tone === 'warn' ? '#e8a33d' : tone === 'muted' ? 'var(--tx3)' : 'var(--tx2)';
-  return (
-    <div className="flex items-center justify-between gap-5 border-b border-line2 px-4 py-[14px] last:border-b-0">
-      <div className="min-w-0">
-        <div className="font-sans text-[12.5px] font-medium text-tx">{label}</div>
-        {sub && <div className="mt-[3px] font-mono text-[10.5px] leading-[1.6] text-tx3">{sub}</div>}
-      </div>
-      {control ?? (
-        <span className="flex-none font-mono text-[11px]" style={{ color: colour }}>
-          {value}
-        </span>
-      )}
-    </div>
+            )
+          }
+        />
+      </Section>
+    </>
   );
 }

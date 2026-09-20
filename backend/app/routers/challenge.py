@@ -9,6 +9,7 @@ import json
 import sqlite3
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
 
 from app.db import get_db
 from app.models.challenge import (

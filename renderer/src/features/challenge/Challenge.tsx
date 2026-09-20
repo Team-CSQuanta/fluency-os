@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { HintPanel } from '@/features/challenge/HintPanel';
 import { SceneEmbed } from '@/features/challenge/SceneEmbed';
 import { AiRequiredDialog } from '@/features/shell/AiRequiredDialog';
 import { useMicRecorder } from '@/features/conversation/useMicRecorder';
+import { SelectionLookup } from '@/features/vocabulary/SelectionLookup';
 import { useChallengeStore } from '@/store/challengeStore';
 import type { ChallengeRoundOut } from '@/types/api';
 
@@ -21,6 +22,11 @@ export function Challenge() {
   } = useChallengeStore();
 
   const recorder = useMicRecorder();
+  /* The region whose words can be looked up by selecting them: the scene's
+     instructions, the ten descriptions, the combined one and the learner's
+     own transcript. Not the sidebar, where a selection is a score, not a
+     word someone wants the meaning of. */
+  const readable = useRef<HTMLDivElement>(null);
   const [elapsed, setElapsed] = useState(0);
   const [recording, setRecording] = useState(false);
   const [typed, setTyped] = useState('');
@@ -84,7 +90,7 @@ export function Challenge() {
           onClose={dismissAiNeeded}
         />
       )}
-      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto p-[var(--pad)]">
+      <div ref={readable} className="flex min-w-0 flex-1 flex-col overflow-y-auto p-[var(--pad)]">
         {stats && !stats.embeds_enabled && (
           <div className="mb-[14px] rounded-panel border border-line2 bg-panel p-[16px]">
             <div className="font-sans text-[13px] font-semibold text-tx">
@@ -299,6 +305,8 @@ export function Challenge() {
           </div>
         )}
       </div>
+
+      <SelectionLookup within={readable} source="the Scene Description Challenge" />
 
       <aside className="flex w-[260px] flex-none flex-col gap-[14px] overflow-y-auto border-l border-line2 p-[16px]">
         <div>

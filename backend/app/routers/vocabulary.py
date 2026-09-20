@@ -14,6 +14,7 @@ from app.models.vocabulary import (
     AiExplainOut,
     AiMnemonicOut,
     AiPracticeOut,
+    DictionaryCacheOut,
     DictionarySearchOut,
     DictionarySenseOut,
     VocabContextOut,
@@ -31,7 +32,7 @@ from app.security import require_token
 from app.services import (
     cefr_lexicon,
     conversation,
-    dictionary_lookup,
+    dictionary,
     fsrs,
     pronunciation,
     review,
@@ -211,14 +212,18 @@ def save_word(payload: VocabWordCreate, conn: sqlite3.Connection = Depends(get_d
 
 
 @router.get("/dictionary-search", response_model=DictionarySearchOut)
-def dictionary_search(w: str) -> DictionarySearchOut:
+def dictionary_search(w: str, conn: sqlite3.Connection = Depends(get_db)) -> DictionarySearchOut:
     word = (w or "").strip()
     if not word:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="w is required")
 
+    # Nearest source first: the bundled lexicon, then everything this machine
+    # has already looked up, and only then the network. This used to go
+    # straight out to the internet every time, so the same word cost the same
+    # two or three seconds however often it was searched.
     try:
-        result = dictionary_lookup.search(word)
-    except dictionary_lookup.DictionaryServiceUnavailable as err:
+        result = dictionary.look_up(conn, word).result
+    except dictionary.DictionaryServiceUnavailable as err:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Couldn't reach the online dictionary — check your internet connection",
@@ -246,6 +251,34 @@ def dictionary_search(w: str) -> DictionarySearchOut:
         cefr=band,
         simpler=local.simpler if local is not None else None,
     )
+
+
+@router.get("/dictionary-cache", response_model=DictionaryCacheOut)
+def dictionary_cache_stats(conn: sqlite3.Connection = Depends(get_db)) -> DictionaryCacheOut:
+    """How much of the dictionary this machine has accumulated.
+
+    Worth showing because it explains a difference the learner can feel: the
+    first lookup of a word costs a round trip, every one after it is instant.
+    Worth being able to clear because it is the one store in the app that is
+    entirely disposable — nothing here was authored by anyone, and deleting it
+    loses nothing but the speed.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) AS n, MAX(cached_at) AS last FROM dictionary_entries"
+    ).fetchone()
+    return DictionaryCacheOut(entries=row["n"], last_cached_at=row["last"])
+
+
+@router.delete("/dictionary-cache", response_model=DictionaryCacheOut)
+def clear_dictionary_cache(conn: sqlite3.Connection = Depends(get_db)) -> DictionaryCacheOut:
+    """Empty it. It refills by itself as words are looked up again.
+
+    Saved words are untouched: a word in someone's vocabulary carries its own
+    snapshot of the definition, taken when it was saved, precisely so that it
+    does not depend on this table still being here.
+    """
+    conn.execute("DELETE FROM dictionary_entries")
+    return DictionaryCacheOut(entries=0, last_cached_at=None)
 
 
 @router.post("/manual", response_model=VocabWordSaveOut)

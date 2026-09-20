@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useMediaStore } from '@/store/mediaStore';
 import { useVocabularyStore } from '@/store/vocabularyStore';
 import type { AiEnrichOut, CueOut, DictionarySearchOut } from '@/types/api';
+import { friendlyMessage } from '@/lib/friendlyError';
 
 interface Props {
   mediaId: string;
@@ -75,7 +76,7 @@ export function LookupPanel({ mediaId, term, cue, onSaved }: Props) {
       setAi(out);
       setAiSense(forSense || null);
     } catch (err) {
-      setAiError(err instanceof Error ? err.message : 'Could not reach the local AI');
+      setAiError(friendlyMessage(err, 'Asking the AI'));
     } finally {
       setAiBusy(false);
     }
@@ -112,7 +113,7 @@ export function LookupPanel({ mediaId, term, cue, onSaved }: Props) {
           : `“${out.word}” already has this moment saved`,
       );
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Could not save this word');
+      setSaveError(friendlyMessage(err, 'Saving this word'));
     } finally {
       setSaving(false);
     }

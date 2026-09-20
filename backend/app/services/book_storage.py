@@ -29,6 +29,20 @@ def covers_dir() -> Path:
     return d
 
 
+def page_images_dir(book_id: str) -> Path:
+    """Rendered page images for one book.
+
+    A cache, not an asset: every file in here can be rebuilt from the stored
+    PDF, so it is safe to delete at any time and is never backed up."""
+    d = _data_dir() / "pages" / book_id
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def page_image_path(book_id: str, page: int) -> Path:
+    return page_images_dir(book_id) / f"{page}.png"
+
+
 def store_book_file(source_path: Path, book_id: str) -> Path:
     """Copies the source file into books/<id>.<ext>, returns the new path."""
     ext = source_path.suffix.lstrip(".").lower()
@@ -43,11 +57,18 @@ def store_cover(cover_bytes: bytes, book_id: str, ext: str) -> Path:
     return dest
 
 
-def delete_book_files(stored_path: str | None, cover_path: str | None) -> None:
+def delete_book_files(stored_path: str | None, cover_path: str | None, book_id: str | None = None) -> None:
     for p in (stored_path, cover_path):
         if not p:
             continue
         try:
             Path(p).unlink(missing_ok=True)
+        except OSError:
+            pass
+    if book_id:
+        # Page renders are keyed by book id rather than stored under it, so
+        # they would otherwise outlive the book they were rendered from.
+        try:
+            shutil.rmtree(_data_dir() / "pages" / book_id, ignore_errors=True)
         except OSError:
             pass

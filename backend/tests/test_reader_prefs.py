@@ -33,6 +33,7 @@ PREFS = {
     "heat_on": False,
     "panel_open": False,
     "panel_tab": "marks",
+    "page_view": True,
 }
 
 
@@ -51,6 +52,9 @@ def test_reader_with_no_settings_row_gets_defaults(client, auth_headers):
         "heat_on": True,
         "panel_open": True,
         "panel_tab": "toc",
+        # A book opens in the text view: lookup, highlighting and the
+        # difficulty overlay all live there.
+        "page_view": False,
     }
 
 
@@ -139,3 +143,15 @@ def test_reader_prefs_survive_the_daily_goal_being_set(client, auth_headers):
     assert _prefs(client, auth_headers, user_id) == PREFS
     stats = client.get("/reading/stats", headers=auth_headers, params={"user_id": user_id}).json()
     assert stats["goal_pages"] == 30
+
+
+def test_page_view_is_optional_for_older_clients(client, auth_headers):
+    """A client that predates the setting must still be able to save the rest
+    of the panel rather than being rejected for omitting one field."""
+    user_id = _create_user(client, auth_headers)
+    without = {k: v for k, v in PREFS.items() if k != "page_view"}
+
+    res = client.put("/reading/prefs", headers=auth_headers, json={"user_id": user_id, **without})
+
+    assert res.status_code == 200
+    assert res.json()["page_view"] is False

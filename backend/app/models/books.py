@@ -29,6 +29,9 @@ class BookOut(BaseModel):
     # the book has never been opened, which is what "Not started" means.
     last_read_at: str | None = None
     percent: float = 0.0
+    # Whether this book has original pages to render. Only PDFs do —
+    # everything else is reflowable and never had a page to begin with.
+    has_page_images: bool = False
 
 
 class BookCountsOut(BaseModel):

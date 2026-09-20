@@ -122,6 +122,15 @@ export function Player() {
   // got to — losing a resume point is worse than not updating one.
   const positionKnown = useRef(false);
   const loopingCue = useRef<number | null>(null);
+  /* The cue playback was inside on the previous tick.
+   *
+   * Auto-pause has to fire when a line ENDS. It used to look for a moment
+   * with no cue at all, which assumes subtitles have silence between them —
+   * and most do not. On this episode's track 421 of 423 consecutive pairs
+   * touch exactly, so the next line began on the same millisecond the last
+   * one ended, there was never a gap to notice, and auto-pause never fired
+   * once. Watching for the cue to CHANGE works either way. */
+  const lastCueIndex = useRef(-1);
   // The cue auto-pause last stopped on. Without this, pressing play inside the
   // gap it paused in re-triggers the same pause on the very next tick and the
   // learner cannot get out of it.
@@ -193,6 +202,17 @@ export function Player() {
       </div>
     );
   }, [targetCues, tickDuration]);
+
+  /* What the subtitle switches have to work with.
+   *
+   * `dual` needs a second, native-language track; the other three need any
+   * subtitles at all. Without them the switch cannot do its job, and showing
+   * it live is worse than showing it off — it looks broken rather than
+   * inapplicable. */
+  const hasSubs = targetCues.length > 0;
+  const hasNativeSubs = nativeCues.length > 0;
+  const subsOn = playerPrefs?.subs_on !== false;
+  const dualOn = Boolean(playerPrefs?.dual_subs) && hasNativeSubs;
 
   const targetIndex = useMemo(() => cueIndexAt(targetCues, cueTimeMs), [targetCues, cueTimeMs]);
   const nativeIndex = useMemo(() => cueIndexAt(nativeCues, cueTimeMs), [nativeCues, cueTimeMs]);
@@ -280,13 +300,19 @@ export function Player() {
   }, [volume, muted, detail]);
 
   const seekTo = useCallback(
-    (ms: number, { armAutoPause = true }: { armAutoPause?: boolean } = {}) => {
+    (
+      ms: number,
+      { armAutoPause = true, keepLoop = false }: { armAutoPause?: boolean; keepLoop?: boolean } = {},
+    ) => {
       const video = videoRef.current;
       if (!video) return;
       const target = Math.max(0, ms / 1000);
       video.currentTime = target;
       positionRef.current = target * 1000;
       lastTick.current = null;
+      // Moving somewhere deliberately chooses a new line to repeat. Only the
+      // loop's own rewind keeps the line it had locked.
+      if (!keepLoop) loopingCue.current = null;
       if (!armAutoPause) {
         // Mark the cue we landed in as already handled, so its end passes
         // without a pause. The next line pauses normally.
@@ -323,11 +349,29 @@ export function Player() {
   );
 
   const togglePref = useCallback(
-    (key: 'dual_subs' | 'blur_subs' | 'auto_pause' | 'loop_cue') => {
+    (key: 'subs_on' | 'dual_subs' | 'blur_subs' | 'auto_pause' | 'loop_cue') => {
       if (!playerPrefs) return;
       void setPlayerPrefs({ [key]: !playerPrefs[key] });
     },
     [playerPrefs, setPlayerPrefs],
+  );
+
+  /** The same switch from the keyboard, where there is no dimmed button to
+   * see — so the reason has to be said out loud. */
+  const guardedTogglePref = useCallback(
+    (key: 'subs_on' | 'dual_subs' | 'auto_pause' | 'loop_cue') => {
+      const needsNative = key === 'dual_subs';
+      if (needsNative ? !hasNativeSubs : !hasSubs) {
+        setToast(unavailableReason(needsNative));
+        return;
+      }
+      if (key === 'dual_subs' && !subsOn) {
+        setToast('subtitles are hidden — press S to bring them back');
+        return;
+      }
+      togglePref(key);
+    },
+    [hasNativeSubs, hasSubs, subsOn, togglePref],
   );
 
   // Keyboard shortcuts (spec §4.1.1). Bound to the window rather than the
@@ -351,10 +395,11 @@ export function Player() {
         a: replayLine,
         n: () => jumpCue(1),
         p: () => jumpCue(-1),
+        s: () => guardedTogglePref('subs_on'),
         b: () => togglePref('blur_subs'),
-        l: () => togglePref('loop_cue'),
-        o: () => togglePref('auto_pause'),
-        d: () => togglePref('dual_subs'),
+        l: () => guardedTogglePref('loop_cue'),
+        o: () => guardedTogglePref('auto_pause'),
+        d: () => guardedTogglePref('dual_subs'),
         m: () => setMuted((v) => !v),
         f: () => void toggleFullscreen(),
         ',': () => seekTo((video.currentTime - FRAME_S) * 1000),
@@ -368,7 +413,7 @@ export function Player() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [togglePlay, seekTo, replayLine, jumpCue, togglePref]);
+  }, [togglePlay, seekTo, replayLine, jumpCue, togglePref, guardedTogglePref]);
 
   const toggleFullscreen = async () => {
     const root = rootRef.current;
@@ -408,28 +453,50 @@ export function Player() {
     const cueMs = nowMs - delayMs;
     const index = cueIndexAt(targetCues, cueMs);
 
+    const leaving = lastCueIndex.current;
+
     if (playerPrefs?.loop_cue) {
-      if (index >= 0) loopingCue.current = index;
+      /* Locked onto one line and kept there.
+       *
+       * This used to re-lock onto whatever cue playback was inside, on every
+       * tick. Where subtitles run back to back that moved the lock to the
+       * next line the instant the current one ended — so the end of the
+       * locked line was never reached, and loop did nothing at all. The lock
+       * is now taken once and only released by a deliberate seek. */
+      if (loopingCue.current === null && index >= 0) loopingCue.current = index;
       const looping = loopingCue.current;
-      if (looping !== null && looping < targetCues.length && cueMs > targetCues[looping].end_ms) {
-        seekTo(targetCues[looping].start_ms + delayMs);
+      if (looping !== null && looping < targetCues.length && cueMs >= targetCues[looping].end_ms) {
+        seekTo(targetCues[looping].start_ms + delayMs, { armAutoPause: false, keepLoop: true });
+        lastCueIndex.current = looping;
         return;
       }
-    } else {
+    } else if (loopingCue.current !== null) {
       loopingCue.current = null;
     }
 
-    if (index >= 0) autoPausedAfter.current = null;
-    if (playerPrefs?.auto_pause && index === -1 && !video.paused) {
-      // Pause once, as the line leaves the screen — not on every tick while
-      // there is no cue, and never twice for the same line.
-      const previous = activeOrPreviousIndex(targetCues, cueMs);
-      if (previous >= 0 && cueMs - targetCues[previous].end_ms < 400 && autoPausedAfter.current !== previous) {
-        autoPausedAfter.current = previous;
-        setAutoPaused(true);
-        video.pause();
-      }
+    if (
+      playerPrefs?.auto_pause &&
+      !video.paused &&
+      leaving >= 0 &&
+      index !== leaving &&
+      // One pause per line: without this, resuming pauses again immediately.
+      autoPausedAfter.current !== leaving
+    ) {
+      // Wound back to where the line actually ended. A tick lands up to a
+      // quarter of a second late, so pausing where we noticed would start the
+      // next line already part-said.
+      video.currentTime = (targetCues[leaving].end_ms + delayMs) / 1000;
+      positionRef.current = targetCues[leaving].end_ms + delayMs;
+      lastTick.current = null;
+      video.pause();
+      autoPausedAfter.current = leaving;
+      setAutoPaused(true);
+      lastCueIndex.current = leaving;
+      flushProgress();
+      return;
     }
+
+    lastCueIndex.current = index;
 
     flushProgress();
   };
@@ -503,7 +570,22 @@ export function Player() {
               // for a glance at the library. Buffering ahead during playback is
               // unaffected; preload only governs what happens before it.
               preload="metadata"
-              className="h-full w-full bg-black"
+              /* Pinned to the box rather than sized by it.
+               *
+               * `h-full` does nothing here: the picture area centres its
+               * children, so the video is not stretched and its height
+               * resolves against an indefinite row — which sends it back to
+               * its own aspect ratio, WIDTH x 9/16. In a small window that
+               * happens to come out shorter than the space available and
+               * everything looks right. Widen the window and it does not:
+               * at 1858px across the video computed 1045px tall inside a
+               * 933px column, overflowed the bottom of it, and covered the
+               * transport bar completely. Maximising the window lost the
+               * controls.
+               *
+               * Positioned, the box is the picture area exactly, at every
+               * window size, and object-fit letterboxes inside it. */
+              className="absolute inset-0 h-full w-full bg-black object-contain"
               onClick={togglePlay}
               onDoubleClick={() => void toggleFullscreen()}
               onLoadedMetadata={(e) => {
@@ -550,10 +632,9 @@ export function Player() {
               onEnded={() => flushProgress(true)}
               onError={() =>
                 setVideoError(
-                  'This player can’t open this file. It reads MP4, M4V and WebM; Matroska (.mkv), ' +
-                    '.avi, .wmv, .flv and .mpg are not formats it can read at all, whatever is ' +
-                    'inside them. Repackaging into MP4 is usually instant and lossless: ' +
-                    'ffmpeg -i input.mkv -c copy output.mp4',
+                  'FluencyOS can’t open this file. It plays MP4, M4V and WebM videos — files ending ' +
+                    'in .mkv, .avi, .wmv, .flv or .mpg can’t be opened at all, whatever is inside ' +
+                    'them. Converting one to MP4 usually takes seconds and loses no quality.',
                 )
               }
             />
@@ -562,8 +643,15 @@ export function Player() {
           {videoError && (
             <div className="absolute inset-x-0 top-1/2 mx-auto max-w-[430px] -translate-y-1/2 rounded-panel bg-black/85 px-5 py-4 text-center">
               <div className="font-sans text-[12.5px] leading-[1.6] text-white/85">{videoError}</div>
-              <div className="mt-2 font-mono text-[10px] text-white/45">
-                {item.video_codec ?? '?'} · {item.audio_codec ?? '?'} · {item.container ?? '?'}
+              <div className="mt-[10px] font-mono text-[9.5px] leading-[1.6] text-white/45">
+                if you’re comfortable with a terminal:
+              </div>
+              <code className="mt-[5px] block select-text rounded-field border border-white/15 bg-black/60 px-[10px] py-[7px] text-left font-mono text-[10px] leading-[1.6] text-white/75">
+                ffmpeg -i input.mkv -c copy output.mp4
+              </code>
+              <div className="mt-[10px] font-mono text-[9.5px] text-white/40">
+                this file: {item.video_codec ?? 'unknown'} · {item.audio_codec ?? 'unknown'} ·{' '}
+                {item.container ?? 'unknown'}
               </div>
             </div>
           )}
@@ -581,10 +669,26 @@ export function Player() {
             <span className="max-w-[320px] truncate rounded-[4px] bg-black/45 px-2 py-1 font-mono text-[9.5px] font-medium text-white/50">
               {item.title}
             </span>
-            {targetCues.length > 0 && (
-              <span className="rounded-[4px] bg-black/45 px-2 py-1 font-mono text-[9.5px] font-medium text-acc">
-                {playerPrefs?.dual_subs && nativeCues.length > 0 ? 'dual subs' : 'subs on'}
-              </span>
+{/* The subtitle switch.
+                 *
+                 * This read "subs on" and was only ever a label — it reported
+                 * a state with no way to change it, and listening without the
+                 * text is the harder half of the exercise. Turning them off
+                 * used to mean unsetting the whole track, which forgot which
+                 * track had been chosen. */}
+            {hasSubs && (
+              <button
+                onClick={() => togglePref('subs_on')}
+                title={subsOn ? 'Hide the subtitles  (S)' : 'Show the subtitles  (S)'}
+                aria-pressed={subsOn}
+                className="rounded-[4px] px-2 py-1 font-mono text-[9.5px] font-medium transition-colors"
+                style={{
+                  background: subsOn ? 'rgba(var(--accRGB),.22)' : 'rgba(0,0,0,.45)',
+                  color: subsOn ? 'var(--acc)' : 'rgba(255,255,255,.5)',
+                }}
+              >
+                {!subsOn ? 'subs off' : dualOn ? 'dual subs' : 'subs on'}
+              </button>
             )}
             {generating && (
               <span className="rounded-[4px] bg-black/45 px-2 py-1 font-mono text-[9.5px] font-medium text-white/70">
@@ -600,13 +704,14 @@ export function Player() {
                   The sound plays, but this picture can’t be decoded
                 </div>
                 <p className="mt-[8px] font-sans text-[12.5px] leading-[1.65] text-white/70">
-                  The audio decoded and the video did not, which is why you can hear it while the
-                  frame stays still and the clock keeps running. H.265 plays here when the graphics
-                  card can decode it — if this machine’s cannot, or the track is an older codec like
-                  Xvid, MPEG-2 or VC-1, there is no decoder for it.
+                  The sound is playing but the picture isn’t — that’s why you can hear it while the
+                  frame stays still and the clock keeps running. This video was saved in a format
+                  this computer has no way to display, either because it’s an unusual older one or
+                  because the graphics card doesn’t handle it.
                 </p>
-                <p className="mt-[10px] font-mono text-[10.5px] leading-[1.7] text-white/55">
-                  Re-encoding the picture to H.264 fixes it, and copies the sound across untouched:
+                <p className="mt-[10px] font-sans text-[12px] leading-[1.65] text-white/55">
+                  Converting the picture fixes it, and leaves the sound exactly as it is. If you’re
+                  comfortable with a terminal:
                 </p>
                 <code className="mt-[7px] block select-text rounded-field border border-white/15 bg-black/60 px-[10px] py-[8px] text-left font-mono text-[10px] leading-[1.6] text-white/80">
                   ffmpeg -i input.mp4 -c:v libx264 -crf 20 -c:a copy output.mp4
@@ -666,7 +771,7 @@ export function Player() {
             </button>
           )}
 
-          {!missing && playerPrefs && (
+          {!missing && playerPrefs && subsOn && (
             <SubtitleLayer
               cue={targetCue}
               nativeCue={nativeCue}
@@ -802,15 +907,33 @@ export function Player() {
                   ['auto_pause', 'auto-pause', 'Pause when each line ends  (O)'],
                   ['loop_cue', 'loop', 'Repeat the current line  (L)'],
                 ] as const
-              ).map(([key, label, title]) => (
-                <Toggle
-                  key={key}
-                  on={Boolean(playerPrefs?.[key])}
-                  onClick={() => togglePref(key)}
-                  label={label}
-                  title={title}
-                />
-              ))}
+              ).map(([key, label, title]) => {
+                const needsNative = key === 'dual_subs';
+                /* `dual` and `blur` describe how the subtitle text is drawn,
+                 * so both are meaningless once it is not being drawn. The
+                 * other two follow the cues rather than the text and still
+                 * work with subtitles hidden — which is the point of listening
+                 * without them. */
+                const needsText = key === 'dual_subs' || key === 'blur_subs';
+                const off =
+                  (needsNative ? !hasNativeSubs : !hasSubs) || (needsText && !subsOn);
+                return (
+                  <Toggle
+                    key={key}
+                    on={Boolean(playerPrefs?.[key]) && !off}
+                    disabled={off}
+                    onClick={() => togglePref(key)}
+                    label={label}
+                    title={
+                      off
+                        ? needsText && !subsOn && hasSubs
+                          ? 'subtitles are hidden — turn them back on first'
+                          : unavailableReason(needsNative)
+                        : title
+                    }
+                  />
+                );
+              })}
             </div>
 
             <Divider />
@@ -973,27 +1096,40 @@ function Divider() {
   return <span className="h-[18px] w-px flex-none bg-white/12" />;
 }
 
+function unavailableReason(needsNative: boolean): string {
+  return needsNative
+    ? 'no native-language subtitles for this video — add a second track under Subtitles'
+    : 'no subtitles for this video yet — add or generate a track under Subtitles';
+}
+
 function Toggle({
   on,
   onClick,
   label,
   title,
+  disabled = false,
 }: {
   on: boolean;
   onClick: () => void;
   label: string;
   title: string;
+  /** Nothing for this switch to act on — no native track to show, or no
+   * subtitles at all. Dimmed and inert, with the reason in the tooltip,
+   * rather than looking live and silently doing nothing. */
+  disabled?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       title={title}
       aria-pressed={on}
-      className="h-[26px] flex-none whitespace-nowrap rounded-full border px-[11px] font-sans text-[11px] font-medium transition-colors"
+      className="h-[26px] flex-none whitespace-nowrap rounded-full border px-[11px] font-sans text-[11px] font-medium transition-colors disabled:cursor-default"
       style={{
         borderColor: on ? 'var(--accLine)' : 'rgba(255,255,255,.16)',
         background: on ? 'rgba(var(--accRGB),.22)' : 'transparent',
         color: on ? 'var(--acc)' : 'rgba(255,255,255,.62)',
+        opacity: disabled ? 0.38 : 1,
       }}
     >
       {label}

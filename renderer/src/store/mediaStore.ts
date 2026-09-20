@@ -14,6 +14,7 @@ import type {
   ProgressOut,
   SaveFromVideoOut,
 } from '@/types/api';
+import { friendlyMessage } from '@/lib/friendlyError';
 
 /** How often an in-flight import or transcription is re-checked. Ingest is a
  * few seconds for a short file and a minute for a long one with several
@@ -179,7 +180,7 @@ export const useMediaStore = create<MediaState>((set, get) => ({
         libraryStatus: 'idle',
       });
     } catch (err) {
-      set({ libraryStatus: 'error', libraryError: err instanceof Error ? err.message : String(err) });
+      set({ libraryStatus: 'error', libraryError: friendlyMessage(err, 'Loading your library') });
     }
   },
 
@@ -288,7 +289,7 @@ export const useMediaStore = create<MediaState>((set, get) => ({
         get().fetchClips(mediaId),
       ]);
     } catch (err) {
-      set({ detailStatus: 'error', detailError: err instanceof Error ? err.message : String(err) });
+      set({ detailStatus: 'error', detailError: friendlyMessage(err, 'Opening this video') });
     }
   },
 

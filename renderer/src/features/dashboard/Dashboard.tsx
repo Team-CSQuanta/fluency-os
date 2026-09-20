@@ -69,7 +69,7 @@ export function Dashboard() {
             <div className="pb-[5px] font-sans text-[11.5px] leading-[1.5] text-tx2">
               cards · ≈12 min
               <br />
-              18 recognition · 14 cloze · 9 production · 6 listening
+              18 meaning · 14 fill the gap · 9 recall · 6 listening
             </div>
           </div>
           <div className="flex gap-2">

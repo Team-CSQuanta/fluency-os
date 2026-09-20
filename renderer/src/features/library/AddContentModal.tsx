@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useMediaStore } from '@/store/mediaStore';
+import { friendlyMessage } from '@/lib/friendlyError';
 
 /** Adding content to the watching library.
  *
@@ -22,7 +23,7 @@ export function AddContentModal({ onClose }: { onClose: () => void }) {
     try {
       await importMedia(paths);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(friendlyMessage(err, 'Adding that'));
     } finally {
       setBusy(false);
     }
@@ -76,7 +77,8 @@ export function AddContentModal({ onClose }: { onClose: () => void }) {
               className="rounded-panel px-[13px] py-[10px] font-sans text-[11.5px] leading-[1.6]"
               style={{ background: 'rgba(220,140,60,.10)', color: 'var(--tx2)' }}
             >
-              ffmpeg isn’t installed, so video files can’t be read yet. Install it and restart FluencyOS.
+              Video files can’t be read yet — FluencyOS needs a free video tool called ffmpeg, which isn’t
+              installed on this computer. Install it and restart FluencyOS. Books still work.
             </div>
           )}
 

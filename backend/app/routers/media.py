@@ -64,6 +64,7 @@ file_router = APIRouter(prefix="/media", dependencies=[Depends(require_token_or_
 # 0001_init.sql already defined, so the engine reads the settings the schema
 # always intended for it rather than a parallel set.
 PLAYER_PREF_COLUMNS = {
+    "subs_on": "player_subs_on",
     "dual_subs": "player_dual_subs",
     "blur_subs": "player_blur_subs",
     "auto_pause": "player_auto_pause",
@@ -75,7 +76,7 @@ PLAYER_PREF_COLUMNS = {
     "clip_pad_after_ms": "clip_padding_after_ms",
     "clip_max_ms": "clip_max_ms",
 }
-_BOOL_PREFS = {"dual_subs", "blur_subs", "auto_pause", "loop_cue"}
+_BOOL_PREFS = {"subs_on", "dual_subs", "blur_subs", "auto_pause", "loop_cue"}
 
 
 def _clip_height(settings_row: sqlite3.Row) -> int:
@@ -806,10 +807,42 @@ def purge_clip_files(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -
 
 @file_router.get("/clips/{clip_id}/thumbnail")
 def clip_thumbnail(clip_id: str, conn: sqlite3.Connection = Depends(get_db)) -> FileResponse:
-    row = conn.execute("SELECT * FROM media_clips WHERE id = ?", (clip_id,)).fetchone()
-    if row is None or not row["thumb_path"] or not Path(row["thumb_path"]).is_file():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No thumbnail for this clip")
-    return FileResponse(row["thumb_path"], media_type="image/jpeg")
+    """A still from the moment, for the card that offers to play it.
+
+    Falls back to grabbing a frame from the source when the clip has no stored
+    one, which is the normal state under the timecodes-only storage policy and
+    after a purge. The frame is cached on disk but deliberately not recorded on
+    the row: the row says whether a CLIP exists, and a few kilobytes of JPEG
+    must not make a virtual clip look extracted.
+    """
+    row = conn.execute(
+        "SELECT c.*, m.source_path FROM media_clips c "
+        "JOIN media_items m ON m.id = c.media_item_id WHERE c.id = ?",
+        (clip_id,),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clip not found")
+    if row["thumb_path"] and Path(row["thumb_path"]).is_file():
+        return FileResponse(row["thumb_path"], media_type="image/jpeg")
+
+    _, thumb_path = storage.clip_paths(clip_id)
+    if thumb_path.is_file():
+        return FileResponse(str(thumb_path), media_type="image/jpeg")
+
+    if row["source_path"] and Path(row["source_path"]).is_file():
+        try:
+            clips.grab_frame(
+                source=Path(row["source_path"]),
+                at_ms=(row["start_ms"] + row["end_ms"]) // 2,
+                thumb_path=thumb_path,
+            )
+        except (ffmpeg.FfmpegUnavailable, ffmpeg.FfmpegFailed) as err:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="No thumbnail for this clip"
+            ) from err
+        return FileResponse(str(thumb_path), media_type="image/jpeg")
+
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No thumbnail for this clip")
 
 
 # --------------------------------------------------------------------------

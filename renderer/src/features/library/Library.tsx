@@ -162,9 +162,10 @@ export function Library() {
     <div className="flex flex-col gap-[22px] p-[var(--pad)]" onClick={() => setMenuFor(null)}>
       {!ffmpegAvailable && (
         <Banner tone="warn">
-          <strong className="font-semibold text-tx">ffmpeg wasn’t found on this machine.</strong> Videos can’t be
-          read without it — install ffmpeg (on Debian/Ubuntu: <code className="font-mono">apt install ffmpeg</code>)
-          and restart FluencyOS. Everything else in the app works without it.
+          <strong className="font-semibold text-tx">FluencyOS can’t read video files yet.</strong> It needs a free
+          video tool called ffmpeg, which isn’t on this computer. Install it (on Ubuntu or Debian, run{' '}
+          <code className="font-mono">apt install ffmpeg</code> in a terminal) and restart FluencyOS. Everything
+          else — books, words, review and conversation — works without it.
         </Banner>
       )}
 

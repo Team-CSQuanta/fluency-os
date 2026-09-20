@@ -36,6 +36,10 @@ class ReaderPrefsOut(BaseModel):
     heat_on: bool
     panel_open: bool
     panel_tab: str
+    # Whether a PDF opens showing its own typeset page beside the text.
+    # Defaulted so that a settings row written before this existed still
+    # validates rather than 500-ing the whole reader.
+    page_view: bool = False
 
 
 class ReaderPrefsUpdate(BaseModel):
@@ -47,6 +51,7 @@ class ReaderPrefsUpdate(BaseModel):
     heat_on: bool
     panel_open: bool
     panel_tab: Literal["toc", "search", "marks", "text", "ai", "level"]
+    page_view: bool = False
 
 
 class LeveledSegmentOut(BaseModel):

@@ -1,8 +1,9 @@
-// Maps a DOM Selection to { blockIndex, startChar, endChar, quotedText } —
-// spec §7.2. Uses a TreeWalker to sum text-node lengths up to the selection
-// boundary, which gives the right absolute character offset regardless of
-// whether the block renders as one text node or several highlight segments,
-// so no data-char-start bookkeeping is needed on the segments themselves.
+// Maps a DOM Selection to one { blockIndex, startChar, endChar, quotedText }
+// per paragraph it covers — spec §7.2. Uses a TreeWalker to sum text-node
+// lengths up to the selection boundary, which gives the right absolute
+// character offset regardless of whether the block renders as one text node or
+// several highlight segments, so no data-char-start bookkeeping is needed on
+// the segments themselves.
 
 export interface BlockSelectionRange {
   blockIndex: number;
@@ -31,28 +32,61 @@ function charOffsetWithin(root: HTMLElement, target: Node, targetOffset: number)
   return total;
 }
 
-/** Returns null for a collapsed/empty selection, or one that spans more
- * than one block — v1 clamps to single-block selections only (spec §7.2). */
-export function getBlockSelectionRange(): BlockSelectionRange | null {
+/** Every paragraph the selection touches, in reading order, each clipped to
+ * the part of itself that is actually selected.
+ *
+ * A highlight is stored against one block, so a selection spanning three
+ * paragraphs becomes three highlights rather than being refused. It used to be
+ * refused — silently, by returning null — and dragging across a paragraph
+ * break simply did nothing, which reads as a broken feature rather than as a
+ * limit. Sentences run across paragraph breaks often enough that this was the
+ * case people hit first.
+ *
+ * Returns an empty array for a collapsed or non-text selection. */
+export function getBlockSelectionRanges(): BlockSelectionRange[] {
   const sel = window.getSelection();
-  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
-
-  const quotedText = sel.toString();
-  if (!quotedText.trim()) return null;
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return [];
+  if (!sel.toString().trim()) return [];
 
   const range = sel.getRangeAt(0);
-  const anchorBlockEl = closestBlockEl(range.startContainer);
-  const focusBlockEl = closestBlockEl(range.endContainer);
-  if (!anchorBlockEl || !focusBlockEl || anchorBlockEl !== focusBlockEl) return null;
+  const startBlock = closestBlockEl(range.startContainer);
+  const endBlock = closestBlockEl(range.endContainer);
+  if (!startBlock || !endBlock) return [];
 
-  const blockIndex = Number(anchorBlockEl.getAttribute('data-block-index'));
-  if (Number.isNaN(blockIndex)) return null;
+  // querySelectorAll is in document order, which for the reader is reading
+  // order, so the highlights come back in the order they were dragged over.
+  const covered = Array.from(document.querySelectorAll<HTMLElement>('[data-block-index]')).filter(
+    (el) => el === startBlock || el === endBlock || range.intersectsNode(el),
+  );
 
-  const a = charOffsetWithin(anchorBlockEl, range.startContainer, range.startOffset);
-  const b = charOffsetWithin(anchorBlockEl, range.endContainer, range.endOffset);
-  const startChar = Math.min(a, b);
-  const endChar = Math.max(a, b);
-  if (endChar <= startChar) return null;
+  const out: BlockSelectionRange[] = [];
+  for (const el of covered) {
+    const blockIndex = Number(el.getAttribute('data-block-index'));
+    if (Number.isNaN(blockIndex)) continue;
 
-  return { blockIndex, startChar, endChar, quotedText };
+    const text = el.textContent ?? '';
+    // A block in the middle of the selection is covered end to end; only the
+    // first and last are clipped, and either may be both.
+    const startChar = el.contains(range.startContainer)
+      ? charOffsetWithin(el, range.startContainer, range.startOffset)
+      : 0;
+    const endChar = el.contains(range.endContainer)
+      ? charOffsetWithin(el, range.endContainer, range.endOffset)
+      : text.length;
+    if (endChar <= startChar) continue;
+
+    const quotedText = text.slice(startChar, endChar);
+    if (!quotedText.trim()) continue;
+    out.push({ blockIndex, startChar, endChar, quotedText });
+  }
+  return out;
+}
+
+/** The single block a selection sits in, or null when it spans more than one.
+ *
+ * Kept for the callers that genuinely need one paragraph — the AI and Level
+ * panels act on a block at a time. */
+export function getBlockSelectionRange(): BlockSelectionRange | null {
+  const ranges = getBlockSelectionRanges();
+  return ranges.length === 1 ? ranges[0] : null;
 }

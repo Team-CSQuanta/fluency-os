@@ -93,6 +93,16 @@ body {
 }
 
 body[data-theme='dark'] {
+  /* Tells the browser to draw the parts of the interface we do not draw
+     ourselves — the popup list a <select> opens, checkboxes, spinners, the
+     focus ring's contrast — in dark rather than light.
+
+     Without it Chromium assumes a light page whatever our own colours say, so
+     the dropdown behind "recently added" or "all levels" opened as a white
+     panel of near-white text: the control was readable but the list it opened
+     was not. That popup is drawn by the browser and cannot be reached with
+     ordinary CSS, so this declaration is the only way to reach it. */
+  color-scheme: dark;
   --bg: #131514;
   --bg2: #191c1b;
   --panel: #1e2120;
@@ -108,6 +118,7 @@ body[data-theme='dark'] {
 }
 
 body[data-theme='light'] {
+  color-scheme: light;
   --bg: #f2f2f0;
   --bg2: #f8f8f6;
   --panel: #ffffff;
@@ -141,4 +152,43 @@ body {
 }
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* The settings sliders.
+ *
+ * `appearance: none` is needed to draw a 3px track instead of the browser's
+ * chunky default — but it also removes the thumb, and a slider with no thumb
+ * is a coloured line you cannot tell is draggable. Chromium and Firefox name
+ * that pseudo-element differently and neither can be reached from a utility
+ * class, so it lives here.
+ */
+.fos-slider {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--line);
+}
+.fos-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--acc);
+  /* The ring keeps the thumb legible where it sits on top of the filled
+     part of the track, which is the same colour. */
+  border: 2px solid var(--panel);
+  cursor: pointer;
+}
+.fos-slider::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--acc);
+  border: 2px solid var(--panel);
+  cursor: pointer;
+}
+.fos-slider:focus-visible {
+  outline: 2px solid var(--accLine);
+  outline-offset: 4px;
 }

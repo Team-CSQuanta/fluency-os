@@ -88,6 +88,29 @@ def neighbours(conn: sqlite3.Connection, track_id: str, order_index: int) -> tup
     return (prev_row["end_ms"] if prev_row else None, next_row["start_ms"] if next_row else None)
 
 
+def grab_frame(*, source: Path, at_ms: int, thumb_path: Path, height: int = 480) -> None:
+    """A single frame from the source file, for a clip that has no stored one.
+
+    A clip kept as timecodes only — the storage policy in spec §4.2, and the
+    state every clip falls back to after a purge — has no file and so no
+    thumbnail. Its card still wants a picture to click on, and cutting the
+    whole clip to get one would be a video encode in the middle of a page
+    load. This is one seek and one frame.
+    """
+    ffmpeg.run(
+        [
+            str(ffmpeg.ffmpeg_path()),
+            "-hide_banner", "-loglevel", "error",
+            "-ss", f"{max(0, at_ms) / 1000:.3f}",
+            "-i", str(source),
+            "-frames:v", "1", "-q:v", "4",
+            "-vf", f"scale=-2:min({height}\\,ih)",
+            "-y", str(thumb_path),
+        ],
+        timeout=60,
+    )
+
+
 def extract(
     *,
     source: Path,

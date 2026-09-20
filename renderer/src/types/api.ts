@@ -127,6 +127,9 @@ export interface BookOut {
   /** Null until the book has been opened once — that is what "Not started" means. */
   last_read_at: string | null;
   percent: number;
+  /** Whether the book has original pages to render. Only PDFs do; every
+   * other format is reflowable and never had a page to begin with. */
+  has_page_images: boolean;
 }
 
 export interface GoalDayOut {
@@ -157,6 +160,8 @@ export interface ReaderPrefsOut {
   heat_on: boolean;
   panel_open: boolean;
   panel_tab: PanelTab;
+  /** Show a PDF's own typeset page beside the extracted text. */
+  page_view: boolean;
 }
 
 export interface LeveledSegmentOut {
@@ -694,6 +699,13 @@ export interface ReviewCardOut {
   audio_url: string | null;
   context_snippet: string | null;
   context_source: string | null;
+  /** The moment this word was met, when it was saved from a film. */
+  clip_id: string | null;
+  /** 'ready' | 'virtual' play; 'queued' | 'extracting' are still being cut;
+   * 'failed' could not be. */
+  clip_status: string | null;
+  /** Null when the film has since been removed from the library. */
+  media_item_id: string | null;
   cloze_before: string | null;
   cloze_after: string | null;
   state: string;
@@ -864,6 +876,8 @@ export interface SaveFromVideoOut {
 }
 
 export interface PlayerPrefsOut {
+  /** Whether subtitles are drawn over the picture at all. */
+  subs_on: boolean;
   dual_subs: boolean;
   blur_subs: boolean;
   auto_pause: boolean;
@@ -1065,4 +1079,53 @@ export interface FocusOut {
   started_at: string;
   completed_at: string | null;
   sunlight: number;
+}
+
+// --- Settings (the page's own payload) ----------------------------------
+
+export type MicSensitivity = 'sensitive' | 'balanced' | 'robust';
+export type TurnPace = 'quick' | 'natural' | 'patient';
+
+export interface AppSettingsOut {
+  target_retention: number;
+  new_cards_per_day: number;
+  daily_page_goal: number;
+  notifications_enabled: boolean;
+  quiet_hours_start: string;
+  quiet_hours_end: string;
+  conversation_mic_sensitivity: MicSensitivity;
+  conversation_turn_pace: TurnPace;
+  scene_embeds_enabled: boolean;
+  /** Below here: owned by other screens, shown read-only so this page can
+   * report the truth without becoming a second place to change it. */
+  llm_mode: string;
+  llm_model_id: string | null;
+  api_provider: string | null;
+  openrouter_model: string | null;
+  gemini_model: string | null;
+  tts_engine: string;
+  stt_model_id: string | null;
+  /** Whether a key exists. Never the key itself. */
+  openrouter_key_set: boolean;
+  gemini_key_set: boolean;
+}
+
+export type AppSettingsPatch = Partial<
+  Pick<
+    AppSettingsOut,
+    | 'target_retention'
+    | 'new_cards_per_day'
+    | 'daily_page_goal'
+    | 'notifications_enabled'
+    | 'quiet_hours_start'
+    | 'quiet_hours_end'
+    | 'conversation_mic_sensitivity'
+    | 'conversation_turn_pace'
+    | 'scene_embeds_enabled'
+  >
+>;
+
+export interface DictionaryCacheOut {
+  entries: number;
+  last_cached_at: string | null;
 }

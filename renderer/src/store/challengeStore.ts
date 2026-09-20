@@ -7,6 +7,7 @@ import type {
   ChallengeStatsOut,
   HintsOut,
 } from '@/types/api';
+import { friendlyMessage } from '@/lib/friendlyError';
 
 interface ChallengeState {
   round: ChallengeRoundOut | null;
@@ -52,9 +53,7 @@ function asFailure(err: unknown, what: string): Partial<ConversationFailure> {
   if (err instanceof ApiError && err.status === 503) {
     return { aiNeededFor: what, aiNeededDetail: err.detail };
   }
-  const message =
-    err instanceof ApiError ? err.detail : err instanceof Error ? err.message : String(err);
-  return { error: message };
+  return { error: friendlyMessage(err, what) };
 }
 
 interface ConversationFailure {

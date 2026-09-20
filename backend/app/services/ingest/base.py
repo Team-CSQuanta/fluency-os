@@ -48,6 +48,11 @@ class ParsedBook:
     # True when every block carries a trustworthy page_number, so the reader
     # should page by the document's own boundaries instead of by word count.
     uses_native_pages: bool = False
+    # How many pages the document actually has, which is not the same as the
+    # highest page that produced text: a plate or a full-page figure yields no
+    # blocks at all. Without this a book ends at its last page of prose, and
+    # anything after it cannot be reached.
+    page_count: int | None = None
 
 
 class BookParser(Protocol):
