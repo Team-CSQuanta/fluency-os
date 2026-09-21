@@ -7,7 +7,7 @@ import urllib.error
 
 import pytest
 
-from app.services import dictionary_lookup, vocabulary
+from app.services import dictionary_lookup
 from app.services.dictionary_lookup import DictionaryResult, DictionarySense, DictionaryServiceUnavailable
 
 KNOWN_WORD = "abandon"  # in the bundled offline lexicon too — proves the cefr/simpler merge

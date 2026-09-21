@@ -8,16 +8,10 @@ export interface TocRow {
   ancestors: string[];
 }
 
-/* The chapter list arrives flat, with nothing but a depth on each entry, so
- * the nesting has to be read back out of it: an entry owns everything that
- * follows it at a greater depth, up to the next entry at its own level or
- * shallower. Each row carries its ancestors, which is what decides whether
- * it is currently visible.
- *
- * Depths are taken as they come rather than assumed to step by one. A book
- * whose contents jump from a chapter straight to a depth-3 heading, or that
- * starts at a depth other than zero, still nests correctly — malformed
- * outlines are common in scanned books and must not drop rows. */
+/* The list arrives flat with only a depth per entry: an entry owns
+ * everything after it that is deeper, up to the next entry at its own level.
+ * Depths are taken as they come — scanned books jump levels, and a row must
+ * never end up unreachable. */
 export function buildTocRows(toc: readonly ChapterOut[]): TocRow[] {
   return toc.map((chapter, i) => {
     const ancestors: string[] = [];

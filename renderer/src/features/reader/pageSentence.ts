@@ -9,17 +9,9 @@ function endsSentence(text: string): boolean {
 }
 
 /**
- * The sentence a word sits in, read off the printed page.
- *
- * The page has no sentences — it has boxes, one per whitespace-separated
- * token — so the sentence is walked out from the word until something ends
- * one. Worth the trouble twice over: it is what the AI is given to explain
- * the word *in context*, and it is what gets stored with the word in the
- * vocabulary, where a bare word with no sentence is a flashcard with no
- * memory attached.
- *
- * An initial is not a full stop: "J. Smith" and "Fig. 3" would otherwise cut
- * the sentence in half and hand over a fragment.
+ * The sentence a word sits in, walked out from its box until something ends
+ * one. An initial is not a full stop: "J. Smith" and "Fig. 3" would
+ * otherwise hand over a fragment.
  */
 export function sentenceAround(words: readonly PageWordOut[], index: number): string {
   if (index < 0 || index >= words.length) return '';

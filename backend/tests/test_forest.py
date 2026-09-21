@@ -108,24 +108,6 @@ def test_health_bottoms_out_rather_than_going_negative():
 # ---------------------------------------------------------------------------
 
 
-def test_a_word_caught_while_watching_grows_in_the_cinema_clearing(conn):
-    _word(conn, "reticent", kind="clip")
-    assert forest.trees(conn, "u1")[0].biome == "cinema"
-
-
-def test_a_word_first_produced_aloud_belongs_by_the_river(conn):
-    """Spoken before it was ever filed. Whatever page it later turns up on, the
-    learner met it in conversation."""
-    wid = _word(conn, "candid", kind="page")
-    _log(conn, wid, "spontaneous", source="conversation")
-    assert forest.trees(conn, "u1")[0].biome == "river"
-
-
-def test_a_word_saved_by_hand_grows_in_the_meadow(conn):
-    _word(conn, "stark")
-    assert forest.trees(conn, "u1")[0].biome == "meadow"
-
-
 def test_a_long_overdue_tree_goes_dormant(conn):
     _word(conn, "wary", stability=10, state="review", due=iso8601_utc_ago(days=45))
     assert forest.trees(conn, "u1")[0].dormant is True
@@ -195,5 +177,4 @@ def test_the_summary_counts_every_tree_exactly_once(conn):
     _word(conn, "c")
     data = forest.summary(conn, "u1")
     assert len(data["trees"]) == 3
-    assert sum(data["biomes"].values()) == 3
     assert sum(data["stages"]) == 3

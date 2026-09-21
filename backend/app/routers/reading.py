@@ -211,8 +211,6 @@ def lookup_word(
             synonyms=[],
             simpler=None,
             found=False,
-            context_available=False,
-            context_note=None,
         )
 
     return WordLookupOut(
@@ -228,9 +226,6 @@ def lookup_word(
         synonyms=synonyms,
         simpler=entry.simpler if entry is not None else None,
         found=bool(senses),
-        # Needs generation (Phase 7); never faked.
-        context_available=False,
-        context_note=None,
     )
 
 
@@ -454,7 +449,7 @@ def get_reader_prefs(
     row = conn.execute(
         """
         SELECT reader_font_size, reader_page_theme, reader_heat_on,
-               reader_panel_open, reader_panel_tab, reader_page_view,
+               reader_panel_open, reader_panel_tab,
                reader_page_scroll, reader_page_zoom
         FROM user_settings WHERE user_id = ?
         """,
@@ -468,7 +463,6 @@ def get_reader_prefs(
         heat_on=bool(row["reader_heat_on"]),
         panel_open=bool(row["reader_panel_open"]),
         panel_tab=row["reader_panel_tab"],
-        page_view=bool(row["reader_page_view"]),
         page_scroll=row["reader_page_scroll"],
         page_zoom=row["reader_page_zoom"],
     )
@@ -488,17 +482,16 @@ def update_reader_prefs(
         """
         INSERT INTO user_settings (
           user_id, reader_font_size, reader_page_theme, reader_heat_on,
-          reader_panel_open, reader_panel_tab, reader_page_view,
+          reader_panel_open, reader_panel_tab,
           reader_page_scroll, reader_page_zoom
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET
           reader_font_size = excluded.reader_font_size,
           reader_page_theme = excluded.reader_page_theme,
           reader_heat_on = excluded.reader_heat_on,
           reader_panel_open = excluded.reader_panel_open,
           reader_panel_tab = excluded.reader_panel_tab,
-          reader_page_view = excluded.reader_page_view,
           reader_page_scroll = excluded.reader_page_scroll,
           reader_page_zoom = excluded.reader_page_zoom
         """,
@@ -509,7 +502,6 @@ def update_reader_prefs(
             int(payload.heat_on),
             int(payload.panel_open),
             payload.panel_tab,
-            int(payload.page_view),
             payload.page_scroll,
             payload.page_zoom,
         ),
@@ -520,7 +512,6 @@ def update_reader_prefs(
         heat_on=payload.heat_on,
         panel_open=payload.panel_open,
         panel_tab=payload.panel_tab,
-        page_view=payload.page_view,
         page_scroll=payload.page_scroll,
         page_zoom=payload.page_zoom,
     )

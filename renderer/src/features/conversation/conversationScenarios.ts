@@ -1,8 +1,4 @@
-// Scenario config for the Conversation feature. Session history, live
-// transcripts, and reports are all real now (conversationStore.ts, backed by
-// a local LLM/STT/TTS pipeline) — this file only keeps the scenario picker's
-// labels/keys/estimated-length, which is legitimately static configuration,
-// not mock data standing in for something unbuilt.
+// The scenarios the conversation picker offers: label, key and rough length.
 
 import type { ScenarioKey } from '@/types/api';
 

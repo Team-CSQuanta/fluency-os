@@ -1,9 +1,5 @@
-"""Editing who you are, after onboarding.
-
-Name, languages and level were decided once during onboarding and then
-frozen: the settings screen showed them and nothing could change them, so a
-typo in a display name was permanent. The profile picture is new.
-"""
+"""Editing who you are after onboarding: name, languages, level and the
+profile picture."""
 
 from pathlib import Path
 

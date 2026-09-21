@@ -127,8 +127,7 @@ class PageWordHeatOut(BaseModel):
 
 
 class PageHeatOut(BaseModel):
-    """Difficulty heat for one printed page (the tint the reflowed view has
-    always had, answered in page coordinates)."""
+    """Difficulty heat for one printed page, in page coordinates."""
 
     target_cefr: str
     #: False when the book's own heat overlay flag is off, so the client can

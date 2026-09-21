@@ -45,7 +45,6 @@ class ReaderPrefsOut(BaseModel):
     # Whether a PDF opens showing its own typeset page beside the text.
     # Defaulted so that a settings row written before this existed still
     # validates rather than 500-ing the whole reader.
-    page_view: bool = False
     # Whether those pages run down the screen or across it.
     page_scroll: str = "vertical"
     # A multiple of the width that fits the window, not a percentage of a
@@ -66,7 +65,6 @@ class ReaderPrefsUpdate(BaseModel):
     # written before that, and the client maps them forward — only what it
     # writes is constrained here.
     panel_tab: Literal["toc", "search", "marks", "study"]
-    page_view: bool = False
     page_scroll: Literal["vertical", "horizontal"] = "vertical"
     page_zoom: float = Field(default=1.0, ge=PAGE_ZOOM_MIN, le=PAGE_ZOOM_MAX)
 
@@ -163,11 +161,6 @@ class WordLookupOut(BaseModel):
     # False when the word isn't in the offline lexicon at all, so the panel
     # can say so rather than rendering a convincing-looking empty entry.
     found: bool
-    # An explanation of the word *as used in this sentence* needs generation.
-    # Always False until a model is configured (Phase 7) — the panel keeps
-    # its honest "offline stub" copy for that section only.
-    context_available: bool
-    context_note: str | None
 
 
 class LevelTextRequest(BaseModel):

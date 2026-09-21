@@ -1,14 +1,9 @@
 """How much studying happened on each of the last N days.
 
-The dashboard's consistency calendar. Two sources, because studying here is
-two different acts recorded in two different tables: pages read
-(reading_sessions) and cards answered (review_logs).
-
-Days are the reader's own calendar days. reading_sessions already stores a
-local_date for exactly this reason — a daily goal that rolled over at UTC
-midnight would end someone's streak in the middle of their evening — and
-review timestamps are converted to the same local reckoning here so the two
-land on the same square.
+Pages read come from reading_sessions, cards answered from review_logs.
+Both are counted against the reader's own calendar day: reading_sessions
+stores a local_date already, and review timestamps are converted to match so
+the two land on the same square.
 """
 
 import sqlite3
@@ -40,12 +35,8 @@ def _local_day(stamp: str) -> str | None:
 
 
 def daily(conn: sqlite3.Connection, user_id: str, days: int) -> list[DayActivity]:
-    """One entry per day, oldest first, with the empty days filled in.
-
-    Empty days are returned rather than skipped: a calendar is mostly a
-    picture of the gaps, and a client that only received the days with
-    activity would have to invent them back.
-    """
+    """One entry per day, oldest first, gaps included — a calendar is mostly
+    a picture of the gaps."""
     span = max(1, min(days, MAX_DAYS))
     today = date.today()
     first = today - timedelta(days=span - 1)

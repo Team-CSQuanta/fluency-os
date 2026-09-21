@@ -32,8 +32,6 @@ import sqlite3
 from app.services import (
     cefr_lexicon,
     conversation_report,
-    review,
-    scene_vocabulary,
     vatex_scenes,
     vocabulary_ai,
 )

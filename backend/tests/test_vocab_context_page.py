@@ -1,10 +1,7 @@
 """Where a word was saved from.
 
-A word met on a printed page has no block to point at — the selection is a
-run of boxes on an image, not a paragraph the extractor recorded. Before
-this, every word saved while reading a PDF was stored with no source at all:
-the entry could not say where it came from, which is the whole value of
-saving it in the first place.
+A word met on a printed page has no block to point at, so it records the
+page instead.
 """
 
 PARAGRAPH = " ".join(["word"] * 120)

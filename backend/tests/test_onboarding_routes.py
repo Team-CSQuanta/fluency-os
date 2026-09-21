@@ -49,7 +49,7 @@ def test_onboarding_round_trip(client, auth_headers):
     companion_res = client.post(
         f"/users/{user_id}/companion",
         headers=auth_headers,
-        json={"companion_species": "fox", "starting_biome": "meadow"},
+        json={"companion_species": "fox"},
     )
     assert companion_res.status_code == 204
 

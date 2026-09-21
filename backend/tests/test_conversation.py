@@ -5,7 +5,6 @@ models are never loaded in the automated suite.
 """
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -380,7 +379,6 @@ def test_delete_session_removes_row_turns_and_audio_files(tmp_path, fake_llm, mo
     conn = _fresh_conn(tmp_path)
     user_id = _make_user(conn)
     session_id = conversation.start_session(conn, user_id=user_id, scenario="free", channel="voice")
-    session = conversation.get_session_row(conn, session_id, user_id)
     turn = conn.execute("SELECT id, text FROM conversation_turns WHERE session_id = ?", (session_id,)).fetchone()
     # Per-sentence audio is written lazily and named off the turn id, so it is
     # not reachable through audio_path — deletion has to find it anyway.

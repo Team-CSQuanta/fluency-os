@@ -83,16 +83,10 @@ class WordHeat:
 def above_level_boxes(words: Sequence[str], target_cefr: str) -> list[WordHeat]:
     """Which of a printed page's boxed words are above level.
 
-    The reflowed view tints character ranges inside a paragraph it lays out
-    itself. A printed page has no character offsets to tint — it has boxes,
-    one per whitespace-separated token of the PDF's own text layer, and the
-    tint is drawn over the box. So difficulty is answered per box here.
-
-    A box carries whatever punctuation was attached to it ("vision,", "—the")
-    and occasionally more than one lexical word, so a box counts as above
-    level when anything inside it is, and reports the hardest thing it holds:
-    tinting a box is a promise that there is something hard in it, and the
-    reader should be told which word that is.
+    A page has boxes rather than character offsets, and a box carries its
+    punctuation ("vision,") and sometimes more than one word — so a box
+    counts as above level when anything in it is, and reports the hardest
+    word it holds.
     """
     if not cefr_lexicon.is_valid_band(target_cefr):
         return []

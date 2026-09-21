@@ -1,10 +1,5 @@
-"""The CEFR band a page is judged against.
-
-Both the reflowed view and the printed page tint against the reader's own
-level, and both are asked for it in the same three ways, so the rule lives
-here rather than once per router: an explicit request wins, then the reader's
-placement level, then B1.
-"""
+"""The CEFR band a page is judged against: an explicit request wins, then
+the reader's placement level, then B1. Shared by both routers that tint."""
 
 import sqlite3
 
@@ -18,11 +13,7 @@ class UnknownBand(ValueError):
 
 
 def resolve_target(conn: sqlite3.Connection, user_id: str | None, requested: str | None) -> str:
-    """The band to judge against. Raises UnknownBand for a bad request.
-
-    The same page tints differently for a B1 and a C1 reader, which is the
-    entire feature.
-    """
+    """The band to judge against. Raises UnknownBand for a bad request."""
     if requested:
         if not cefr_lexicon.is_valid_band(requested):
             raise UnknownBand(f"target_cefr must be one of {', '.join(cefr_lexicon.CEFR_ORDER)}")

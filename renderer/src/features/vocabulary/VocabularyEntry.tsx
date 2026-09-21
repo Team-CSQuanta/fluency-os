@@ -16,7 +16,6 @@ const RATING_COLOR: Record<string, string> = {
   good: 'var(--acc)',
   easy: '#3f9d5c',
 };
-import { POS_FULL } from '@/features/vocabulary/vocabMockData';
 import { useShellStore } from '@/store/shellStore';
 import { useVocabularyStore } from '@/store/vocabularyStore';
 import { ClipContext } from '@/features/vocabulary/ClipContext';
@@ -33,6 +32,15 @@ function holdsFor(days: number): string {
   const years = days / 365;
   return years < 1.5 ? 'a year' : `${Math.round(years)} years`;
 }
+
+/** Part-of-speech labels, spelled out for the entry page. */
+const POS_FULL: Record<string, string> = {
+  adj: 'adjective',
+  verb: 'verb',
+  adv: 'adverb',
+  noun: 'noun',
+  phrase: 'phrase',
+};
 
 export function VocabularyEntry() {
   const word = useShellStore((s) => s.selectedWord);

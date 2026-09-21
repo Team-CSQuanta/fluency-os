@@ -24,11 +24,8 @@ from app.utils.time import iso8601_utc_now
 
 router = APIRouter(prefix="/users", dependencies=[Depends(require_token)])
 
-# The profile picture is fetched by the browser itself, from an <img src>,
-# which cannot carry a custom header — so it takes the handshake token in the
-# query string instead, exactly as video and thumbnails already do. Without
-# this the picture stored fine and then failed to load, which looks like a
-# broken image and reads like a broken feature.
+# An <img src> cannot carry a custom header, so the picture takes the
+# handshake token in the query string, as video and thumbnails already do.
 file_router = APIRouter(prefix="/users", dependencies=[Depends(require_token_or_query)])
 
 
@@ -82,8 +79,7 @@ def get_user(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> UserOu
 
 _AVATAR_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                  ".webp": "image/webp", ".gif": "image/gif"}
-# A profile picture is shown at 48px. Anything beyond a few megabytes is a
-# photograph straight off a camera, and copying it in serves nobody.
+# Shown at 48px: beyond a few megabytes there is nothing to gain.
 _AVATAR_MAX_BYTES = 8 * 1024 * 1024
 
 
@@ -91,12 +87,8 @@ _AVATAR_MAX_BYTES = 8 * 1024 * 1024
 def update_profile(
     user_id: str, payload: ProfileUpdate, conn: sqlite3.Connection = Depends(get_db)
 ) -> UserOut:
-    """Change who you are: name, languages, level.
-
-    All of this was decided once during onboarding and then frozen — the
-    settings screen could show it and nothing could change it, which made a
-    typo in a display name permanent.
-    """
+    """Change name, languages or level. Every field is optional: the settings
+    screen saves one row at a time."""
     _get_user_row(conn, user_id)
     fields = payload.model_dump(exclude_none=True)
     if not fields:
@@ -123,9 +115,8 @@ def set_avatar(
 ) -> UserOut:
     """Copy a picture from disk into the data folder and use it.
 
-    Copied rather than referenced: a profile picture that lives in whichever
-    folder it was picked from disappears the day that folder is tidied, and
-    the reader is left with a broken face and no idea why.
+    Copied rather than referenced, so tidying the folder it came from cannot
+    break it.
     """
     source = Path(payload.path).expanduser()
     if not source.is_file():
@@ -322,11 +313,6 @@ def set_companion(
         "INSERT INTO app_meta (key, value) VALUES (?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (f"user:{user_id}:companion_species", payload.companion_species),
-    )
-    conn.execute(
-        "INSERT INTO app_meta (key, value) VALUES (?, ?) "
-        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        (f"user:{user_id}:starting_biome", payload.starting_biome),
     )
 
 

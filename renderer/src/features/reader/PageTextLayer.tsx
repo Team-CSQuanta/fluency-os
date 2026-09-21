@@ -25,21 +25,10 @@ import type {
 
 /** The page as printed, with its words made selectable.
  *
- * A rendered page is a picture. Everything a reader expects to be able to do
- * to text — drag across it, look a word up, mark a passage — needs to know
- * where the words are, and a picture does not say. The reader used to admit
- * this in a line under the page: "word lookup, highlighting and the
- * difficulty overlay work in the text view" — which is now the only view a
- * PDF has, so all of it happens here.
- *
- * So this lays an invisible word over every word: a transparent span, sized
- * and positioned to the box the PDF says the ink occupies. The browser's own
- * selection then works on the page exactly as it does on prose, which is how
- * every PDF viewer does this and why text in one can be selected at all.
- *
- * Coordinates arrive in the rendered image's pixels and are drawn as
- * percentages, so the layer follows the picture at any width without a
- * second round trip or a resize listener.
+ * A transparent span is laid over every word, sized to the box the PDF says
+ * the ink occupies, so the browser's own selection works on the picture as
+ * it does on prose. Coordinates arrive in the image's pixels and are drawn
+ * as percentages, so the layer follows the page at any width.
  */
 /** Stable empty list: a new [] from the selector would re-render forever. */
 const NO_LABELS: PageLabelOut[] = [];
@@ -110,13 +99,10 @@ export function PageTextLayer({
   // worth of geometry on every selection would make dragging stutter.
   const placed = useMemo(() => (layer ? placeWords(layer.words) : []), [layer]);
 
-  /* Which boxes are above the reader's level, by their position in the
-   * layer. The reflowed view tints character ranges inside text it lays out
-   * itself; here the server judges the page's own boxes and names them by
-   * index, so nothing has to be matched up by its spelling. */
-  /* Where the words a search hit matched sit on this page. Every page on
-   * screen lights them up, not just the one that was jumped to: the match
-   * you want is as often the next one down as the one you pressed. */
+  /* Which boxes are above the reader's level. The server judges the page's
+   * own boxes and names them by index, so nothing is matched by spelling. */
+  /* Every page on screen lights up its matches, not just the one jumped
+   * to: the match you want is as often the next one down. */
   const findHits = useMemo(
     () => (layer && find ? matchingWordIndices(layer.words, find.terms) : []),
     [layer, find],
@@ -188,9 +174,8 @@ export function PageTextLayer({
     [layer, highlights],
   );
 
-  /* The panels work from whatever the reader has selected, and on a printed
-   * page that is this. Published from one place rather than at each of the
-   * five points the selection changes, so clearing it cannot be forgotten. */
+  /* Published from one place rather than at each of the five points the
+   * selection changes, so clearing it cannot be forgotten. */
   useEffect(() => {
     setPageSelection(selection?.text ?? null);
   }, [selection, setPageSelection]);
@@ -204,15 +189,8 @@ export function PageTextLayer({
         const dragged = readSelection();
         setSelection(dragged);
         if (dragged) return;
-        /* Nothing selected, so this was a click rather than a drag — and a
-         * click on a mark opens it.
-         *
-         * The marks are painted under the invisible words, because the words
-         * have to be draggable for any of this to work at all. That left
-         * every mark under a word unclickable: the one thing the mark's own
-         * tooltip told you to do was the one thing you could not do, unless
-         * you happened to hit the space between two words. So the click is
-         * answered here, where it actually lands. */
+        /* A click, not a drag. Marks are painted under the invisible words,
+         * so a click on one never reaches it — it is answered here instead. */
         setOpenMark(markAt(e.clientX, e.clientY));
       });
     };
@@ -234,18 +212,9 @@ export function PageTextLayer({
     [selection, highlights],
   );
 
-  /* One place where a mark is made, changed or taken off.
-   *
-   * Selecting the words again is how a reader unmarks them. It was the
-   * obvious way to ask and there was no answer: the only way to remove a
-   * mark was to know you could click it. So:
-   *
-   *   a colour   sets this passage to that colour, replacing what was there
-   *              rather than laying a second mark over the first — two
-   *              highlights on one sentence print darker than either
-   *   "none"     takes off whatever is on these words
-   *   underline  goes on, or comes off if it is already there
-   */
+  /* Make, change or remove a mark on the selected words. A colour replaces
+   * whatever was there rather than stacking a second mark on it; "none"
+   * clears them; underline toggles. */
   const mark = async (colour: string, style: HighlightStyle) => {
     const current = selection;
     if (!current) return;
@@ -314,10 +283,8 @@ export function PageTextLayer({
     // Open the panel on the dictionary tab — the answer arrives where the
     // reader's lookups already live rather than in a second kind of popup.
     setPrefs({ panel_open: true, panel_tab: 'study' });
-    /* The word goes off with the sentence it sits in, not with the handful
-     * of words that happened to be dragged over. Selecting one word used to
-     * send that word as its own context, which is no context at all: it is
-     * what the AI is asked to explain and what the vocabulary entry keeps. */
+    /* The word goes off with the sentence it sits in: that is what the AI
+     * explains and what the vocabulary entry keeps. */
     const word = current.text.split(/\s+/)[0];
     let sentence = current.text;
     if (layer && current.rects.length > 0) {
@@ -354,10 +321,8 @@ export function PageTextLayer({
         <MarkRects key={h.id} mark={h} layer={layer} onOpen={() => setOpenMark(h)} />
       ))}
 
-      {/* The difficulty tint, under the words and under the marks: it is the
-          faintest thing on the page and must never compete with a highlight
-          the reader put there themselves. Drawn as boxes rather than as text
-          decoration, because the ink underneath belongs to the picture. */}
+      {/* The difficulty tint, under the words and the marks: it must never
+          compete with a highlight the reader put there themselves. */}
       {layer && showHeat && (
         <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} aria-hidden>
           {[...hotWords.keys()].map((i) => {
@@ -382,10 +347,8 @@ export function PageTextLayer({
         </div>
       )}
 
-      {/* Search matches, the brightest thing on the page for as long as the
-          search is up: the point of pressing a hit is to be shown where on a
-          page of small print the words actually are. Above the reader's own
-          marks, because this is temporary and theirs is not. */}
+      {/* Search matches, above the reader's own marks: this is temporary and
+          theirs is not. */}
       {layer && findHits.length > 0 && (
         <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} aria-hidden>
           {findHits.map((i) => {
@@ -610,16 +573,9 @@ function MarkMenu({
 
 /** A passage of the page, replaced in place by plainer words.
  *
- * Drawn over the area the original words occupy, with the page's own colour
- * behind it so the printed text underneath does not show through and make
- * both unreadable. The original is one click away and never thrown away: it
- * would be a poor thing to cover a source's actual words with a rewrite and
- * leave no way back to what was really printed.
- *
- * Sized from the original's own line height, so a label sits at the size of
- * the text it replaces rather than at some fixed size that looks pasted on.
- * Plainer words are usually longer than the ones they replace, so the box is
- * allowed to grow downward rather than clipping the end of a sentence.
+ * Drawn over the original with the page's colour behind it, sized from the
+ * original's line height, and free to grow downward since plainer words run
+ * longer. The original is one click away and never thrown away.
  */
 function SimplerWords({
   label,

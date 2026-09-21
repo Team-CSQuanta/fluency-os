@@ -69,7 +69,7 @@ export const SETTINGS_GROUPS: Record<SettingsGroupName, SettingsGroupDef> = {
   },
   Privacy: {
     sub: 'What stays on this machine, and what you can delete',
-    keywords: ['telemetry', 'network', 'offline', 'dictionary cache', 'clear', 'export', 'tracking'],
+    keywords: ['telemetry', 'network', 'offline', 'dictionary cache', 'clear', 'backup', 'tracking'],
   },
 };
 

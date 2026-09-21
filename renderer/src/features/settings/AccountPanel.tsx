@@ -9,12 +9,8 @@ import { reportError } from '@/store/errorStore';
 import { useAppStore } from '@/store/appStore';
 import type { SystemInfo } from '@/types/window';
 
-/* The same words onboarding writes.
- *
- * Onboarding stores a language by its name — "Bengali", not "bn" — and the
- * sidebar prints whatever is stored. Offering codes here would have quietly
- * rewritten a profile that reads "Bengali → English" into "bn → en" the
- * first time anyone touched the dropdown. */
+/* Onboarding stores a language by name — "Bengali", not "bn" — and the
+ * sidebar prints what is stored, so these have to match it. */
 const NATIVE_OPTIONS = SUPPORTED_NATIVE_LANGUAGES.map((l) => ({ value: l, label: l }));
 const TARGET_OPTIONS = SUPPORTED_TARGET_LANGUAGES.map((l) => ({ value: l, label: l }));
 const CEFR_OPTIONS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'].map((v) => ({ value: v, label: v }));
@@ -32,10 +28,7 @@ export function AccountPanel() {
     void window.fluencyos.getSystemInfo().then(setSystem);
   }, []);
 
-  /* Every one of these used to be a label. The name, the two languages and
-   * the level were chosen once during onboarding and then frozen, so a typo
-   * in a display name was permanent and moving to a new target language meant
-   * starting over. */
+
   const save = (patch: Parameters<typeof updateProfile>[0], what: string) => {
     void updateProfile(patch).catch((err) => reportError(err, what));
   };

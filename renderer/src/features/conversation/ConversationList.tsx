@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CONV_SCENARIOS } from '@/features/conversation/conversationMockData';
+import { CONV_SCENARIOS } from '@/features/conversation/conversationScenarios';
 import { useConversationStore } from '@/store/conversationStore';
 import { useEngineStore } from '@/store/engineStore';
 import { useShellStore } from '@/store/shellStore';

@@ -35,11 +35,7 @@ export const useDashboardStore = create<DashboardState>((set) => ({
   status: 'idle',
   error: null,
 
-  /* One load for the whole screen, in parallel.
-   *
-   * Every card here used to be drawn from a seeded random number generator,
-   * including the two whose only job is to say whether the reader actually
-   * showed up. The numbers all exist — they were simply never asked for. */
+  /* One load for the whole screen, in parallel. */
   load: async () => {
     const userId = useAppStore.getState().currentUserId;
     if (!userId) return;

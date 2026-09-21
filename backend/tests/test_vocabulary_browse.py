@@ -8,7 +8,6 @@ word: where it stands in the schedule.
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
 
 from app.config import settings
 from app.db import get_connection

@@ -12,7 +12,6 @@ class TreeOut(BaseModel):
 
     vocab_word_id: str
     word: str
-    biome: str
     # 0-5, Seed through Ancient tree.
     stage: int
     # FSRS days-until-90%-recall, which is what the stage is a band of.
@@ -24,23 +23,10 @@ class TreeOut(BaseModel):
     due: str | None = None
 
 
-class BiomeOut(BaseModel):
-    key: str
-    label: str
-    blurb: str
-    count: int
-
 
 class ForestOut(BaseModel):
-    """The forest as a picture of a vocabulary, and nothing else.
-
-    It used to carry a currency too — sunlight earned per review, spent on
-    streak freezes and on reviving a dormant tree. The freeze was the clearest
-    problem: it could be bought, it was counted, and nothing anywhere ever
-    consulted it, so the streak it promised to protect broke regardless. A
-    reward that does not work is worse than no reward, and the forest says
-    enough on its own: these are your words, this is how well you hold them.
-    """
+    """The forest as a picture of a vocabulary: these are your words, and
+    this is how well you hold them."""
 
     trees: list[TreeOut]
     # One count per growth stage, in stage order.
@@ -55,8 +41,8 @@ class FocusStartIn(BaseModel):
 
 
 class FocusOut(BaseModel):
-    """A block of time the learner sat through. A commitment device, not a
-    faucet: it pays nothing, it only records that it happened."""
+    """A block of time the learner sat through. It pays nothing; it records
+    that it happened."""
 
     id: str
     minutes: int

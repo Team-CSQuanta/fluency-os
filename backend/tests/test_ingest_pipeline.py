@@ -1,4 +1,3 @@
-from pathlib import Path
 
 from app.config import settings
 from app.db import get_connection

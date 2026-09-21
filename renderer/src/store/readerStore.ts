@@ -127,9 +127,8 @@ interface ReaderState {
    * A page selection is not a block: it can cross blocks and can cover a
    * caption or an equation the extractor never recorded. */
   pageSelectionText: string | null;
-  /** What a search hit matched, so the printed page can show where it is.
-   * `token` changes on every jump, which is what re-scrolls to the first
-   * match when the same hit is pressed twice. */
+  /** What a search hit matched, so the page can show where it is. `token`
+   * changes on every jump, so pressing the same hit re-scrolls to it. */
   find: { terms: string[]; page: number; token: number } | null;
   /** How tall a page is against its width, learned from the first page that
    * loads. Every slot in the book is that shape until proven otherwise, so a
@@ -287,7 +286,6 @@ const DEFAULT_PREFS: ReaderPrefsOut = {
   heat_on: true,
   panel_open: true,
   panel_tab: 'toc',
-  page_view: false,
   page_scroll: 'vertical',
   page_zoom: 1,
 };
@@ -502,9 +500,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     set({
       lookupStatus: 'loading',
       lookupBlockIndex: blockIndex ?? null,
-      // Kept rather than only sent: the sentence is what the AI explains and
-      // what the vocabulary entry remembers, and it used to be thrown away
-      // the moment the lookup returned.
+  
       lookupSentence: sentence?.trim() || null,
       lookupPage: page ?? null,
       explain: null,
@@ -545,8 +541,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       });
       set({ explain: result, explainStatus: 'idle' });
     } catch (err) {
-      // The server says why — no model, model still loading, a provider that
-      // refused — and that is worth more than a guess made here.
+      // The server says why: no model, still loading, a provider refused.
       set({
         explainStatus: 'error',
         explainError: friendlyMessage(err, 'Explaining this word in context'),
@@ -582,8 +577,8 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
               `/books/${bookId}/page-labels?user_id=${encodeURIComponent(userId)}&page=${page}`,
             )
           : Promise.resolve([] as PageLabelOut[]),
-        // Fetched with the layer because it indexes into it, and allowed to
-        // fail on its own: a page you cannot tint is still a page you can read.
+        // Fetched with the layer because it indexes into it; allowed to
+        // fail on its own.
         api
           .get<PageHeatOut>(
             `/books/${bookId}/page/${page}/heat${userId ? `?user_id=${encodeURIComponent(userId)}` : ''}`,
@@ -643,18 +638,11 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     const userId = useAppStore.getState().currentUserId;
     if (!bookId || !userId) return null;
 
-    /* The AI writes these, and nothing else may.
-     *
-     * The label is drawn OVER the printed words, so a wordlist substitution
-     * that happens to change nothing — which is what the offline modes do to
-     * most academic prose — covers a sentence with a copy of itself and looks
-     * like the feature ran and failed. The side panel is welcome to degrade,
-     * because it shows its answer beside the original and says what it did.
-     *
-     * Asked for before anything is sent, so a reader whose AI is not running
-     * gets the dialog that starts it rather than a wait and then a refusal —
-     * but only when the app has actually looked. Nobody having asked yet is
-     * not the same as the answer being no, and the server checks anyway. */
+    /* The AI writes these, and nothing else may: the label covers the
+     * printed words, and an offline mode that changes nothing would cover a
+     * sentence with a copy of itself. Checked before sending so a reader
+     * with no AI running gets the dialog that starts it, and only once the
+     * app has actually looked — unasked is not the same as no. */
     const engines = useEngineStore.getState().status;
     if (engines && engines.llm !== 'ready') {
       throw new ApiError(
@@ -733,9 +721,8 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
         `/reading/prefs?user_id=${encodeURIComponent(userId)}`,
       );
       if (prefsTouched) return;
-      // Merged onto the defaults rather than taken whole: a row saved by an
-      // older build has none of the fields added since, and reading one of
-      // those back undefined takes the reader down with it.
+      // Merged onto the defaults: a row saved by an older build is missing
+      // the fields added since, and reading one back undefined is fatal.
       set({ prefs: { ...DEFAULT_PREFS, ...prefs } });
     } catch {
       // Defaults are already in place; a failed load must not block reading.
@@ -789,10 +776,9 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       void get().levelBlock(levelBlockIndex, mode);
       return;
     }
-    // A passage from the printed page has no block to re-level, so it is
-    // levelled again from the words themselves. Only once something has
-    // actually been levelled: changing the mode is not a request to spend a
-    // generative call on a selection nobody has asked about.
+    // A page passage has no block to re-level, so it goes again from the
+    // words. Only once something has been levelled: changing the mode is not
+    // a request to spend a generative call.
     if (leveled && pageSelectionText) void get().levelSelection(pageSelectionText);
   },
 
@@ -814,9 +800,8 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       });
       // A slower earlier request must not overwrite a newer one's result.
       if (seq !== levelRequestSeq || get().bookId !== bookId) return;
-      // Shaped before it is stored: the panel maps over `segments` and
-      // `substitutions`, and an answer missing either used to take the whole
-      // reader down rather than degrade.
+      // Shaped before it is stored: the panel maps over both lists, and an
+      // answer missing either would take the reader down.
       set({
         leveled: {
           ...result,
@@ -840,9 +825,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
 
   setPageSelection: (text) => {
     const next = text?.trim() ? text.trim() : null;
-    // Set unconditionally and the store churns on every mouse-up over the
-    // page, re-rendering the whole reader for a selection that has not
-    // changed.
+    // Set unconditionally, this churns on every mouse-up over the page.
     if (get().pageSelectionText === next) return;
     set({ pageSelectionText: next });
   },

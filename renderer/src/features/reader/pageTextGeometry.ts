@@ -2,25 +2,11 @@ import type { PageWordOut } from '@/types/api';
 
 /** Turning a page's word boxes into spans a browser will select cleanly.
  *
- * The naive version — one absolutely-positioned span per word, at a fixed
- * small font size — selects badly, and the reason is worth writing down. A
- * browser paints the selection over the *text's* own extent, not over the
- * box the span was given. So 8px text sitting in a 20px-tall word box paints
- * an 8px mark floating in the middle of it, and because the glyphs are far
- * narrower than the box, the marks do not reach each other. The result is a
- * row of ragged ticks instead of the continuous band every PDF viewer draws.
- *
- * Three things fix it, and all three are needed:
- *
- *   1. the span's font size and line height are the LINE's height, so the
- *      painted band is as tall as the line;
- *   2. the glyphs are stretched horizontally to exactly fill the box, so the
- *      band is as wide as the word (see `stretchFor`);
- *   3. each word's box runs to where the NEXT word starts, and carries the
- *      space between them, so consecutive bands touch instead of leaving a
- *      gap at every space.
- *
- * This is what pdf.js does, and why text in Zotero selects the way it does.
+ * A browser paints a selection over the text's own extent, not over the box
+ * the span was given, so three things are needed for a continuous band: the
+ * font size is the line's height, the glyphs are stretched to fill the box
+ * (`stretchFor`), and each box runs to where the next word starts so the
+ * bands touch across spaces. Same approach as pdf.js.
  */
 
 /** A word, placed and sized so the browser will paint it as part of a band. */
@@ -186,23 +172,12 @@ export interface Box {
 
 /** One band per line, from the browser's box-per-word.
  *
- * Asking the browser which boxes a selection covers gives a box per word —
- * and, because a selection is painted over the height the font can reach
- * rather than the line box, two boxes for some of them, one a few pixels
- * taller than the other. Kept as they come, a highlight is dozens of
- * overlapping slabs of colour: it seams between every word and goes darker
- * wherever two of them meet.
- *
- * So the boxes on a line are gathered into one band, and neighbours on that
- * band are joined into one run. A gap wider than a space ends the run, which
- * is what keeps the two halves of a two-column page — or the two ends of a
- * running head — from being bridged by a stripe of colour across the middle
- * of the page.
- *
- * The band is the middling box of the line rather than the tallest one. The
- * tallest is the one the font could reach, which is a fifth taller than the
- * line it belongs to; a band that size runs into the line below, and a pen
- * that marks the line under the one you meant looks like a mistake.
+ * Unmerged, a highlight is dozens of overlapping slabs that seam at every
+ * space and darken where they meet. Boxes on a line are gathered into one
+ * band and neighbours joined; a gap wider than a space ends the run, so a
+ * two-column page is not bridged by a stripe across the middle. The band
+ * takes the middling box height, not the tallest — the tallest is what the
+ * font could reach and would run into the line below.
  */
 const LINE_OVERLAP = 0.5;
 const JOIN_GAP = 0.6;
@@ -260,16 +235,10 @@ export function mergeRects(rects: Box[]): Box[] {
 
 /** Is this mark the thing the reader has just selected?
  *
- * Asked when they select a passage and pick "none", or press underline on
- * text that is already underlined: the marks they mean are the ones under
- * the selection. Nothing on the page knows which words a mark covers — a
- * mark is a set of boxes — so the answer is how much of the two overlap.
- *
- * The share is taken against the SMALLER of the two, which is what makes
- * both readings work: selecting the whole of a highlighted sentence matches
- * it, and so does selecting two words inside a highlight that runs for three
- * lines. Measuring against the mark alone would fail the second, which is
- * the more likely way to ask.
+ * A mark is a set of boxes, not a range of words, so the answer is how much
+ * the two overlap. Measured against the smaller of the two: that way both
+ * selecting a whole highlighted sentence and selecting two words inside a
+ * three-line highlight count as a match.
  */
 const COVERED_SHARE = 0.3;
 

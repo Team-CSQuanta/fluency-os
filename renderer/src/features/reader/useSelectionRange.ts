@@ -81,12 +81,3 @@ export function getBlockSelectionRanges(): BlockSelectionRange[] {
   }
   return out;
 }
-
-/** The single block a selection sits in, or null when it spans more than one.
- *
- * Kept for the callers that genuinely need one paragraph — the AI and Level
- * panels act on a block at a time. */
-export function getBlockSelectionRange(): BlockSelectionRange | null {
-  const ranges = getBlockSelectionRanges();
-  return ranges.length === 1 ? ranges[0] : null;
-}

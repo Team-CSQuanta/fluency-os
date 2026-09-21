@@ -1,9 +1,7 @@
 import type { PageWordOut, SnippetSegmentOut } from '@/types/api';
 
-/* Words, as both the search index and the page's text layer understand them:
- * runs of letters or digits. Splitting this way is what lets a match inside
- * "state_us_abbreviation" light up, and what stops "us" from lighting up
- * every "because" on the page. */
+/* Runs of letters or digits: enough to match inside
+ * "state_us_abbreviation" without lighting up every "because". */
 const TOKEN_RE = /[\p{L}\p{N}]+/gu;
 
 function tokens(text: string): string[] {
@@ -11,12 +9,8 @@ function tokens(text: string): string[] {
 }
 
 /**
- * What a search hit actually matched, taken from the hit itself rather than
- * from the box the reader typed in.
- *
- * The two are not the same: the index stems, so a search for "using" comes
- * back matching "us" in one hit and "using" in another. Highlighting the
- * typed word would leave half the hits looking like misses.
+ * What a hit actually matched, which is not what was typed: the index stems,
+ * so "using" comes back matching "us" in one hit and "using" in another.
  */
 export function termsFromSnippet(snippet: readonly SnippetSegmentOut[]): string[] {
   const terms = new Set<string>();

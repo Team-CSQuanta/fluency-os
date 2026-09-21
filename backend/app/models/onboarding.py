@@ -27,12 +27,8 @@ class UserOut(BaseModel):
 
 
 class ProfileUpdate(BaseModel):
-    """Editing who you are, after onboarding is over.
-
-    Every field optional: the settings screen saves one row at a time, and a
-    patch that insisted on all of them would make changing a display name a
-    chance to overwrite a language by accident.
-    """
+    """Editing who you are, after onboarding. Every field is optional so a
+    patch cannot overwrite a language while fixing a name."""
 
     display_name: str | None = None
     native_language: str | None = None
@@ -41,12 +37,8 @@ class ProfileUpdate(BaseModel):
 
 
 class AvatarIn(BaseModel):
-    """A picture already on this machine.
-
-    A path rather than an upload, because that is how every other file gets
-    into FluencyOS: the reader picks it in their own file dialog and the app
-    copies it in.
-    """
+    """A picture already on this machine — a path, as with every other file
+    the app takes in."""
 
     path: str
 
@@ -82,4 +74,3 @@ class UserSettingsUpdate(BaseModel):
 
 class CompanionUpdate(BaseModel):
     companion_species: Literal["fox", "owl", "deer", "cat"]
-    starting_biome: str

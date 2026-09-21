@@ -10,7 +10,6 @@ int8 quantization (~114MB model + ~28MB voices)."""
 import io
 import threading
 import wave
-from pathlib import Path
 
 import numpy as np
 

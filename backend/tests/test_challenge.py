@@ -12,7 +12,7 @@ import pytest
 
 from app.db import get_connection
 from app.migrations.runner import run_migrations
-from app.services import challenge, scene_vocabulary, vocabulary_ai
+from app.services import challenge, vocabulary_ai
 from app.utils.ids import uuid7
 from app.utils.time import iso8601_utc_now
 
@@ -749,6 +749,6 @@ def test_enrichment_offers_due_words_first(conn):
     from app.utils.time import iso8601_utc_ago
 
     _word(conn, "zebra", due=None)
-    due = _word(conn, "simmer", due=iso8601_utc_ago(days=1))
+    _word(conn, "simmer", due=iso8601_utc_ago(days=1))
     order = [r["word"] for r in challenge.enrichment_candidates(conn, "u1")]
     assert order[0] == "simmer", f"due word should lead, got {order}"

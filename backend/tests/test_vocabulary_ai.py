@@ -7,7 +7,7 @@ the real model is never loaded in the automated suite.
 
 import pytest
 
-from app.services import conversation, vocabulary_ai
+from app.services import conversation
 from app.services.voice import llm_chat_engine
 
 
@@ -142,7 +142,7 @@ def test_ai_examples_route_respects_count_and_caps_it(client, auth_headers, fake
 
 def test_ai_examples_route_404s_for_unowned_word(client, auth_headers, fake_generate_json):
     user_id = _create_user(client, auth_headers)
-    res = client.post(f"/vocabulary/does-not-exist/ai-examples", headers=auth_headers, params={"user_id": user_id})
+    res = client.post("/vocabulary/does-not-exist/ai-examples", headers=auth_headers, params={"user_id": user_id})
     assert res.status_code == 404
 
 
@@ -159,7 +159,7 @@ def test_ai_mnemonic_route_generates_and_persists(client, auth_headers, fake_gen
     assert "mural" in res.json()["mnemonic"]
 
     # Persisted — shows up on the word itself without regenerating.
-    detail = client.get(f"/vocabulary/by-word/ephemeral", headers=auth_headers, params={"user_id": user_id}).json()
+    detail = client.get("/vocabulary/by-word/ephemeral", headers=auth_headers, params={"user_id": user_id}).json()
     assert detail["ai_mnemonic"] == "EPHEMERAL sounds like 'a fair mural' — painted, then gone."
 
 

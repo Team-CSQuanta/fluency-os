@@ -1,9 +1,5 @@
-"""The dashboard's consistency calendar.
-
-This card's whole job is to answer "did I show up?", so the one thing it must
-never do is invent days. It reads two tables — pages from reading_sessions,
-cards from review_logs — and has to agree with what those tables say.
-"""
+"""The dashboard's consistency calendar: pages from reading_sessions, cards
+from review_logs, and it has to agree with what those tables say."""
 
 from datetime import date, timedelta
 

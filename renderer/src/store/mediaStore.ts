@@ -171,9 +171,8 @@ export const useMediaStore = create<MediaState>((set, get) => ({
       if (query.trim()) params.set('q', query.trim());
       const data = await api.get<LibraryOut>(`/media?${params.toString()}`);
       set({
-        // Defaulted rather than taken whole: a list that comes back absent
-        // used to become undefined in the store and take down whichever
-        // screen mapped over it next.
+        // Defaulted: a list that comes back absent would become undefined
+        // and take down whichever screen maps over it next.
         items: data.items ?? [],
         recent: data.recent ?? [],
         counts: data.counts,

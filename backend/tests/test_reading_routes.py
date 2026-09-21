@@ -142,8 +142,6 @@ def test_lookup_returns_a_real_definition_with_no_model(client, auth_headers):
     assert body["pos"] == "adjective"
     assert body["senses"][0]["definition"]
     assert "reserved" in body["synonyms"]
-    # Explaining the word in its sentence needs generation — never faked.
-    assert body["context_available"] is False
 
 
 def test_lookup_resolves_an_inflected_form(client, auth_headers):

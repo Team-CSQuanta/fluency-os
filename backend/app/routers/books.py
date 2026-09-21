@@ -392,12 +392,9 @@ def get_page_heat(
 ) -> PageHeatOut:
     """Which words on a printed page are above the reader's level.
 
-    The difficulty tint is the reason this app exists, and until now it only
-    existed in the reflowed view: a reader on the publisher's own page — the
-    one with the figures, the tables and the equations — was told nothing
-    about which words were going to be hard. Same lexicon, same target, same
-    answer as /reading/heat gives for a block; only the coordinates differ,
-    because a page has boxes where a paragraph has character offsets.
+    Same lexicon and target as /reading/heat gives for a block; only the
+    coordinates differ, because a page has boxes rather than character
+    offsets.
     """
     row = _get_book_row(conn, book_id)
     try:

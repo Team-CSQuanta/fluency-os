@@ -11,11 +11,8 @@ interface ProfileState {
   refresh: () => Promise<void>;
 }
 
-/* The two numbers under the reader's name in the sidebar.
- *
- * They were a pair of string constants — "1,847 words", "23 streak" — beside
- * a level bar for a level system that does not exist. Two cheap calls, kept
- * out of the heavier screens' stores because this runs on every screen. */
+/* The two numbers under the reader's name in the sidebar. Kept out of the
+ * heavier screens' stores because this runs on every screen. */
 export const useProfileStore = create<ProfileState>((set) => ({
   words: null,
   streakDays: null,

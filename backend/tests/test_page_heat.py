@@ -1,11 +1,5 @@
-"""Difficulty heat on the printed page.
-
-The tint is the reason the app exists, and it used to exist only in the
-reflowed view: a reader on the publisher's own page — the one with the
-figures and the equations — was told nothing about which words were hard.
-These are the same judgements /reading/heat makes for a block, in the
-coordinates a page has.
-"""
+"""Difficulty heat on the printed page: the same judgements /reading/heat
+makes for a block, in the coordinates a page has."""
 
 import fitz
 import pytest

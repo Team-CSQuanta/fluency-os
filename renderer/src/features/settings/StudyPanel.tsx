@@ -126,11 +126,6 @@ export function StudyPanel() {
           sub="Four kinds of question — what a word means, how to say it, filling it into a gap, and hearing it — mixed together rather than grouped, so two cards in a row are rarely the same kind."
           control={<Pill>all four</Pill>}
         />
-        <Row
-          label="Leeches"
-          sub="A card lapsed enough times is a card the wording is wrong for, not a card you need more of. Reworking them is not built yet."
-          control={<Pill>not built</Pill>}
-        />
       </Section>
     </>
   );

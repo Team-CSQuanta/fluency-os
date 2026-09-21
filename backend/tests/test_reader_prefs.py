@@ -33,7 +33,6 @@ PREFS = {
     "heat_on": False,
     "panel_open": False,
     "panel_tab": "marks",
-    "page_view": True,
     "page_scroll": "horizontal",
     "page_zoom": 1.5,
 }
@@ -54,9 +53,6 @@ def test_reader_with_no_settings_row_gets_defaults(client, auth_headers):
         "heat_on": True,
         "panel_open": True,
         "panel_tab": "toc",
-        # A book opens in the text view: lookup, highlighting and the
-        # difficulty overlay all live there.
-        "page_view": False,
         # Pages run down the screen, the way a document does everywhere else.
         "page_scroll": "vertical",
         # The whole page, as large as the window will show it.
@@ -169,8 +165,8 @@ def test_page_zoom_is_bounded_server_side(client, auth_headers):
 
 
 def test_page_layout_is_optional_for_older_clients(client, auth_headers):
-    """Same contract as page_view: a client that predates the fields saves the
-    rest of the panel instead of being rejected for omitting them."""
+    """A client that predates these fields saves the rest of the panel rather
+    than being rejected for omitting them."""
     user_id = _create_user(client, auth_headers)
     without = {k: v for k, v in PREFS.items() if k not in ("page_scroll", "page_zoom")}
 
@@ -181,13 +177,3 @@ def test_page_layout_is_optional_for_older_clients(client, auth_headers):
     assert res.json()["page_zoom"] == 1.0
 
 
-def test_page_view_is_optional_for_older_clients(client, auth_headers):
-    """A client that predates the setting must still be able to save the rest
-    of the panel rather than being rejected for omitting one field."""
-    user_id = _create_user(client, auth_headers)
-    without = {k: v for k, v in PREFS.items() if k != "page_view"}
-
-    res = client.put("/reading/prefs", headers=auth_headers, json={"user_id": user_id, **without})
-
-    assert res.status_code == 200
-    assert res.json()["page_view"] is False

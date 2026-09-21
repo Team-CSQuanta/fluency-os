@@ -109,14 +109,9 @@ export function PrivacyPanel() {
         />
       </Section>
 
-      <Section
-        title="Backup and export"
-        note="Not built yet. Listed because the shape of it is decided and the absence is worth knowing about — everything below is a promise, not a feature."
-      >
-        <Row label="Backup archive" sub="database, manifest and clips in one file" control={<Pill>not built</Pill>} />
-        <Row label="Export" sub="CSV and Anki .apkg, so nothing here is locked in" control={<Pill>not built</Pill>} />
+      <Section title="Backup">
         <Row
-          label="Meanwhile"
+          label="Your whole library"
           sub="The data folder in Account holds everything. Copying it is a complete backup, and putting it back is a complete restore."
           control={<Pill tone="ok">copy the folder</Pill>}
         />

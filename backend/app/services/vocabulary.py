@@ -449,14 +449,10 @@ def _add_context_if_new(
     block_index: int | None,
     page: int | None = None,
 ) -> None:
-    """Record where the word was met, if this place is not already recorded.
+    """Record where the word was met, if that place is not already recorded.
 
-    A word met in reflowed text arrives with a block; one met on a printed
-    page arrives with a page instead, because a selection there is a run of
-    boxes on an image rather than a paragraph anything recorded. Either is
-    enough to say where the word came from, and that sentence is the whole
-    value of the entry later: a word with no context is a flashcard with no
-    memory attached.
+    Reflowed text supplies a block; a printed page supplies a page instead,
+    since a selection there is a run of boxes rather than a paragraph.
     """
     if not sentence or book_id is None or (block_index is None and page is None):
         return

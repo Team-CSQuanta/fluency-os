@@ -11,7 +11,7 @@ import urllib.error
 import pytest
 
 from app.services import conversation
-from app.services.voice import cloud_llm_engine, engine_status, model_catalog
+from app.services.voice import cloud_llm_engine, engine_status
 from app.services.voice.errors import EngineUnavailable
 
 
@@ -175,7 +175,7 @@ def test_ensure_launched_never_blocks_cloud_on_local_load_state(tmp_path):
     """The whole point of the cloud provider: no local "launch" step. Even
     with nothing loaded locally, a cloud target with an API key must pass."""
     conn = _fresh_conn(tmp_path)
-    user_id = _make_user(conn)
+    _make_user(conn)
     target = {"provider": "openrouter", "model": "openai/gpt-4o-mini", "api_key": "sk-or-v1-real"}
     conversation._ensure_launched({"llm"}, llm_target=target)  # must not raise
 

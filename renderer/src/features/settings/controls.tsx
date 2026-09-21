@@ -176,9 +176,8 @@ export function Slider({
 
 /** For the things this page reports but does not own — the model, the voice,
  * the clip engine. Sends you to the screen that does own them. */
-/** A value you can type over. Saves when you leave the field or press
- * Enter, because a settings row that saves on every keystroke writes a row
- * per letter and shows a failure halfway through a word. */
+/** A value you can type over. Saves on blur or Enter — saving per keystroke
+ * would write a row per letter. */
 export function EditableText({
   value,
   onSave,
@@ -256,10 +255,3 @@ export function Choice<T extends string>({
   );
 }
 
-export function GoTo({ children, onClick }: { children: ReactNode; onClick: () => void }) {
-  return (
-    <button onClick={onClick} className="font-mono text-[10.5px] text-acc hover:underline">
-      {children}
-    </button>
-  );
-}

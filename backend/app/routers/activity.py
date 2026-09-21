@@ -14,12 +14,7 @@ router = APIRouter(prefix="/activity", dependencies=[Depends(require_token)])
 def get_activity(
     user_id: str, days: int = 365, conn: sqlite3.Connection = Depends(get_db)
 ) -> ActivityOut:
-    """Pages read and cards answered on each of the last `days` days.
-
-    The dashboard drew this from a seeded random number generator before it
-    drew it from anything real, which made the one card on the screen whose
-    whole job is honesty — did I show up? — the one card that lied.
-    """
+    """Pages read and cards answered on each of the last `days` days."""
     rows = activity.daily(conn, user_id, days)
     return ActivityOut(
         days=[

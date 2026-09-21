@@ -8,15 +8,9 @@ import type { PageScroll } from '@/types/api';
 
 /** A book's printed pages, one after another.
  *
- * The reader used to show one page with a previous/next pager under it, which
- * is how a slideshow works and not how a book does: finding a figure three
- * pages on meant three round trips and three clicks, and there was no way to
- * look at a page more closely than the width of the text column allowed.
- *
- * So every page in the book has a place here from the start, and each one
- * fetches its own picture when it comes near the window and lets go of it
- * when it leaves. A 938-page book is 938 empty frames until you scroll to
- * them, which costs a few hundred kilobytes of layout and nothing else.
+ * Every page has a place from the start; each fetches its picture when it
+ * comes near the window and lets go when it leaves, so a 938-page book is
+ * 938 empty frames until you scroll to them.
  */
 
 const GAP = 18;
@@ -85,19 +79,15 @@ export function PageScroller({
     : Math.max(120, box.w - PAD * 2);
   const width = Math.round(whole * zoom);
 
-  /* Which page the reader is on, and which page they asked for, are the same
-   * number arriving from two directions. This holds the last value that
-   * passed through, so scrolling does not fight a jump from the contents. */
+  /* The last page number that passed through, from either direction, so
+   * scrolling does not fight a jump from the contents. */
   const settled = useRef(page);
-  /* Until the book has been opened AT the page it was left on, nothing the
-   * pages say about where the reader is can be believed. The list starts at
-   * the top, so the first page would otherwise announce itself as where the
-   * reader is — and that announcement is written down as their place. */
+  /* Until the book has been opened at the page it was left on, nothing the
+   * pages report about position can be believed: the list starts at the top,
+   * and page 1 would be written down as the reader's place. */
   const placed = useRef(false);
-  /* Scrolling the reader somewhere is not the reader scrolling. Moving to a
-   * page makes the pages either side of it cross the middle of the window on
-   * the way past, and each of those crossings looks exactly like the reader
-   * having gone there. */
+  /* Moving to a page drags every page in between across the middle of the
+   * window, and each crossing looks like the reader having gone there. */
   const quietUntil = useRef(0);
 
   const reachFor = useCallback(
@@ -128,12 +118,9 @@ export function PageScroller({
     reachFor(page);
   }, [page, root, reachFor]);
 
-  /* Scrolling to a search match.
-   *
-   * Here rather than in the page that draws the match, because this is the
-   * component that owns the scroll: a child scrolling itself into view fires
-   * while the page ratio it just learned is still being applied to every
-   * slot above it, and lands a page out. */
+  /* Scrolling to a search match. Here rather than in the page that draws it:
+   * a child scrolling itself into view fires while the page ratio it just
+   * learned is still being applied above it, and lands a page out. */
   const find = useReaderStore((s) => s.find);
   const layers = useReaderStore((s) => s.layers);
   const scrolledForFind = useRef<number | null>(null);

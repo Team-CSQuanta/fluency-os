@@ -17,17 +17,12 @@ import { useShellStore } from '@/store/shellStore';
 import { useVocabularyStore } from '@/store/vocabularyStore';
 import type { ChapterOut, HighlightColour, SearchHitOut } from '@/types/api';
 
-/* Four, grouped by what a reader is actually doing: finding a place in the
- * book, finding a word in it, coming back to what they marked, and working
- * on the passage in front of them. Lookup and simpler-words were separate
- * tabs that both act on the selection and were never useful apart; the
- * reading settings were a tab of their own for three controls, and now sit
- * at the foot of the panel where they do not compete with the work. */
+/* Four, grouped by what the reader is doing: find a place, find a word,
+ * come back to what they marked, work on the passage in front of them. */
 type Tab = 'toc' | 'search' | 'marks' | 'study';
 
-/** Tabs that were their own before the panel was grouped. A stored
- * preference outlives a redesign, and landing someone on Contents because
- * their last tab was renamed reads as the app forgetting where they were. */
+/** Tabs that were their own before the panel was grouped: a stored
+ * preference outlives a redesign. */
 const LEGACY_TABS: Record<string, Tab> = { ai: 'study', level: 'study', text: 'toc' };
 
 const TAB_ICONS: Record<Tab, string> = {
@@ -37,9 +32,7 @@ const TAB_ICONS: Record<Tab, string> = {
   study: 'M8 2.6a3 3 0 013 3c0 1.6-1.4 2.2-2.2 3-.4.4-.5.9-.5 1.4 M8 12.6v.8',
 };
 
-/* One word each, because the panel is 308px wide and the tab is the label:
- * the old panel printed the tab's name again in a header under it, which
- * spent a fifth of the height saying what the pressed button already said. */
+/* One word each: the tab is the label, and the panel is 308px wide. */
 const TAB_META: Record<Tab, { label: string; empty: string }> = {
   toc: { label: 'Contents', empty: 'This book has no chapter markers.' },
   search: { label: 'Search', empty: 'Search the whole book.' },
@@ -184,12 +177,8 @@ export function Reader() {
    * carry: figures, plates, equations set as images, the layout itself. Only
    * PDFs have one — every other format is reflowable and never had a page. */
   const canShowPage = Boolean(book?.has_page_images);
-  /* A PDF is read on its own pages. The reflowed view remains the only way
-   * to read a book that never had pages — an EPUB, a plain text file — but
-   * for a PDF it was a second, worse rendering of a book the reader already
-   * had in front of them: the extractor's line breaks, without the figures,
-   * the tables or the equations. Everything that used to be text-only now
-   * works on the page itself, so there is nothing left to switch to. */
+  /* A PDF is read on its own pages. The reflowed view remains for books
+   * that never had pages — EPUB, plain text — where it is the only option. */
   const showingPage = canShowPage;
   const zoom = prefs.page_zoom;
   // null while not being edited, so the box shows wherever the reader
@@ -255,9 +244,8 @@ export function Reader() {
       if (pageSelectionText) void levelSelection(pageSelectionText);
       return;
     }
-    // selectedPara defaults to the first block of the page, so without this
-    // opening a book with the Level tab active spent a generative call on a
-    // paragraph that had not even loaded yet.
+    // selectedPara defaults to the page's first block, so without this,
+    // opening with Study active spends a call on a paragraph nobody chose.
     if (selectedPara === null || blocks.length === 0) return;
     void levelBlock(selectedPara);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -320,9 +308,8 @@ export function Reader() {
 
   // Heat spans for the blocks on screen, indexed for O(1) lookup per block.
   // The panel's own switch gates it on top of the per-book heat_overlay flag.
-  /* The two views count difficulty from different places — blocks have
-   * character spans, a page has boxes — so the switch, the count and the
-   * summary all read from whichever one is on screen. */
+  /* Blocks have character spans, a page has boxes, so the count comes from
+   * whichever view is on screen. */
   const pageHeatHere = useReaderStore((s) => s.pageHeat[s.page] ?? null);
   const heatAvailable = showingPage ? (pageHeatHere?.enabled ?? true) : heatEnabled;
   const heatCount = showingPage ? (pageHeatHere?.total_above_level ?? 0) : heatTotal;
@@ -347,10 +334,8 @@ export function Reader() {
   };
   const fsPct = Math.round(((fontSize - 12) / 10) * 100);
   const selectedBlock = blocks.find((b) => b.block_index === selectedPara);
-  /* What the Study panel works on. A paragraph in the reflowed view, and on
-   * the printed page whatever words the reader dragged over — the panel is
-   * the same panel either way, so it asks for the selection rather than for
-   * a block. */
+  /* What the Study panel works on: a paragraph in the reflowed view, the
+   * dragged-over words on a printed page. */
   const selectedText = showingPage ? (pageSelectionText ?? '') : (selectedBlock?.text ?? '');
 
   const currentChapter = [...toc].reverse().find((c) => c.start_block <= (blocks[0]?.block_index ?? 0));
@@ -387,9 +372,8 @@ export function Reader() {
   // A drag-selection is handled on mouseUp (below); the click that follows
   // it would otherwise also fire and mark the whole block a second time, so
   // that click is swallowed once via this flag.
-  /* A colour armed in the text view has nothing to mark on a printed page,
-   * so switching over disarms it rather than leaving the pill lit in the top
-   * bar promising something it cannot do. */
+  /* A colour armed in the text view has nothing to mark on a page, so
+   * switching over disarms it. */
   useEffect(() => {
     if (showingPage) setHighlighterColor(null);
   }, [showingPage]);
@@ -449,9 +433,7 @@ export function Reader() {
     void jumpToBlock(targetPage, blockIndex);
   };
 
-  /* Pressing a hit does two things: go to the page, and light up the words
-   * it matched once you are there. Going to the page was all it used to do,
-   * which on a page of small print leaves you to find the word yourself. */
+  /* Go to the page, then light up the words the hit matched. */
   const handleJumpToHit = (hit: SearchHitOut) => {
     handleJumpTo(hit.page, hit.block_index);
     findOnPage(termsFromSnippet(hit.snippet), hit.page);
@@ -881,8 +863,7 @@ export function Reader() {
                           ? 'search failed'
                           : `${searchHits.length} match${searchHits.length === 1 ? '' : 'es'} in this book`}
                   </span>
-                  {/* The only way to put the page back the way it was
-                      without emptying the search box. */}
+
                   {find && (
                     <button onClick={clearFind} className="flex-none text-acc hover:underline">
                       clear the marks on the page
@@ -919,11 +900,8 @@ export function Reader() {
 
             {tab === 'marks' && (
               <div className="flex flex-col gap-[13px]">
-                {/* Arming a colour marks *blocks* of reflowed text, which the
-                    printed page does not have: there you select words and the
-                    toolbar over the selection carries its own colours. The
-                    swatches did nothing whatsoever on a printed page, so they
-                    are offered only in the view that can act on them. */}
+                {/* Arming a colour marks blocks of reflowed text, which a
+                    printed page does not have. */}
                 {showingPage ? (
                   <div className="font-mono text-[10px] leading-[1.7] text-tx3">
                     select words on the page to mark them · click a mark to change or remove it
@@ -952,10 +930,8 @@ export function Reader() {
                     <span className="font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
                       Bookmarks · {bookmarks.length}
                     </span>
-                    {/* A bookmark is anchored to a block, so a page the
-                        extractor found no text on — a plate, a full-page
-                        figure — cannot carry one. It used to be an ordinary
-                        button that quietly did nothing there. */}
+                    {/* A bookmark is anchored to a block, so a page with no
+                        extracted text cannot carry one. */}
                     <button
                       onClick={handleBookmarkPage}
                       disabled={blocks.length === 0}
@@ -1173,8 +1149,7 @@ export function Reader() {
                       <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
                         In this sentence
                       </div>
-                      {/* The sentence the word was met in, quoted back, so it
-                          is clear what any explanation is explaining. */}
+                      {/* The sentence the word was met in. */}
                       {lookupSentence && (
                         <div className="mb-[9px] rounded-field border border-line2 px-[10px] py-[8px] font-sans text-[11px] leading-[1.7] text-tx3">
                           “{lookupSentence}”
@@ -1209,11 +1184,8 @@ export function Reader() {
                         </div>
                       ) : (
                         <>
-                          {/* This used to be a flat claim that the feature
-                              "needs a local model — not installed yet", printed
-                              whether or not a model was running. The work is
-                              real and it is done here; if the engine cannot
-                              take it, the engine says so in its own words. */}
+                          {/* If the engine cannot take it, the engine says
+                              why — this never guesses. */}
                           <button
                             onClick={() => void explainInContext()}
                             disabled={explainStatus === 'loading'}
@@ -1238,11 +1210,8 @@ export function Reader() {
                       <>
                         <button
                           onClick={async () => {
-                            // The sentence the lookup was made with, falling
-                            // back to the paragraph in the reflowed view. On a
-                            // printed page there is no paragraph, which is why
-                            // words saved there used to arrive with no context
-                            // at all.
+                            // The sentence the lookup was made with, or the
+                            // paragraph in the reflowed view.
                             const sentence =
                               lookupSentence ??
                               blocks.find((b) => b.block_index === lookupBlockIndex)?.text;
@@ -1408,11 +1377,8 @@ export function Reader() {
 
           </div>
 
-          {/* Reading settings: three controls that used to be a tab of their
-              own, which meant leaving the book's contents to change the tint.
-              Shut by default — they are set once and then left alone — and
-              summarised on the strip so opening it is never needed to see
-              where they stand. */}
+          {/* Reading settings, shut by default and summarised on the strip
+              so opening it is rarely needed. */}
           <div className="flex-none border-t border-line2">
             <button
               onClick={() => setSettingsOpen((v) => !v)}
@@ -1431,9 +1397,7 @@ export function Reader() {
 
             {settingsOpen && (
               <div className="flex max-h-[46vh] flex-col gap-4 overflow-y-auto border-t border-line2 px-[13px] py-[13px]">
-                {/* Size belongs to reflowed text; a printed page is zoomed
-                    instead, and offering both would mean offering one that
-                    does nothing. */}
+                {/* Size belongs to reflowed text; a page is zoomed. */}
                 {showingPage ? (
                   <div>
                     <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">Page size</div>

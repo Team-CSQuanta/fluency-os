@@ -63,7 +63,6 @@ export interface UserSettingsUpdate {
 
 export interface CompanionUpdate {
   companion_species: CompanionSpecies;
-  starting_biome: string;
 }
 
 export interface PlacementQuestion {
@@ -185,7 +184,6 @@ export interface ReaderPrefsOut {
   panel_open: boolean;
   panel_tab: PanelTab;
   /** Show a PDF's own typeset page beside the extracted text. */
-  page_view: boolean;
   /** Whether those pages run down the screen or across it. */
   page_scroll: PageScroll;
   /** A multiple of the width that fits the window, so 1 is a whole page. */
@@ -383,8 +381,6 @@ export interface WordLookupOut {
   /** False when the word isn't in the offline lexicon at all. */
   found: boolean;
   /** Explaining the word in its sentence needs a model — Phase 7. */
-  context_available: boolean;
-  context_note: string | null;
 }
 
 export type VocabContextKind = 'clip' | 'page' | 'turn';
@@ -1072,7 +1068,6 @@ export interface ScenePoolOut {
 export interface TreeOut {
   vocab_word_id: string;
   word: string;
-  biome: string;
   /** 0-5: Seed, Sprout, Seedling, Sapling, Young tree, Ancient tree. */
   stage: number;
   /** FSRS days-until-90%-recall, which is what the stage is a band of. */

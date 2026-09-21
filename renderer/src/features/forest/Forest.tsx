@@ -75,13 +75,7 @@ export function Forest() {
   return (
     <div className="flex h-full min-h-0">
       <div className="flex min-w-0 flex-1 flex-col p-[var(--pad)]">
-        {/* One forest.
-            The trees used to be split across five named regions — Meadow,
-            Cinema Clearing, Library Grove, Conversation Riverbank, Challenge
-            Highlands — filtered by where each word was first met. Sorting a
-            reader's own vocabulary by which feature caught it is the app's
-            filing system, not theirs: what a word is worth does not depend on
-            whether it arrived from a film or a page. */}
+
 
         <div className="relative min-h-0 flex-1 overflow-hidden rounded-panel border border-line2">
           {trees.length === 0 ? (

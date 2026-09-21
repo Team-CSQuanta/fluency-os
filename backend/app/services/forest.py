@@ -32,28 +32,10 @@ from app.utils.time import iso8601_utc_now
 STAGES = ("Seed", "Sprout", "Seedling", "Sapling", "Young tree", "Ancient tree")
 STAGE_DAYS = (1.0, 3.0, 7.0, 21.0, 60.0)
 
-# Where a word was met becomes the ground it grows on. Keyed by
-# vocab_contexts.kind, which the rest of the app already records.
-BIOMES: dict[str, dict[str, str]] = {
-    "meadow": {"label": "Meadow", "blurb": "Words you looked up and kept on purpose."},
-    "cinema": {"label": "Cinema Clearing", "blurb": "Caught while watching something."},
-    "library": {"label": "Library Grove", "blurb": "Met on a page."},
-    "river": {"label": "Conversation Riverbank", "blurb": "Said out loud first."},
-    "highlands": {"label": "Challenge Highlands", "blurb": "Reached for under time."},
-}
-# vocab_contexts.kind is constrained to exactly these three (see the vocabulary
-# migration), and they map one-to-one onto where the learner was standing:
-# a subtitle, a page, or a conversation turn.
-_KIND_TO_BIOME = {"clip": "cinema", "page": "library", "turn": "river"}
-_SOURCE_TO_BIOME = {"conversation": "river", "challenge": "highlands"}
-
-
-
 @dataclass(frozen=True)
 class Tree:
     vocab_word_id: str
     word: str
-    biome: str
     stage: int
     stability: float
     health: int
@@ -86,14 +68,6 @@ def health_for(*, lapses: int, overdue_days: float) -> int:
     # Full health to nothing over a fortnight overdue.
     wilt = min(1.0, overdue_days / 14.0)
     return max(0, round(scarred * (1.0 - wilt)))
-
-
-def _biome_for(kind: str | None, first_source: str | None) -> str:
-    """Where the word was met. A word produced in conversation before it was
-    ever saved belongs by the river, whatever page it later turned up on."""
-    if first_source in _SOURCE_TO_BIOME:
-        return _SOURCE_TO_BIOME[first_source]
-    return _KIND_TO_BIOME.get(kind or "", "meadow")
 
 
 def trees(conn: sqlite3.Connection, user_id: str) -> list[Tree]:
@@ -129,13 +103,11 @@ def trees(conn: sqlite3.Connection, user_id: str) -> list[Tree]:
             Tree(
                 vocab_word_id=row["id"],
                 word=row["word"],
-                biome=_biome_for(row["first_kind"], row["first_source"]),
                 stage=stage_for(row["stability"], row["state"]),
                 stability=round(row["stability"] or 0.0, 2),
                 health=health,
-                # Dormant, not dead. A month past due with no review is a tree
-                # that has dropped its leaves, and reviving it is a thing the
-                # learner can choose to spend on.
+                # Dormant, not dead: a month past due with no review is a
+                # tree that has dropped its leaves. Reviewing it wakes it.
                 dormant=bool(row["suspended"]) or overdue > 30,
                 lapses=row["lapses"] or 0,
                 spontaneous_uses=row["spontaneous"] or 0,
@@ -201,14 +173,11 @@ def complete_focus(conn: sqlite3.Connection, *, session_id: str, user_id: str) -
 def summary(conn: sqlite3.Connection, user_id: str) -> dict:
     """Everything the Forest screen needs, in one call."""
     all_trees = trees(conn, user_id)
-    by_biome: dict[str, int] = {key: 0 for key in BIOMES}
     by_stage = [0] * len(STAGES)
     for tree in all_trees:
-        by_biome[tree.biome] = by_biome.get(tree.biome, 0) + 1
         by_stage[tree.stage] += 1
     return {
         "trees": all_trees,
-        "biomes": by_biome,
         "stages": by_stage,
         "dormant": sum(1 for t in all_trees if t.dormant),
     }

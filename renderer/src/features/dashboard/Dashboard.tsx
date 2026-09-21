@@ -23,8 +23,7 @@ const HEAT_LEVEL_BG = [
   'var(--acc)',
 ];
 
-/* A day's shade. Pages and cards are different units, so they are weighted
- * into one "did something happen here" score rather than compared: the
+/* Pages and cards are different units, weighted into one score: the
  * calendar answers whether the reader showed up, not what they did. */
 function heatLevel(day: DayActivityOut): number {
   const score = day.pages + day.reviews / 3 + day.minutes / 10;
@@ -57,8 +56,8 @@ function CardLabel({ children }: { children: ReactNode }) {
   );
 }
 
-/** Shown in place of a number that has not arrived, so a card never prints a
- * confident zero it has not earned. */
+/** Stands in for a number that has not arrived, so no card prints a zero
+ * it has not earned. */
 function Pending() {
   return <span className="text-tx3">—</span>;
 }
@@ -89,8 +88,7 @@ export function Dashboard() {
   }, [fetchLibrary, load]);
 
   const dueTotal = review ? review.due_now + review.new_available : 0;
-  // Roughly fifteen seconds a card, which is what the review screen's own
-  // pacing works out at. Stated as an estimate because it is one.
+  // Roughly fifteen seconds a card, which is the review screen's pacing.
   const dueMinutes = Math.max(1, Math.round((dueTotal * 15) / 60));
 
   const forecastMax = useMemo(

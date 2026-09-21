@@ -79,8 +79,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     const id = get().currentUserId;
     if (!id) return;
     const user = await api.put<UserOut>(`/users/${id}/avatar`, { path });
-    // The URL does not change when the picture does, so without this the
-    // browser keeps showing the old face until the app restarts.
+    // The URL does not change when the picture does; without this the
+    // browser keeps showing the old face.
     set((s) => ({ currentUser: user, avatarVersion: s.avatarVersion + 1 }));
   },
 

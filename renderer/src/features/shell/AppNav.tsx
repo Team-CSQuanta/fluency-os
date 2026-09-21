@@ -57,9 +57,7 @@ export function AppNav() {
                 : 'repeating-linear-gradient(135deg,var(--tile) 0 5px,var(--tileB) 5px 10px)',
             }}
           >
-            {/* The reader's own picture, or the initial of the name they gave
-                — either is better than the word "photo", which is what stood
-                here whether or not one had ever been set. */}
+            {/* Their picture, or the initial of the name they gave. */}
             {currentUser?.has_avatar ? (
               <img
                 src={avatarUrl(currentUser.id, avatarVersion)}
