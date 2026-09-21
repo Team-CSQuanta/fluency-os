@@ -29,6 +29,13 @@ def covers_dir() -> Path:
     return d
 
 
+def avatars_dir() -> Path:
+    """Profile pictures, beside the books and the covers they sit with."""
+    d = _data_dir() / "avatars"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def page_images_dir(book_id: str) -> Path:
     """Rendered page images for one book.
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BlockText } from '@/features/reader/BlockText';
 import { PageScroller, ZOOM_STEPS, zoomIn, zoomOut } from '@/features/reader/PageScroller';
 import { HIGHLIGHT_COLOURS } from '@/features/reader/PageSelectionToolbar';
@@ -8,31 +8,43 @@ import {
   MODE_LABELS,
   OFFLINE_MODES,
 } from '@/features/reader/readerConstants';
+import { buildTocRows, isTocRowVisible } from '@/features/reader/tocTree';
+import { termsFromSnippet } from '@/features/reader/pageFind';
 import { getBlockSelectionRanges } from '@/features/reader/useSelectionRange';
 import { useReadingSession } from '@/features/reader/useReadingSession';
 import { useReaderStore } from '@/store/readerStore';
 import { useShellStore } from '@/store/shellStore';
 import { useVocabularyStore } from '@/store/vocabularyStore';
-import type { ChapterOut, HighlightColour } from '@/types/api';
+import type { ChapterOut, HighlightColour, SearchHitOut } from '@/types/api';
 
-type Tab = 'toc' | 'search' | 'marks' | 'text' | 'ai' | 'level';
+/* Four, grouped by what a reader is actually doing: finding a place in the
+ * book, finding a word in it, coming back to what they marked, and working
+ * on the passage in front of them. Lookup and simpler-words were separate
+ * tabs that both act on the selection and were never useful apart; the
+ * reading settings were a tab of their own for three controls, and now sit
+ * at the foot of the panel where they do not compete with the work. */
+type Tab = 'toc' | 'search' | 'marks' | 'study';
+
+/** Tabs that were their own before the panel was grouped. A stored
+ * preference outlives a redesign, and landing someone on Contents because
+ * their last tab was renamed reads as the app forgetting where they were. */
+const LEGACY_TABS: Record<string, Tab> = { ai: 'study', level: 'study', text: 'toc' };
 
 const TAB_ICONS: Record<Tab, string> = {
   toc: 'M2.5 4h11 M2.5 8h11 M2.5 12h7',
   search: 'M7 2.5a4.5 4.5 0 100 9 4.5 4.5 0 000-9z M10.4 10.4L13.5 13.5',
   marks: 'M4 2.5h8v11l-4-3-4 3z',
-  text: 'M2 12l3.2-8h1.6L10 12 M3.4 9.2h5.2 M11 5.5h3.5 M11 8.5h3.5 M11 11.5h3.5',
-  ai: 'M8 2.6a3 3 0 013 3c0 1.6-1.4 2.2-2.2 3-.4.4-.5.9-.5 1.4 M8 12.6v.8',
-  level: 'M3 13h3l7.2-7.2-3-3L3 10z M10.2 2.8l3 3',
+  study: 'M8 2.6a3 3 0 013 3c0 1.6-1.4 2.2-2.2 3-.4.4-.5.9-.5 1.4 M8 12.6v.8',
 };
 
-const TAB_META: Record<Tab, { label: string; title: string; hint: string }> = {
-  toc: { label: 'Contents', title: 'Table of contents', hint: 'Jump to any chapter. Current chapter is marked.' },
-  search: { label: 'Search', title: 'Search in book', hint: 'Full-text search across the whole book.' },
-  marks: { label: 'Bookmarks', title: 'Highlights & bookmarks', hint: 'Colour, note, and every highlight in this book.' },
-  text: { label: 'Text', title: 'Text size & display', hint: 'Size, theme, difficulty tint and read-aloud.' },
-  ai: { label: 'AI', title: 'AI explanation', hint: 'Meaning, pronunciation and sense in context.' },
-  level: { label: 'Level', title: 'Adaptive text label', hint: 'Rewrites of the selection at your target level.' },
+/* One word each, because the panel is 308px wide and the tab is the label:
+ * the old panel printed the tab's name again in a header under it, which
+ * spent a fifth of the height saying what the pressed button already said. */
+const TAB_META: Record<Tab, { label: string; empty: string }> = {
+  toc: { label: 'Contents', empty: 'This book has no chapter markers.' },
+  search: { label: 'Search', empty: 'Search the whole book.' },
+  marks: { label: 'Marks', empty: 'Highlights and bookmarks in this book.' },
+  study: { label: 'Study', empty: 'Select a word or a passage on the page.' },
 };
 
 type PageTheme = 'auto' | 'light' | 'sepia' | 'dark';
@@ -60,6 +72,25 @@ function TabIcon({ tab, color }: { tab: Tab; color: string }) {
   return (
     <svg viewBox="0 0 16 16" className="h-[13px] w-[13px] flex-none" fill="none" stroke={color} strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round">
       <path d={TAB_ICONS[tab]} />
+    </svg>
+  );
+}
+
+/** The disclosure arrow on a chapter that has subsections: it points at the
+ * row when closed and down into the subsections when open. */
+function DisclosureArrow({ open, color }: { open: boolean; color: string }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className="h-[9px] w-[9px] flex-none transition-transform duration-150"
+      style={{ transform: open ? 'rotate(90deg)' : 'none' }}
+      fill="none"
+      stroke={color}
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M6 3.5L10.5 8 6 12.5" />
     </svg>
   );
 }
@@ -102,6 +133,9 @@ export function Reader() {
   const removePageHighlight = useReaderStore((s) => s.removePageHighlight);
   const searchStatus = useReaderStore((s) => s.searchStatus);
   const setSearchQuery = useReaderStore((s) => s.setSearchQuery);
+  const findOnPage = useReaderStore((s) => s.findOnPage);
+  const clearFind = useReaderStore((s) => s.clearFind);
+  const find = useReaderStore((s) => s.find);
   const heat = useReaderStore((s) => s.heat);
   const heatEnabled = useReaderStore((s) => s.heatEnabled);
   const heatTarget = useReaderStore((s) => s.heatTarget);
@@ -109,7 +143,15 @@ export function Reader() {
   const lookup = useReaderStore((s) => s.lookup);
   const lookupStatus = useReaderStore((s) => s.lookupStatus);
   const lookupBlockIndex = useReaderStore((s) => s.lookupBlockIndex);
+  const lookupSentence = useReaderStore((s) => s.lookupSentence);
+  const lookupPage = useReaderStore((s) => s.lookupPage);
+  const explain = useReaderStore((s) => s.explain);
+  const explainStatus = useReaderStore((s) => s.explainStatus);
+  const explainError = useReaderStore((s) => s.explainError);
+  const explainInContext = useReaderStore((s) => s.explainInContext);
   const lookupWord = useReaderStore((s) => s.lookupWord);
+  const pageSelectionText = useReaderStore((s) => s.pageSelectionText);
+  const levelSelection = useReaderStore((s) => s.levelSelection);
   const levelMode = useReaderStore((s) => s.levelMode);
   const setLevelMode = useReaderStore((s) => s.setLevelMode);
   const leveled = useReaderStore((s) => s.leveled);
@@ -123,21 +165,32 @@ export function Reader() {
   const [selectedPara, setSelectedPara] = useState(0);
 
   // Display preferences are per-reader and persisted (spec Phase 2 step 5) —
-  // the Text panel used to forget all of this on every book open.
+  // the reading settings used to forget all of this on every book open.
   const prefs = useReaderStore((s) => s.prefs);
   const setPrefs = useReaderStore((s) => s.setPrefs);
   const loadPrefs = useReaderStore((s) => s.loadPrefs);
   const { font_size: fontSize, page_theme: pageTheme, heat_on: heatOn, panel_open: panelOpen } = prefs;
-  const tab = prefs.panel_tab;
+  // Falls back rather than trusting the stored name: the panel a reader last
+  // had open is persisted, and a tab that no longer exists must not blank the
+  // whole reader.
+  const stored = prefs.panel_tab as string;
+  const tab: Tab = TAB_META[stored as Tab] ? (stored as Tab) : (LEGACY_TABS[stored] ?? 'toc');
   const setTab = (next: Tab) => setPrefs({ panel_tab: next });
   const setPanelOpen = (next: boolean) => setPrefs({ panel_open: next });
   const [showOriginal, setShowOriginal] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   /* The book's own typeset page, for the things the text pipeline cannot
    * carry: figures, plates, equations set as images, the layout itself. Only
    * PDFs have one — every other format is reflowable and never had a page. */
   const canShowPage = Boolean(book?.has_page_images);
-  const showingPage = prefs.page_view && canShowPage;
+  /* A PDF is read on its own pages. The reflowed view remains the only way
+   * to read a book that never had pages — an EPUB, a plain text file — but
+   * for a PDF it was a second, worse rendering of a book the reader already
+   * had in front of them: the extractor's line breaks, without the figures,
+   * the tables or the equations. Everything that used to be text-only now
+   * works on the page itself, so there is nothing left to switch to. */
+  const showingPage = canShowPage;
   const zoom = prefs.page_zoom;
   // null while not being edited, so the box shows wherever the reader
   // actually is rather than the last thing they typed into it.
@@ -182,7 +235,7 @@ export function Reader() {
   }, [page]);
 
   // Scroll a jump target into view once its page has actually rendered, and
-  // select it so the AI/Level panels act on the paragraph you jumped to.
+  // select it so the Study panel acts on the paragraph you jumped to.
   useEffect(() => {
     if (focusBlock === null) return;
     if (!blocks.some((b) => b.block_index === focusBlock)) return;
@@ -197,10 +250,18 @@ export function Reader() {
   // couple of seconds per generative call, pre-leveling a 800-block book would
   // be half an hour of work for text nobody may open.
   useEffect(() => {
-    if (tab !== 'level' || selectedPara === null) return;
+    if (tab !== 'study') return;
+    if (showingPage) {
+      if (pageSelectionText) void levelSelection(pageSelectionText);
+      return;
+    }
+    // selectedPara defaults to the first block of the page, so without this
+    // opening a book with the Level tab active spent a generative call on a
+    // paragraph that had not even loaded yet.
+    if (selectedPara === null || blocks.length === 0) return;
     void levelBlock(selectedPara);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, selectedPara, bookId]);
+  }, [tab, selectedPara, bookId, showingPage, pageSelectionText, blocks.length]);
 
   useEffect(() => {
     setPageDraft(null);
@@ -259,23 +320,80 @@ export function Reader() {
 
   // Heat spans for the blocks on screen, indexed for O(1) lookup per block.
   // The panel's own switch gates it on top of the per-book heat_overlay flag.
-  const showHeat = heatOn && heatEnabled;
+  /* The two views count difficulty from different places — blocks have
+   * character spans, a page has boxes — so the switch, the count and the
+   * summary all read from whichever one is on screen. */
+  const pageHeatHere = useReaderStore((s) => s.pageHeat[s.page] ?? null);
+  const heatAvailable = showingPage ? (pageHeatHere?.enabled ?? true) : heatEnabled;
+  const heatCount = showingPage ? (pageHeatHere?.total_above_level ?? 0) : heatTotal;
+  const showHeat = heatOn && heatAvailable;
+  const heatLine = !heatAvailable
+    ? 'turned off for this book in its import settings'
+    : !heatOn
+      ? `${heatCount} word${heatCount === 1 ? '' : 's'} above ${heatTarget} on this page`
+      : heatCount === 0
+        ? `nothing above ${heatTarget} on this page`
+        : `${heatCount} word${heatCount === 1 ? '' : 's'} above ${heatTarget} on this page · hover one for a simpler word`;
+  const settingsSummary = [
+    showingPage ? `${Math.round(zoom * 100)}%` : `${fontSize.toFixed(0)}px`,
+    PAGE_THEMES.find((t) => t.key === pageTheme)?.label.toLowerCase() ?? pageTheme,
+    heatOn ? 'tint on' : 'tint off',
+  ].join(' · ');
   const heatByBlock = new Map(heat.map((h) => [h.block_index, h.spans]));
 
   const handleWordClick = (word: string, sentence: string, blockIndex: number) => {
-    setTab('ai');
+    setTab('study');
     void lookupWord(word, sentence, blockIndex);
   };
   const fsPct = Math.round(((fontSize - 12) / 10) * 100);
   const selectedBlock = blocks.find((b) => b.block_index === selectedPara);
-  const selectedText = selectedBlock?.text ?? '';
+  /* What the Study panel works on. A paragraph in the reflowed view, and on
+   * the printed page whatever words the reader dragged over — the panel is
+   * the same panel either way, so it asks for the selection rather than for
+   * a block. */
+  const selectedText = showingPage ? (pageSelectionText ?? '') : (selectedBlock?.text ?? '');
 
   const currentChapter = [...toc].reverse().find((c) => c.start_block <= (blocks[0]?.block_index ?? 0));
+
+  const tocRows = useMemo(() => buildTocRows(toc), [toc]);
+
+  const [openChapters, setOpenChapters] = useState<ReadonlySet<string>>(new Set());
+
+  /* Chapters start closed, so a long book opens as a list of chapters rather
+   * than of every subsection it has — but the chapter you are reading is
+   * opened for you, otherwise the contents would not show where you are.
+   * Only a move to a different chapter does this, so closing one by hand
+   * stays closed while you read it. */
+  useEffect(() => {
+    const row = tocRows.find((r) => r.chapter.id === currentChapter?.id);
+    if (!row || row.ancestors.length === 0) return;
+    setOpenChapters((prev) => {
+      if (row.ancestors.every((id) => prev.has(id))) return prev;
+      const next = new Set(prev);
+      for (const id of row.ancestors) next.add(id);
+      return next;
+    });
+  }, [currentChapter?.id, tocRows]);
+
+  const toggleChapter = (id: string) => {
+    setOpenChapters((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  };
   const breadcrumb = currentChapter?.label ?? book?.title ?? '';
 
   // A drag-selection is handled on mouseUp (below); the click that follows
   // it would otherwise also fire and mark the whole block a second time, so
   // that click is swallowed once via this flag.
+  /* A colour armed in the text view has nothing to mark on a printed page,
+   * so switching over disarms it rather than leaving the pill lit in the top
+   * bar promising something it cannot do. */
+  useEffect(() => {
+    if (showingPage) setHighlighterColor(null);
+  }, [showingPage]);
+
   const handleParaClick = (i: number) => {
     if (justDraggedRef.current) {
       justDraggedRef.current = false;
@@ -331,6 +449,14 @@ export function Reader() {
     void jumpToBlock(targetPage, blockIndex);
   };
 
+  /* Pressing a hit does two things: go to the page, and light up the words
+   * it matched once you are there. Going to the page was all it used to do,
+   * which on a page of small print leaves you to find the word yourself. */
+  const handleJumpToHit = (hit: SearchHitOut) => {
+    handleJumpTo(hit.page, hit.block_index);
+    findOnPage(termsFromSnippet(hit.snippet), hit.page);
+  };
+
   const handleBookmarkPage = () => {
     if (blocks.length === 0) return;
     const label = breadcrumb || `Page ${page}`;
@@ -366,7 +492,7 @@ export function Reader() {
     </div>
   );
 
-  const tabs: Tab[] = ['toc', 'search', 'marks', 'text', 'ai', 'level'];
+  const tabs: Tab[] = ['toc', 'search', 'marks', 'study'];
   const isTurning = readerStatus === 'loading' && blocks.length > 0;
 
   return (
@@ -488,24 +614,6 @@ export function Reader() {
             )}
 
             <span className="min-w-0 flex-1" />
-            {canShowPage && (
-              <button
-                onClick={() => setPrefs({ page_view: !prefs.page_view })}
-                title={
-                  showingPage
-                    ? 'Back to the text, where lookup and highlighting live'
-                    : "Show the book's own page, with its figures and layout"
-                }
-                className="flex-none rounded-field border px-[9px] py-[3px] font-mono text-[10px] transition-colors"
-                style={{
-                  borderColor: showingPage ? 'var(--accLine)' : 'var(--line2)',
-                  background: showingPage ? 'var(--accSoft)' : 'transparent',
-                  color: showingPage ? 'var(--acc)' : 'var(--tx3)',
-                }}
-              >
-                {showingPage ? 'original page' : 'show original page'}
-              </button>
-            )}
             <span className="flex-none">{Math.round(percent)}% read</span>
           </div>
         </div>
@@ -535,7 +643,7 @@ export function Reader() {
                 {finishBlock}
                 <p className="pt-[10px] text-center font-mono text-[9.5px] leading-[1.7] text-tx3">
                   select any text to highlight it, look it up, or ask for it in simpler
-                  words · the difficulty overlay still works in the text view
+                  words · words above your level are tinted on the page
                 </p>
               </div>
             }
@@ -576,14 +684,6 @@ export function Reader() {
                     It's a full-page image, a plate, or a blank leaf — there was no prose
                     here to extract.
                   </p>
-                  {canShowPage && (
-                    <button
-                      onClick={() => setPrefs({ page_view: true })}
-                      className="mt-[11px] rounded-field border border-line px-[13px] py-[7px] font-mono text-[10.5px] text-tx2 transition-colors hover:border-acc hover:text-acc"
-                    >
-                      show the original page
-                    </button>
-                  )}
                 </div>
               )}
               </div>
@@ -675,7 +775,7 @@ export function Reader() {
 
       {panelOpen && (
         <aside className="flex min-h-0 w-[308px] flex-none flex-col border-l border-line2 bg-panel">
-          <div className="grid flex-none grid-cols-3 gap-[2px] px-[9px] pt-[9px]">
+          <div className="grid flex-none grid-cols-4 gap-[2px] px-[9px] pt-[9px]">
             {tabs.map((t) => {
               const on = tab === t;
               return (
@@ -696,13 +796,7 @@ export function Reader() {
             })}
           </div>
 
-          <div className="mt-[9px] flex flex-none items-start gap-[10px] border-y border-line2 px-[13px] py-[10px]">
-            <div className="min-w-0 flex-1">
-              <div className="mb-[5px] font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
-                {TAB_META[tab].title}
-              </div>
-              <div className="font-sans text-[10.5px] leading-[1.6] text-tx2">{TAB_META[tab].hint}</div>
-            </div>
+          <div className="mt-[9px] flex flex-none items-center justify-end border-y border-line2 px-[13px] py-[6px]">
             <button
               onClick={() => setPanelOpen(false)}
               title="Collapse panel"
@@ -720,23 +814,49 @@ export function Reader() {
                     {book ? 'This book has no chapter markers.' : 'Loading…'}
                   </div>
                 )}
-                {toc.map((c) => {
+                {tocRows.map((row) => {
+                  if (!isTocRowVisible(row, openChapters)) return null;
+                  const { chapter: c, hasChildren } = row;
                   const on = currentChapter?.id === c.id;
+                  const open = openChapters.has(c.id);
+                  const colour = on ? 'var(--acc)' : 'var(--tx2)';
                   return (
-                    <button
+                    <div
                       key={c.id}
-                      onClick={() => handleJumpToChapter(c)}
-                      className="flex items-baseline justify-between gap-[10px] rounded-field px-[9px] py-2 text-left hover:bg-line2"
+                      data-toc-row
+                      className="flex items-baseline rounded-field hover:bg-line2"
                       style={{ background: on ? 'var(--accSoft)' : 'transparent', borderLeft: `2px solid ${on ? 'var(--acc)' : 'transparent'}` }}
                     >
-                      <span
-                        className="min-w-0 font-sans text-[11.5px] leading-[1.5]"
-                        style={{ color: on ? 'var(--acc)' : 'var(--tx2)', fontWeight: on ? 600 : 400, paddingLeft: c.depth * 10 }}
-                      >
-                        {c.label}
+                      {/* The arrow keeps its width on a chapter without
+                          subsections, so every label starts on the same line. */}
+                      <span className="flex flex-none self-center" style={{ paddingLeft: 7 + c.depth * 10 }}>
+                        {hasChildren ? (
+                          <button
+                            onClick={() => toggleChapter(c.id)}
+                            aria-expanded={open}
+                            aria-label={`${open ? 'Hide' : 'Show'} the sections of ${c.label}`}
+                            title={open ? 'Hide the sections' : 'Show the sections'}
+                            className="flex h-[20px] w-[18px] items-center justify-center rounded-[3px] hover:bg-line"
+                          >
+                            <DisclosureArrow open={open} color={on ? 'var(--acc)' : 'var(--tx3)'} />
+                          </button>
+                        ) : (
+                          <span className="block w-[18px]" />
+                        )}
                       </span>
-                      <span className="flex-none font-mono text-[9.5px] text-tx3">{c.page}</span>
-                    </button>
+                      <button
+                        onClick={() => handleJumpToChapter(c)}
+                        className="flex min-w-0 flex-1 items-baseline justify-between gap-[10px] py-2 pl-[4px] pr-[9px] text-left"
+                      >
+                        <span
+                          className="min-w-0 font-sans text-[11.5px] leading-[1.5]"
+                          style={{ color: colour, fontWeight: on ? 600 : 400 }}
+                        >
+                          {c.label}
+                        </span>
+                        <span className="flex-none font-mono text-[9.5px] text-tx3">{c.page}</span>
+                      </button>
+                    </div>
                   );
                 })}
               </div>
@@ -751,20 +871,29 @@ export function Reader() {
                   placeholder="search this book…"
                   className="w-full rounded-field border border-line2 bg-transparent px-[10px] py-2 font-mono text-[11.5px] text-tx outline-none focus:border-accLine focus:bg-accSoft"
                 />
-                <div className="my-2 font-mono text-[9.5px] text-tx3">
-                  {searchQuery.trim() === ''
-                    ? 'type to search'
-                    : searchStatus === 'loading'
-                      ? 'searching…'
-                      : searchStatus === 'error'
-                        ? 'search failed'
-                        : `${searchHits.length} match${searchHits.length === 1 ? '' : 'es'} in this book`}
+                <div className="my-2 flex items-baseline justify-between gap-2 font-mono text-[9.5px] text-tx3">
+                  <span>
+                    {searchQuery.trim() === ''
+                      ? 'type to search'
+                      : searchStatus === 'loading'
+                        ? 'searching…'
+                        : searchStatus === 'error'
+                          ? 'search failed'
+                          : `${searchHits.length} match${searchHits.length === 1 ? '' : 'es'} in this book`}
+                  </span>
+                  {/* The only way to put the page back the way it was
+                      without emptying the search box. */}
+                  {find && (
+                    <button onClick={clearFind} className="flex-none text-acc hover:underline">
+                      clear the marks on the page
+                    </button>
+                  )}
                 </div>
                 <div className="flex flex-col gap-[7px]">
                   {searchHits.map((h, i) => (
                     <button
                       key={`${h.block_index}-${i}`}
-                      onClick={() => handleJumpTo(h.page, h.block_index)}
+                      onClick={() => handleJumpToHit(h)}
                       className="rounded-field border border-line2 px-[10px] py-[9px] text-left hover:border-acc"
                     >
                       <div className="font-sans text-[11px] leading-[1.6] text-tx2">
@@ -790,31 +919,52 @@ export function Reader() {
 
             {tab === 'marks' && (
               <div className="flex flex-col gap-[13px]">
-                <div>
-                  <div className="mb-[7px] font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">Colour</div>
-                  <div className="flex gap-[6px]">
-                    {Object.entries(HIGHLIGHT_COLORS).map(([name, hex]) => (
-                      <button
-                        key={name}
-                        onClick={() => setHighlighterColor(highlighterColor === name ? null : (name as HighlightColour))}
-                        title={name}
-                        className="h-[30px] flex-1 rounded-field"
-                        style={{ background: `${hex}8c`, border: `2px solid ${highlighterColor === name ? 'var(--tx)' : 'transparent'}` }}
-                      />
-                    ))}
+                {/* Arming a colour marks *blocks* of reflowed text, which the
+                    printed page does not have: there you select words and the
+                    toolbar over the selection carries its own colours. The
+                    swatches did nothing whatsoever on a printed page, so they
+                    are offered only in the view that can act on them. */}
+                {showingPage ? (
+                  <div className="font-mono text-[10px] leading-[1.7] text-tx3">
+                    select words on the page to mark them · click a mark to change or remove it
                   </div>
-                  <div className="mt-[7px] font-mono text-[10px] text-tx3">
-                    {highlighterColor ? `highlighter on · drag over text, or click a paragraph to mark it whole` : 'pick a colour, then drag over text (or click a paragraph)'}
+                ) : (
+                  <div>
+                    <div className="mb-[7px] font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">Colour</div>
+                    <div className="flex gap-[6px]">
+                      {Object.entries(HIGHLIGHT_COLORS).map(([name, hex]) => (
+                        <button
+                          key={name}
+                          onClick={() => setHighlighterColor(highlighterColor === name ? null : (name as HighlightColour))}
+                          title={name}
+                          className="h-[30px] flex-1 rounded-field"
+                          style={{ background: `${hex}8c`, border: `2px solid ${highlighterColor === name ? 'var(--tx)' : 'transparent'}` }}
+                        />
+                      ))}
+                    </div>
+                    <div className="mt-[7px] font-mono text-[10px] text-tx3">
+                      {highlighterColor ? `highlighter on · drag over text, or click a paragraph to mark it whole` : 'pick a colour, then drag over text (or click a paragraph)'}
+                    </div>
                   </div>
-                </div>
+                )}
                 <div className="border-t border-line2 pt-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <span className="font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
                       Bookmarks · {bookmarks.length}
                     </span>
+                    {/* A bookmark is anchored to a block, so a page the
+                        extractor found no text on — a plate, a full-page
+                        figure — cannot carry one. It used to be an ordinary
+                        button that quietly did nothing there. */}
                     <button
                       onClick={handleBookmarkPage}
-                      className="font-mono text-[9.5px] font-medium text-acc hover:underline"
+                      disabled={blocks.length === 0}
+                      title={
+                        blocks.length === 0
+                          ? 'There is no text on this page to anchor a bookmark to'
+                          : 'Bookmark this page'
+                      }
+                      className="font-mono text-[9.5px] font-medium text-acc hover:underline disabled:cursor-default disabled:text-tx3 disabled:no-underline disabled:hover:no-underline"
                     >
                       ＋ bookmark this page
                     </button>
@@ -915,13 +1065,16 @@ export function Reader() {
               </div>
             )}
 
-            {tab === 'ai' && (
+            {tab === 'study' && (
               <div className="flex flex-col gap-[14px]">
+                <div className="font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
+                  This word
+                </div>
                 {!lookup && lookupStatus !== 'loading' && (
                   <div className="font-mono text-[10.5px] leading-[1.7] text-tx3">
                     {showHeat
-                      ? 'Click a tinted word in the text to look it up.'
-                      : 'Turn on difficulty heat in the Text panel, then click a tinted word to look it up.'}
+                      ? 'Select a word on the page, or click a tinted one, to look it up.'
+                      : 'Select a word on the page to look it up · the tint for hard words is at the foot of this panel.'}
                   </div>
                 )}
 
@@ -1020,12 +1173,62 @@ export function Reader() {
                       <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
                         In this sentence
                       </div>
-                      {lookup.context_available && lookup.context_note ? (
-                        <div className="font-sans text-[12px] leading-[1.7] text-tx2">{lookup.context_note}</div>
-                      ) : (
-                        <div className="font-mono text-[10px] leading-[1.7] text-tx3">
-                          explaining the word in context needs a local model — not installed yet
+                      {/* The sentence the word was met in, quoted back, so it
+                          is clear what any explanation is explaining. */}
+                      {lookupSentence && (
+                        <div className="mb-[9px] rounded-field border border-line2 px-[10px] py-[8px] font-sans text-[11px] leading-[1.7] text-tx3">
+                          “{lookupSentence}”
                         </div>
+                      )}
+                      {explain ? (
+                        <div className="flex flex-col gap-[7px]">
+                          <div className="font-sans text-[12px] leading-[1.7] text-tx">
+                            {explain.definition}
+                          </div>
+                          {explain.example && (
+                            <div className="font-sans text-[11px] leading-[1.7] text-tx3">
+                              e.g. {explain.example}
+                            </div>
+                          )}
+                          {explain.synonyms.length > 0 && (
+                            <div className="flex flex-wrap gap-[5px]">
+                              {explain.synonyms.map((syn) => (
+                                <span
+                                  key={syn}
+                                  className="rounded-full border border-line2 px-[9px] py-1 font-sans text-[10.5px] text-tx2"
+                                >
+                                  {syn}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ) : !lookupSentence ? (
+                        <div className="font-mono text-[10px] leading-[1.7] text-tx3">
+                          look a word up from the page and its sentence comes with it
+                        </div>
+                      ) : (
+                        <>
+                          {/* This used to be a flat claim that the feature
+                              "needs a local model — not installed yet", printed
+                              whether or not a model was running. The work is
+                              real and it is done here; if the engine cannot
+                              take it, the engine says so in its own words. */}
+                          <button
+                            onClick={() => void explainInContext()}
+                            disabled={explainStatus === 'loading'}
+                            className="w-full rounded-field border border-accLine bg-accSoft py-[9px] font-sans text-[11.5px] font-medium text-acc hover:brightness-105 disabled:opacity-60"
+                          >
+                            {explainStatus === 'loading'
+                              ? 'asking the AI…'
+                              : '✧ explain it in this sentence'}
+                          </button>
+                          {explainStatus === 'error' && explainError && (
+                            <div className="mt-[7px] font-mono text-[10px] leading-[1.7] text-tx3">
+                              {explainError}
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
 
@@ -1035,12 +1238,20 @@ export function Reader() {
                       <>
                         <button
                           onClick={async () => {
-                            const sentence = blocks.find((b) => b.block_index === lookupBlockIndex)?.text;
+                            // The sentence the lookup was made with, falling
+                            // back to the paragraph in the reflowed view. On a
+                            // printed page there is no paragraph, which is why
+                            // words saved there used to arrive with no context
+                            // at all.
+                            const sentence =
+                              lookupSentence ??
+                              blocks.find((b) => b.block_index === lookupBlockIndex)?.text;
                             const { alreadySaved } = await saveWord({
                               word: lookup.word,
                               sentence,
                               bookId: bookId ?? undefined,
                               blockIndex: lookupBlockIndex ?? undefined,
+                              page: lookupPage ?? (showingPage ? page : undefined),
                             });
                             flashToast(
                               alreadySaved
@@ -1062,13 +1273,27 @@ export function Reader() {
               </div>
             )}
 
-            {tab === 'level' && (
-              <div className="flex flex-col gap-[13px]">
+            {tab === 'study' && (
+              <div className="mt-[6px] flex flex-col gap-[13px] border-t border-line2 pt-[14px]">
+                <div className="font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
+                  This passage, in simpler words
+                </div>
                 <div className="rounded-field border border-line2 p-[11px]">
                   <div className="mb-[6px] font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
                     Selection · {leveled?.target_cefr ?? heatTarget} target
                   </div>
-                  <div className="font-sans text-[11.5px] leading-[1.7] text-tx3">"{selectedText}"</div>
+                  {/* An empty quote reads as a bug rather than as an
+                      instruction, and the two views are asked for a
+                      selection in different ways. */}
+                  {selectedText ? (
+                    <div className="font-sans text-[11.5px] leading-[1.7] text-tx3">"{selectedText}"</div>
+                  ) : (
+                    <div className="font-sans text-[11.5px] leading-[1.7] text-tx3">
+                      {showingPage
+                        ? 'Drag over words on the page to put them in simpler words here — or press “simpler” on the selection to write them over the page itself.'
+                        : 'Click a paragraph to put it in simpler words here.'}
+                    </div>
+                  )}
                 </div>
                 <div className="flex flex-col gap-[5px]">
                   {LEVEL_MODES.map((m) => {
@@ -1181,31 +1406,93 @@ export function Reader() {
               </div>
             )}
 
-            {tab === 'text' && (
-              <div className="flex flex-col gap-4">
-                <div>
-                  <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">Text size</div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setPrefs({ font_size: Math.max(12, fontSize - 1) })}
-                      className="grid h-[34px] w-[34px] place-items-center rounded-field border border-line font-sans text-[13px] text-tx2 hover:border-acc hover:text-acc"
-                    >
-                      A−
-                    </button>
-                    <div className="h-[3px] flex-1 rounded-field bg-line2">
-                      <div className="h-[3px] rounded-field bg-acc" style={{ width: `${fsPct}%` }} />
+          </div>
+
+          {/* Reading settings: three controls that used to be a tab of their
+              own, which meant leaving the book's contents to change the tint.
+              Shut by default — they are set once and then left alone — and
+              summarised on the strip so opening it is never needed to see
+              where they stand. */}
+          <div className="flex-none border-t border-line2">
+            <button
+              onClick={() => setSettingsOpen((v) => !v)}
+              aria-expanded={settingsOpen}
+              className="flex w-full items-center justify-between gap-2 px-[13px] py-[9px] text-left hover:bg-line2"
+            >
+              <span className="flex items-center gap-[7px] font-mono text-[9.5px] text-tx3">
+                <svg viewBox="0 0 16 16" className="h-[11px] w-[11px] flex-none" fill="none" stroke="var(--tx3)" strokeWidth={1.3}>
+                  <circle cx="8" cy="8" r="2.4" />
+                  <path d="M8 1.6v1.6M8 12.8v1.6M14.4 8h-1.6M3.2 8H1.6M12.5 3.5l-1.1 1.1M4.6 11.4l-1.1 1.1M12.5 12.5l-1.1-1.1M4.6 4.6L3.5 3.5" />
+                </svg>
+                {settingsSummary}
+              </span>
+              <DisclosureArrow open={settingsOpen} color="var(--tx3)" />
+            </button>
+
+            {settingsOpen && (
+              <div className="flex max-h-[46vh] flex-col gap-4 overflow-y-auto border-t border-line2 px-[13px] py-[13px]">
+                {/* Size belongs to reflowed text; a printed page is zoomed
+                    instead, and offering both would mean offering one that
+                    does nothing. */}
+                {showingPage ? (
+                  <div>
+                    <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">Page size</div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setPrefs({ page_zoom: zoomOut(zoom) })}
+                        disabled={zoom <= ZOOM_STEPS[0]}
+                        className="grid h-[34px] w-[34px] place-items-center rounded-field border border-line font-sans text-[15px] text-tx2 hover:border-acc hover:text-acc disabled:opacity-40"
+                      >
+                        −
+                      </button>
+                      <div className="h-[3px] flex-1 rounded-field bg-line2">
+                        <div
+                          className="h-[3px] rounded-field bg-acc"
+                          style={{
+                            width: `${((ZOOM_STEPS.findIndex((z) => z === zoom) + 1) / ZOOM_STEPS.length) * 100}%`,
+                          }}
+                        />
+                      </div>
+                      <button
+                        onClick={() => setPrefs({ page_zoom: zoomIn(zoom) })}
+                        disabled={zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1]}
+                        className="grid h-[34px] w-[34px] place-items-center rounded-field border border-line font-sans text-[15px] font-semibold text-tx2 hover:border-acc hover:text-acc disabled:opacity-40"
+                      >
+                        +
+                      </button>
                     </div>
-                    <button
-                      onClick={() => setPrefs({ font_size: Math.min(22, fontSize + 1) })}
-                      className="grid h-[34px] w-[34px] place-items-center rounded-field border border-line font-sans text-[15px] font-semibold text-tx2 hover:border-acc hover:text-acc"
-                    >
-                      A+
-                    </button>
+                    <div className="mt-[7px] font-mono text-[10px] text-tx3">
+                      {Math.round(zoom * 100)}% · ctrl + and ctrl − do this too
+                    </div>
                   </div>
-                  <div className="mt-[7px] font-mono text-[10px] text-tx3">{fontSize.toFixed(1)}px · line height 1.85 · column 640px</div>
-                </div>
+                ) : (
+                  <div>
+                    <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">Text size</div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setPrefs({ font_size: Math.max(12, fontSize - 1) })}
+                        className="grid h-[34px] w-[34px] place-items-center rounded-field border border-line font-sans text-[13px] text-tx2 hover:border-acc hover:text-acc"
+                      >
+                        A−
+                      </button>
+                      <div className="h-[3px] flex-1 rounded-field bg-line2">
+                        <div className="h-[3px] rounded-field bg-acc" style={{ width: `${fsPct}%` }} />
+                      </div>
+                      <button
+                        onClick={() => setPrefs({ font_size: Math.min(22, fontSize + 1) })}
+                        className="grid h-[34px] w-[34px] place-items-center rounded-field border border-line font-sans text-[15px] font-semibold text-tx2 hover:border-acc hover:text-acc"
+                      >
+                        A+
+                      </button>
+                    </div>
+                    <div className="mt-[7px] font-mono text-[10px] text-tx3">{fontSize.toFixed(1)}px · line height 1.85 · column 640px</div>
+                  </div>
+                )}
+
                 <div>
-                  <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">Page theme</div>
+                  <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
+                    {showingPage ? 'Around the page' : 'Page theme'}
+                  </div>
                   <div className="grid grid-cols-2 gap-[6px]">
                     {PAGE_THEMES.map((t) => {
                       const on = pageTheme === t.key;
@@ -1218,7 +1505,7 @@ export function Reader() {
                         >
                           <span
                             className="h-[22px] w-[22px] flex-none rounded-full border"
-                            style={{ background: t.bg, borderColor: on ? 'var(--acc)' : 'var(--line2)', color: t.fg }}
+                            style={{ background: t.bg, borderColor: on ? 'var(--acc)' : 'var(--line2)' }}
                           >
                             <span className="grid h-full w-full place-items-center font-mono text-[10px] leading-none" style={{ color: t.fg }}>
                               {on ? '✓' : ''}
@@ -1228,47 +1515,31 @@ export function Reader() {
                             <span className="block font-sans text-[11px] font-medium" style={{ color: on ? 'var(--acc)' : 'var(--tx)' }}>
                               {t.label}
                             </span>
-                            <span className="block truncate font-mono text-[9px] text-tx3">{t.sub}</span>
                           </span>
                         </button>
                       );
                     })}
                   </div>
+                  {showingPage && (
+                    <div className="mt-[7px] font-mono text-[10px] leading-[1.6] text-tx3">
+                      the paper is the publisher's own — this sets what surrounds it
+                    </div>
+                  )}
                 </div>
+
                 <div>
-                  <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">Difficulty heat</div>
+                  <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">Difficulty tint</div>
                   <button
                     onClick={() => setPrefs({ heat_on: !heatOn })}
                     className="flex w-full items-center justify-between rounded-field border px-[10px] py-[9px] font-sans text-[11px] font-medium text-tx2"
                     style={{ borderColor: heatOn ? 'var(--accLine)' : 'var(--line)' }}
                   >
-                    <span>Tint above-level words</span>
+                    <span>Tint words above {heatTarget}</span>
                     <span className="font-mono text-[10px] font-medium" style={{ color: heatOn ? 'var(--acc)' : 'var(--tx3)' }}>
                       {heatOn ? 'on' : 'off'}
                     </span>
                   </button>
-                  <div className="mt-[7px] font-mono text-[10px] leading-[1.6] text-tx3">
-                    {!heatEnabled
-                      ? 'turned off for this book in its import settings'
-                      : !heatOn
-                        ? `${heatTotal} word${heatTotal === 1 ? '' : 's'} above ${heatTarget} on this page`
-                        : heatTotal === 0
-                          ? `nothing above ${heatTarget} on this page`
-                          : `${heatTotal} word${heatTotal === 1 ? '' : 's'} above ${heatTarget} on this page · click one for its meaning`}
-                  </div>
-                </div>
-                <div>
-                  <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">Read aloud</div>
-                  {/* Read-aloud is the TTS increment's, not this one's. An
-                      enabled button that silently does nothing is worse than
-                      one that says why it can't. */}
-                  <button
-                    disabled
-                    title="Reading the page aloud isn’t built yet"
-                    className="w-full cursor-default rounded-field border border-line py-2 font-mono text-[11px] text-tx3 opacity-60"
-                  >
-                    ▶ Read this aloud · not built yet
-                  </button>
+                  <div className="mt-[7px] font-mono text-[10px] leading-[1.6] text-tx3">{heatLine}</div>
                 </div>
               </div>
             )}

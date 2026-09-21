@@ -57,6 +57,8 @@ interface VocabularyState {
     sentence?: string;
     bookId?: string;
     blockIndex?: number;
+    /** The printed page it was met on, when the reader was on one. */
+    page?: number;
   }) => Promise<{ alreadySaved: boolean }>;
   addNote: (text: string) => Promise<void>;
   deleteNote: (noteId: string) => Promise<void>;
@@ -208,7 +210,7 @@ export const useVocabularyStore = create<VocabularyState>((set, get) => ({
     }
   },
 
-  saveWord: async ({ word, sentence, bookId, blockIndex }) => {
+  saveWord: async ({ word, sentence, bookId, blockIndex, page }) => {
     const userId = requireUserId();
     const result = await api.post<VocabWordSaveOut>('/vocabulary', {
       user_id: userId,
@@ -216,6 +218,7 @@ export const useVocabularyStore = create<VocabularyState>((set, get) => ({
       sentence: sentence ?? null,
       book_id: bookId ?? null,
       block_index: blockIndex ?? null,
+      page: page ?? null,
     });
 
     set((s) => {

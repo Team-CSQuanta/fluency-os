@@ -47,22 +47,6 @@ BIOMES: dict[str, dict[str, str]] = {
 _KIND_TO_BIOME = {"clip": "cinema", "page": "library", "turn": "river"}
 _SOURCE_TO_BIOME = {"conversation": "river", "challenge": "highlands"}
 
-# What a unit of real work is worth, in sunlight. Deliberately small and
-# weighted towards production: saying a word you were not prompted with is the
-# hardest thing on this list and the only one that cannot be done by accident.
-SUNLIGHT_PER_OUTCOME = {
-    "spontaneous": 5,
-    "prompted": 3,
-    "good": 2,
-    "easy": 2,
-    "hard": 1,
-    "again": 1,
-    "incorrect": 1,
-    "avoided": 0,
-}
-SUNLIGHT_PER_FOCUS_MINUTE = 1
-
-COSTS = {"streak_freeze": 200, "revive": 60}
 
 
 @dataclass(frozen=True)
@@ -175,67 +159,6 @@ def _days_between(earlier_iso: str, later_iso: str) -> float:
 # ---------------------------------------------------------------------------
 
 
-def sunlight_earned(conn: sqlite3.Connection, user_id: str) -> int:
-    """Every unit of sunlight the learner has ever earned.
-
-    Derived, never banked. An earnings ledger would be a second copy of
-    review_logs that could fall out of step with it — and the one thing a
-    currency must not do is disagree with the work that produced it.
-    """
-    rows = conn.execute(
-        "SELECT outcome, COUNT(*) AS n FROM review_logs WHERE user_id = ? GROUP BY outcome",
-        (user_id,),
-    ).fetchall()
-    from_reviews = sum(SUNLIGHT_PER_OUTCOME.get(r["outcome"], 0) * r["n"] for r in rows)
-    from_focus = conn.execute(
-        "SELECT COALESCE(SUM(sunlight), 0) AS n FROM forest_focus_sessions "
-        "WHERE user_id = ? AND completed_at IS NOT NULL",
-        (user_id,),
-    ).fetchone()["n"]
-    return int(from_reviews + from_focus)
-
-
-def sunlight_spent(conn: sqlite3.Connection, user_id: str) -> int:
-    return int(
-        conn.execute(
-            "SELECT COALESCE(SUM(cost), 0) AS n FROM forest_spends WHERE user_id = ?", (user_id,)
-        ).fetchone()["n"]
-    )
-
-
-def sunlight_balance(conn: sqlite3.Connection, user_id: str) -> int:
-    return sunlight_earned(conn, user_id) - sunlight_spent(conn, user_id)
-
-
-def spend(conn: sqlite3.Connection, *, user_id: str, kind: str, vocab_word_id: str | None = None) -> dict:
-    """Buy something with sunlight. Refuses rather than going negative."""
-    if kind not in COSTS:
-        raise ValueError(f"nothing costs sunlight called {kind!r}")
-    cost = COSTS[kind]
-    balance = sunlight_balance(conn, user_id)
-    if balance < cost:
-        raise ValueError(f"that costs {cost} sunlight and you have {balance}")
-
-    conn.execute(
-        "INSERT INTO forest_spends (id, user_id, kind, cost, vocab_word_id, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (uuid7(), user_id, kind, cost, vocab_word_id, iso8601_utc_now()),
-    )
-    if kind == "revive" and vocab_word_id:
-        # Unsuspend and bring the due date forward to now, so the tree is
-        # awake and asking to be reviewed rather than quietly healed.
-        conn.execute(
-            "UPDATE review_cards SET suspended = 0, due = ? WHERE vocab_word_id = ? AND user_id = ?",
-            (iso8601_utc_now(), vocab_word_id, user_id),
-        )
-    return {"kind": kind, "cost": cost, "balance": sunlight_balance(conn, user_id)}
-
-
-# ---------------------------------------------------------------------------
-# Focus sessions
-# ---------------------------------------------------------------------------
-
-
 def start_focus(conn: sqlite3.Connection, *, user_id: str, minutes: int) -> sqlite3.Row:
     if minutes <= 0 or minutes > 180:
         raise ValueError("a focus session runs between 1 and 180 minutes")
@@ -248,11 +171,11 @@ def start_focus(conn: sqlite3.Connection, *, user_id: str, minutes: int) -> sqli
 
 
 def complete_focus(conn: sqlite3.Connection, *, session_id: str, user_id: str) -> sqlite3.Row:
-    """Pay out only for a block that was actually sat through.
+    """Mark a block as sat through, if it really was.
 
     The elapsed time is checked against the clock rather than trusted from the
-    client: a timer that pays out on a button press is a button that prints
-    sunlight.
+    client. Nothing is paid for it — the session is a commitment to sit still
+    for a while, and the record of having done it is the whole point.
     """
     row = conn.execute(
         "SELECT * FROM forest_focus_sessions WHERE id = ? AND user_id = ?", (session_id, user_id)
@@ -268,10 +191,9 @@ def complete_focus(conn: sqlite3.Connection, *, session_id: str, user_id: str) -
         raise ValueError(
             f"that session has {max(0, round(row['minutes'] - elapsed))} minutes left to run"
         )
-    earned = row["minutes"] * SUNLIGHT_PER_FOCUS_MINUTE
     conn.execute(
-        "UPDATE forest_focus_sessions SET completed_at = ?, sunlight = ? WHERE id = ?",
-        (iso8601_utc_now(), earned, session_id),
+        "UPDATE forest_focus_sessions SET completed_at = ? WHERE id = ?",
+        (iso8601_utc_now(), session_id),
     )
     return conn.execute("SELECT * FROM forest_focus_sessions WHERE id = ?", (session_id,)).fetchone()
 
@@ -284,17 +206,9 @@ def summary(conn: sqlite3.Connection, user_id: str) -> dict:
     for tree in all_trees:
         by_biome[tree.biome] = by_biome.get(tree.biome, 0) + 1
         by_stage[tree.stage] += 1
-    freezes = conn.execute(
-        "SELECT COUNT(*) AS n FROM forest_spends WHERE user_id = ? AND kind = 'streak_freeze'",
-        (user_id,),
-    ).fetchone()["n"]
     return {
         "trees": all_trees,
         "biomes": by_biome,
         "stages": by_stage,
-        "sunlight": sunlight_balance(conn, user_id),
-        "sunlight_earned": sunlight_earned(conn, user_id),
-        "streak_freezes": freezes,
         "dormant": sum(1 for t in all_trees if t.dormant),
-        "costs": COSTS,
     }

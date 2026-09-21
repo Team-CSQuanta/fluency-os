@@ -19,8 +19,8 @@ const FOCUS_DURATIONS = [15, 25, 45, 60];
  * scheduler, so the only way to grow it is to remember things for longer.
  */
 export function Forest() {
-  const { forest, loading, error, biome, focus } = useForestStore();
-  const { fetchForest, setBiome, spend, startFocus, completeFocus, clearFocus } = useForestStore();
+  const { forest, loading, error, focus } = useForestStore();
+  const { fetchForest, startFocus, completeFocus, clearFocus } = useForestStore();
   const goWord = useShellStore((s) => s.goWord);
   const focusWord = useShellStore((s) => s.forestFocus);
   const [hover, setHover] = useState<TreeOut | null>(null);
@@ -40,7 +40,7 @@ export function Forest() {
    * already clears the focus whenever the learner navigates anywhere, which
    * covers the same ground without depending on mount timing. */
 
-  const trees = useMemo(() => visibleTrees(forest, biome), [forest, biome]);
+  const trees = useMemo(() => visibleTrees(forest), [forest]);
 
   /* Arriving from "see plant" should name the word, not just ring it. The
    * hovered tree still wins, so moving the pointer explores as usual. */
@@ -54,14 +54,7 @@ export function Forest() {
   const shown = hover ?? picked ?? focused;
   const marked = (picked ?? focused)?.word ?? null;
 
-  /* A word can only be singled out if it is in view. Landing on a filtered
-   * biome that happens to exclude it would ring nothing and look broken. */
-  useEffect(() => {
-    if (focusWord && biome && !trees.some((t) => t.word === focusWord)) setBiome(null);
-  }, [focusWord, biome, trees, setBiome]);
-
-  // Changing biome can hide the selected tree; a ring pointing at something
-  // off-screen is worse than no ring.
+  // A ring pointing at a tree that is no longer there is worse than no ring.
   useEffect(() => {
     if (picked && !trees.some((t) => t.word === picked.word)) setPicked(null);
   }, [picked, trees]);
@@ -82,16 +75,13 @@ export function Forest() {
   return (
     <div className="flex h-full min-h-0">
       <div className="flex min-w-0 flex-1 flex-col p-[var(--pad)]">
-        <div className="mb-[12px] flex flex-wrap items-center gap-2">
-          <Chip on={biome === null} onClick={() => setBiome(null)}>
-            Whole forest <Count n={forest.trees.length} />
-          </Chip>
-          {forest.biomes.map((b) => (
-            <Chip key={b.key} on={biome === b.key} onClick={() => setBiome(b.key)} title={b.blurb}>
-              {b.label} <Count n={b.count} />
-            </Chip>
-          ))}
-        </div>
+        {/* One forest.
+            The trees used to be split across five named regions — Meadow,
+            Cinema Clearing, Library Grove, Conversation Riverbank, Challenge
+            Highlands — filtered by where each word was first met. Sorting a
+            reader's own vocabulary by which feature caught it is the app's
+            filing system, not theirs: what a word is worth does not depend on
+            whether it arrived from a film or a page. */}
 
         <div className="relative min-h-0 flex-1 overflow-hidden rounded-panel border border-line2">
           {trees.length === 0 ? (
@@ -147,15 +137,9 @@ export function Forest() {
                 {shown.dormant && ' · dormant'}
               </div>
               {shown.dormant && (
-                <span
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void spend('revive', shown.vocab_word_id);
-                  }}
-                  className="mt-[9px] inline-block rounded-field bg-accSolid px-[11px] py-[5px] font-sans text-[11px] font-semibold text-white"
-                >
-                  Revive · {forest.costs.revive} sunlight
-                </span>
+                <div className="mt-[7px] font-mono text-[10px] leading-[1.6] text-white/60">
+                  dormant · review it and it comes back
+                </div>
               )}
             </button>
           )}
@@ -176,27 +160,6 @@ export function Forest() {
       </div>
 
       <aside className="flex w-[260px] flex-none flex-col gap-[16px] overflow-y-auto border-l border-line2 p-[16px]">
-        <div>
-          <Label>Sunlight</Label>
-          <div className="mt-[5px] flex items-baseline gap-[7px]">
-            <span className="font-mono text-[22px] tabular-nums text-tx">☀ {forest.sunlight}</span>
-            <span className="font-sans text-[11px] text-tx3">{forest.sunlight_earned} earned</span>
-          </div>
-          <p className="mt-[5px] font-mono text-[9px] leading-[1.7] text-tx3">
-            earned by remembering words, most of all by saying one nobody prompted you with
-          </p>
-          <button
-            onClick={() => void spend('streak_freeze')}
-            disabled={forest.sunlight < forest.costs.streak_freeze}
-            className="mt-[9px] w-full rounded-field border border-line px-[11px] py-[7px] font-sans text-[11px] text-tx2 hover:border-acc hover:text-acc disabled:opacity-45"
-          >
-            Hold a streak freeze · {forest.costs.streak_freeze}
-          </button>
-          <div className="mt-[5px] font-mono text-[9.5px] text-tx3">
-            {forest.streak_freezes} held
-          </div>
-        </div>
-
         <div>
           <Label>Growth</Label>
           <div className="mt-[7px] flex flex-col gap-[4px]">
@@ -252,7 +215,7 @@ export function Forest() {
           ) : focus?.completed_at ? (
             <div className="mt-[6px]">
               <p className="font-sans text-[11.5px] text-tx2">
-                Done — ☀ {focus.sunlight} earned.
+                Done — {focus.minutes} minutes sat through.
               </p>
               <button
                 onClick={clearFocus}
@@ -282,37 +245,6 @@ export function Forest() {
       </aside>
     </div>
   );
-}
-
-function Chip({
-  on,
-  onClick,
-  title,
-  children,
-}: {
-  on: boolean;
-  onClick: () => void;
-  title?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      title={title}
-      className="rounded-field border px-[12px] py-[6px] font-sans text-[11.5px] font-medium"
-      style={{
-        borderColor: on ? 'var(--accLine)' : 'var(--line2)',
-        background: on ? 'var(--accSoft)' : 'transparent',
-        color: on ? 'var(--acc)' : 'var(--tx2)',
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Count({ n }: { n: number }) {
-  return <span className="ml-[5px] font-mono text-[9.5px] opacity-65">{n}</span>;
 }
 
 function Label({ children }: { children: React.ReactNode }) {

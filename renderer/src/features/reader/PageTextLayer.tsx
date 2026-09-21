@@ -4,6 +4,8 @@ import {
   NO_COLOUR,
   PageSelectionToolbar,
 } from '@/features/reader/PageSelectionToolbar';
+import { matchingWordIndices } from '@/features/reader/pageFind';
+import { sentenceAround, wordAt } from '@/features/reader/pageSentence';
 import {
   coveredBy,
   createMeasurer,
@@ -13,7 +15,13 @@ import {
 } from '@/features/reader/pageTextGeometry';
 import { reportError } from '@/store/errorStore';
 import { useReaderStore } from '@/store/readerStore';
-import type { HighlightRect, HighlightStyle, PageHighlightOut, PageLabelOut } from '@/types/api';
+import type {
+  HighlightRect,
+  HighlightStyle,
+  PageHighlightOut,
+  PageLabelOut,
+  PageWordHeatOut,
+} from '@/types/api';
 
 /** The page as printed, with its words made selectable.
  *
@@ -21,7 +29,8 @@ import type { HighlightRect, HighlightStyle, PageHighlightOut, PageLabelOut } fr
  * to text — drag across it, look a word up, mark a passage — needs to know
  * where the words are, and a picture does not say. The reader used to admit
  * this in a line under the page: "word lookup, highlighting and the
- * difficulty overlay work in the text view".
+ * difficulty overlay work in the text view" — which is now the only view a
+ * PDF has, so all of it happens here.
  *
  * So this lays an invisible word over every word: a transparent span, sized
  * and positioned to the box the PDF says the ink occupies. The browser's own
@@ -60,6 +69,11 @@ export function PageTextLayer({
   const simplifySelection = useReaderStore((s) => s.simplifySelection);
   const removePageLabel = useReaderStore((s) => s.removePageLabel);
   const setPrefs = useReaderStore((s) => s.setPrefs);
+  const setPageSelection = useReaderStore((s) => s.setPageSelection);
+  const find = useReaderStore((s) => s.find);
+  const heat = useReaderStore((s) => s.pageHeat[page] ?? null);
+  const heatOn = useReaderStore((s) => s.prefs.heat_on);
+  const heatEnabled = useReaderStore((s) => s.heatEnabled);
 
   const hostRef = useRef<HTMLDivElement>(null);
   const [selection, setSelection] = useState<{
@@ -95,6 +109,23 @@ export function PageTextLayer({
   // Both are pure functions of the page, and rebuilding two thousand spans'
   // worth of geometry on every selection would make dragging stutter.
   const placed = useMemo(() => (layer ? placeWords(layer.words) : []), [layer]);
+
+  /* Which boxes are above the reader's level, by their position in the
+   * layer. The reflowed view tints character ranges inside text it lays out
+   * itself; here the server judges the page's own boxes and names them by
+   * index, so nothing has to be matched up by its spelling. */
+  /* Where the words a search hit matched sit on this page. Every page on
+   * screen lights them up, not just the one that was jumped to: the match
+   * you want is as often the next one down as the one you pressed. */
+  const findHits = useMemo(
+    () => (layer && find ? matchingWordIndices(layer.words, find.terms) : []),
+    [layer, find],
+  );
+  const showHeat = heatOn && heatEnabled && (heat?.enabled ?? false);
+  const hotWords = useMemo(() => {
+    if (!showHeat || !heat) return new Map<number, PageWordHeatOut>();
+    return new Map(heat.words.map((w) => [w.i, w]));
+  }, [showHeat, heat]);
   const measure = useMemo(() => createMeasurer(), []);
 
   /** What the reader has dragged across, in the layer's own coordinates.
@@ -156,6 +187,13 @@ export function PageTextLayer({
     },
     [layer, highlights],
   );
+
+  /* The panels work from whatever the reader has selected, and on a printed
+   * page that is this. Published from one place rather than at each of the
+   * five points the selection changes, so clearing it cannot be forgotten. */
+  useEffect(() => {
+    setPageSelection(selection?.text ?? null);
+  }, [selection, setPageSelection]);
 
   useEffect(() => {
     const onUp = (e: MouseEvent) => {
@@ -275,8 +313,19 @@ export function PageTextLayer({
     setSelection(null);
     // Open the panel on the dictionary tab — the answer arrives where the
     // reader's lookups already live rather than in a second kind of popup.
-    setPrefs({ panel_open: true, panel_tab: 'ai' });
-    void lookupWord(current.text.split(/\s+/)[0], current.text);
+    setPrefs({ panel_open: true, panel_tab: 'study' });
+    /* The word goes off with the sentence it sits in, not with the handful
+     * of words that happened to be dragged over. Selecting one word used to
+     * send that word as its own context, which is no context at all: it is
+     * what the AI is asked to explain and what the vocabulary entry keeps. */
+    const word = current.text.split(/\s+/)[0];
+    let sentence = current.text;
+    if (layer && current.rects.length > 0) {
+      const first = current.rects[0];
+      const at = wordAt(layer.words, first.x + 1, first.y + first.h / 2);
+      if (at >= 0) sentence = sentenceAround(layer.words, at) || current.text;
+    }
+    void lookupWord(word, sentence, undefined, page);
   };
 
   return (
@@ -305,6 +354,62 @@ export function PageTextLayer({
         <MarkRects key={h.id} mark={h} layer={layer} onOpen={() => setOpenMark(h)} />
       ))}
 
+      {/* The difficulty tint, under the words and under the marks: it is the
+          faintest thing on the page and must never compete with a highlight
+          the reader put there themselves. Drawn as boxes rather than as text
+          decoration, because the ink underneath belongs to the picture. */}
+      {layer && showHeat && (
+        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} aria-hidden>
+          {[...hotWords.keys()].map((i) => {
+            const w = layer.words[i];
+            if (!w) return null;
+            return (
+              <div
+                key={i}
+                style={{
+                  position: 'absolute',
+                  left: `${(w.x / layer.width) * 100}%`,
+                  top: `${(w.y / layer.height) * 100}%`,
+                  width: `${(w.w / layer.width) * 100}%`,
+                  height: `${(w.h / layer.height) * 100}%`,
+                  background: 'rgba(var(--accRGB),.10)',
+                  borderBottom: '1.5px solid var(--acc)',
+                  borderRadius: '1px',
+                }}
+              />
+            );
+          })}
+        </div>
+      )}
+
+      {/* Search matches, the brightest thing on the page for as long as the
+          search is up: the point of pressing a hit is to be shown where on a
+          page of small print the words actually are. Above the reader's own
+          marks, because this is temporary and theirs is not. */}
+      {layer && findHits.length > 0 && (
+        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} aria-hidden>
+          {findHits.map((i) => {
+            const w = layer.words[i];
+            if (!w) return null;
+            return (
+              <div
+                key={i}
+                style={{
+                  position: 'absolute',
+                  left: `${(w.x / layer.width) * 100}%`,
+                  top: `${(w.y / layer.height) * 100}%`,
+                  width: `${(w.w / layer.width) * 100}%`,
+                  height: `${(w.h / layer.height) * 100}%`,
+                  background: 'rgba(255,145,0,.34)',
+                  boxShadow: 'inset 0 0 0 1.5px rgba(214,120,0,.95)',
+                  borderRadius: '2px',
+                }}
+              />
+            );
+          })}
+        </div>
+      )}
+
       {/* The selectable layer, drawn in the page's OWN pixels and then
           scaled to whatever width the page is displayed at. Working in the
           page's coordinates means font sizes are real sizes — which is what
@@ -322,7 +427,9 @@ export function PageTextLayer({
             transformOrigin: '0 0',
           }}
         >
-          {placed.map((w, i) => (
+          {placed.map((w, i) => {
+            const hot = hotWords.get(i);
+            return (
             <span
               key={i}
               style={{
@@ -341,13 +448,19 @@ export function PageTextLayer({
                 transformOrigin: '0 0',
                 whiteSpace: 'pre',
                 color: 'transparent',
-                cursor: 'text',
+                cursor: hot ? 'help' : 'text',
                 userSelect: 'text',
               }}
+              title={
+                hot
+                  ? `${hot.word} · ${hot.cefr}${hot.simpler ? ` · simpler: ${hot.simpler}` : ''}`
+                  : undefined
+              }
             >
               {w.text}
             </span>
-          ))}
+            );
+          })}
         </div>
       )}
 

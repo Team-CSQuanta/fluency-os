@@ -138,17 +138,6 @@ export function AddContentModal({ onClose }: { onClose: () => void }) {
               ))}
             </div>
           )}
-
-          <div className="rounded-panel border border-line2 bg-panel2 p-4">
-            <div className="font-sans text-[12.5px] font-semibold text-tx">Pasting a link</div>
-            <div className="mt-[6px] font-sans text-[11.5px] leading-[1.6] text-tx2">
-              Streaming from YouTube and similar isn’t wired up yet. It needs a URL resolver that FluencyOS doesn’t
-              ship, so the option is left out rather than shown as a step that quietly does nothing.
-            </div>
-            <div className="mt-[8px] font-mono text-[10px] leading-[1.6] text-tx3">
-              a file you already have on disk works today, with subtitles, lookups and clips
-            </div>
-          </div>
         </div>
 
         <div className="flex justify-between gap-2 border-t border-line2 px-5 py-[14px]">

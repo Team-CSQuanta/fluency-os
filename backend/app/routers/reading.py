@@ -32,14 +32,21 @@ from app.models.reading import (
     WordSenseOut,
 )
 from app.security import require_token
-from app.services import cefr_lexicon, dictionary, difficulty_heat, leveling, pronunciation, reading_goal
+from app.services import (
+    cefr_lexicon,
+    dictionary,
+    difficulty_heat,
+    leveling,
+    pronunciation,
+    reader_level,
+    reading_goal,
+)
 from app.services.ingest.pipeline import normalise_text_hash
 from app.services.leveling import cache as level_cache
 from app.utils.time import local_date_today
 
 router = APIRouter(prefix="/reading", dependencies=[Depends(require_token)])
 
-DEFAULT_CEFR = "B1"
 
 
 def _stats(conn: sqlite3.Connection, user_id: str) -> ReadingStatsOut:
@@ -80,23 +87,11 @@ def update_goal(payload: GoalUpdate, conn: sqlite3.Connection = Depends(get_db))
 def _resolve_target_cefr(
     conn: sqlite3.Connection, user_id: str | None, requested: str | None
 ) -> str:
-    """An explicit request wins; otherwise the reader's own placement level;
-    otherwise B1. The same page tints differently for a B1 and a C1 reader,
-    which is the entire feature."""
-    if requested:
-        if not cefr_lexicon.is_valid_band(requested):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"target_cefr must be one of {', '.join(cefr_lexicon.CEFR_ORDER)}",
-            )
-        return requested.upper()
-
-    if user_id:
-        row = conn.execute("SELECT cefr_level FROM users WHERE id = ?", (user_id,)).fetchone()
-        if row is not None and row["cefr_level"] and cefr_lexicon.is_valid_band(row["cefr_level"]):
-            return row["cefr_level"].upper()
-
-    return DEFAULT_CEFR
+    """The reader's target band, as an HTTP concern: see reader_level."""
+    try:
+        return reader_level.resolve_target(conn, user_id, requested)
+    except reader_level.UnknownBand as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get("/heat", response_model=HeatOut)

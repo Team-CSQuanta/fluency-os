@@ -53,6 +53,16 @@ export function registerIpcHandlers(
     return result.canceled ? [] : result.filePaths;
   });
 
+  ipcMain.handle('dialog:pick-image-file', async () => {
+    const win = getWindow();
+    const opts: Electron.OpenDialogOptions = {
+      properties: ['openFile'],
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }],
+    };
+    const result = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
+  });
+
   ipcMain.handle('dialog:pick-subtitle-file', async () => {
     const win = getWindow();
     const opts: Electron.OpenDialogOptions = {

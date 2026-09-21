@@ -11,6 +11,9 @@ class VocabWordCreate(BaseModel):
     sentence: str | None = None
     book_id: str | None = None
     block_index: int | None = None
+    #: The printed page it was met on. A lookup on a page image has no block
+    #: to point at, so without this the word is saved with no source at all.
+    page: int | None = None
 
 
 class VocabNoteCreate(BaseModel):
@@ -34,6 +37,8 @@ class VocabContextOut(BaseModel):
     source_label: str
     book_id: str | None
     block_index: int | None
+    #: The printed page, when the book has one.
+    page: int | None = None
     created_at: str
     # Where in which video this was captured (kind == 'clip'), so the entry
     # page can replay the moment rather than only quoting the line.

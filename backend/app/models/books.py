@@ -112,6 +112,32 @@ class PageWordOut(BaseModel):
     ln: int
 
 
+class PageWordHeatOut(BaseModel):
+    """One boxed word on a printed page that is above the reader's level."""
+
+    #: Position in the page text layer's own word list, which is what the
+    #: client already holds and draws from. Sending the box again would
+    #: double the payload of the densest pages for nothing.
+    i: int
+    #: The hard word inside the box, which is not always the whole box: it is
+    #: what the tooltip names and what a lookup would ask about.
+    word: str
+    cefr: str
+    simpler: str | None = None
+
+
+class PageHeatOut(BaseModel):
+    """Difficulty heat for one printed page (the tint the reflowed view has
+    always had, answered in page coordinates)."""
+
+    target_cefr: str
+    #: False when the book's own heat overlay flag is off, so the client can
+    #: tell "nothing is hard here" from "this book opted out".
+    enabled: bool
+    words: list[PageWordHeatOut]
+    total_above_level: int
+
+
 class PageTextLayerOut(BaseModel):
     """The selectable text sitting over a rendered page.
 

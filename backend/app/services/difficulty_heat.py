@@ -11,6 +11,7 @@ Spans are computed against the block's raw text, so the offsets line up with
 the same coordinates highlights use (spec §7.2).
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from app.services import cefr_lexicon
@@ -67,3 +68,43 @@ def distinct_above_level(text: str, target_cefr: str) -> list[str]:
         lemma = entry.lemma if entry else cefr_lexicon.normalise(span.word)
         seen.setdefault(lemma, None)
     return list(seen)
+
+
+@dataclass(frozen=True)
+class WordHeat:
+    """One boxed word on a printed page that is above the reader's level."""
+
+    index: int
+    word: str
+    cefr: str
+    simpler: str | None
+
+
+def above_level_boxes(words: Sequence[str], target_cefr: str) -> list[WordHeat]:
+    """Which of a printed page's boxed words are above level.
+
+    The reflowed view tints character ranges inside a paragraph it lays out
+    itself. A printed page has no character offsets to tint — it has boxes,
+    one per whitespace-separated token of the PDF's own text layer, and the
+    tint is drawn over the box. So difficulty is answered per box here.
+
+    A box carries whatever punctuation was attached to it ("vision,", "—the")
+    and occasionally more than one lexical word, so a box counts as above
+    level when anything inside it is, and reports the hardest thing it holds:
+    tinting a box is a promise that there is something hard in it, and the
+    reader should be told which word that is.
+    """
+    if not cefr_lexicon.is_valid_band(target_cefr):
+        return []
+
+    out: list[WordHeat] = []
+    for index, box in enumerate(words):
+        hardest: HeatSpan | None = None
+        for span in spans_for_text(box, target_cefr):
+            if hardest is None or cefr_lexicon.rank(span.cefr) > cefr_lexicon.rank(hardest.cefr):
+                hardest = span
+        if hardest is not None:
+            out.append(
+                WordHeat(index=index, word=hardest.word, cefr=hardest.cefr, simpler=hardest.simpler)
+            )
+    return out

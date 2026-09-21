@@ -1,21 +1,30 @@
 import { useEffect, useState } from 'react';
-import { Pill, Row, Section } from '@/features/settings/controls';
+import {
+  SUPPORTED_NATIVE_LANGUAGES,
+  SUPPORTED_TARGET_LANGUAGES,
+} from '@/features/onboarding/onboardingConfig';
+import { avatarUrl } from '@/lib/avatar';
+import { Choice, EditableText, Pill, Row, Section } from '@/features/settings/controls';
+import { reportError } from '@/store/errorStore';
 import { useAppStore } from '@/store/appStore';
 import type { SystemInfo } from '@/types/window';
 
-const LANGUAGES: Record<string, string> = {
-  bn: 'Bengali', en: 'English', es: 'Spanish', fr: 'French', de: 'German',
-  hi: 'Hindi', ja: 'Japanese', ko: 'Korean', pt: 'Portuguese', ru: 'Russian',
-  ar: 'Arabic', zh: 'Chinese', it: 'Italian', tr: 'Turkish', ur: 'Urdu',
-};
-
-function language(code: string | null | undefined): string {
-  if (!code) return 'not set';
-  return LANGUAGES[code] ?? code;
-}
+/* The same words onboarding writes.
+ *
+ * Onboarding stores a language by its name — "Bengali", not "bn" — and the
+ * sidebar prints whatever is stored. Offering codes here would have quietly
+ * rewritten a profile that reads "Bengali → English" into "bn → en" the
+ * first time anyone touched the dropdown. */
+const NATIVE_OPTIONS = SUPPORTED_NATIVE_LANGUAGES.map((l) => ({ value: l, label: l }));
+const TARGET_OPTIONS = SUPPORTED_TARGET_LANGUAGES.map((l) => ({ value: l, label: l }));
+const CEFR_OPTIONS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'].map((v) => ({ value: v, label: v }));
 
 export function AccountPanel() {
   const user = useAppStore((s) => s.currentUser);
+  const updateProfile = useAppStore((s) => s.updateProfile);
+  const setAvatar = useAppStore((s) => s.setAvatar);
+  const clearAvatar = useAppStore((s) => s.clearAvatar);
+  const avatarVersion = useAppStore((s) => s.avatarVersion);
   const [system, setSystem] = useState<SystemInfo | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -23,27 +32,107 @@ export function AccountPanel() {
     void window.fluencyos.getSystemInfo().then(setSystem);
   }, []);
 
+  /* Every one of these used to be a label. The name, the two languages and
+   * the level were chosen once during onboarding and then frozen, so a typo
+   * in a display name was permanent and moving to a new target language meant
+   * starting over. */
+  const save = (patch: Parameters<typeof updateProfile>[0], what: string) => {
+    void updateProfile(patch).catch((err) => reportError(err, what));
+  };
+
+  const pickPicture = async () => {
+    const path = await window.fluencyos.pickImageFile();
+    if (!path) return;
+    try {
+      await setAvatar(path);
+    } catch (err) {
+      reportError(err, 'Setting your profile picture');
+    }
+  };
+
   return (
     <>
       <Section
         title="Profile"
         note="Kept in the database on this machine. There is no account, no server and nothing to sign in to."
       >
-        <Row label="Display name" sub="what the app calls you" control={<Pill>{user?.display_name || 'not set'}</Pill>} />
+        <Row
+          label="Picture"
+          sub="copied into your data folder, so tidying the folder you picked it from cannot break it"
+          control={
+            <div className="flex items-center gap-[10px]">
+              <div className="grid h-[44px] w-[44px] flex-none place-items-center overflow-hidden rounded-full border border-line2 bg-panel2 font-mono text-[8px] text-tx3">
+                {user?.has_avatar ? (
+                  <img
+                    src={avatarUrl(user.id, avatarVersion)}
+                    alt=""
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  'none'
+                )}
+              </div>
+              <button
+                onClick={() => void pickPicture()}
+                className="rounded-field border border-line px-[11px] py-[6px] font-sans text-[11.5px] text-tx2 hover:border-acc hover:text-acc"
+              >
+                {user?.has_avatar ? 'Change…' : 'Choose…'}
+              </button>
+              {user?.has_avatar && (
+                <button
+                  onClick={() => void clearAvatar().catch((err) => reportError(err, 'Removing your picture'))}
+                  className="font-mono text-[10px] text-tx3 hover:text-acc"
+                >
+                  remove
+                </button>
+              )}
+            </div>
+          }
+        />
+        <Row
+          label="Display name"
+          sub="what the app calls you"
+          control={
+            <EditableText
+              value={user?.display_name ?? ''}
+              placeholder="your name"
+              onSave={(next) => save({ display_name: next }, 'Saving your name')}
+            />
+          }
+        />
         <Row
           label="Native language"
           sub="what glosses and the second subtitle track are written in"
-          control={<Pill>{language(user?.native_language)}</Pill>}
+          control={
+            <Choice
+              value={user?.native_language ?? null}
+              options={NATIVE_OPTIONS}
+              onChange={(next) => save({ native_language: next }, 'Saving your native language')}
+            />
+          }
         />
         <Row
           label="Learning"
           sub="what everything is graded against"
-          control={<Pill>{language(user?.target_language)}</Pill>}
+          control={
+            <Choice
+              value={user?.target_language ?? null}
+              options={TARGET_OPTIONS}
+              onChange={(next) => save({ target_language: next }, 'Saving the language you are learning')}
+            />
+          }
         />
         <Row
           label="Level"
-          sub="set by the placement test — retake it any time from the dashboard"
-          control={<Pill tone={user?.cefr_level ? 'ok' : 'muted'}>{user?.cefr_level ?? 'not placed'}</Pill>}
+          sub="what difficulty is measured against — the placement test sets it, and you can change it here"
+          control={
+            <Choice
+              value={user?.cefr_level ?? null}
+              options={CEFR_OPTIONS}
+              onChange={(next) => save({ cefr_level: next }, 'Saving your level')}
+              width={110}
+            />
+          }
         />
       </Section>
 

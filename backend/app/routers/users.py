@@ -1,22 +1,35 @@
 import json
+import shutil
 import sqlite3
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import FileResponse
 
 from app.db import get_db
 from app.models.onboarding import (
+    AvatarIn,
     CompanionUpdate,
     PlacementUpdate,
+    ProfileUpdate,
     UserCreate,
     UserOut,
     UserSettingsUpdate,
 )
 from app.models.settings import AppSettingsOut, AppSettingsPatch
-from app.security import require_token
+from app.security import require_token, require_token_or_query
+from app.services import book_storage
 from app.utils.ids import uuid7
 from app.utils.time import iso8601_utc_now
 
 router = APIRouter(prefix="/users", dependencies=[Depends(require_token)])
+
+# The profile picture is fetched by the browser itself, from an <img src>,
+# which cannot carry a custom header — so it takes the handshake token in the
+# query string instead, exactly as video and thumbnails already do. Without
+# this the picture stored fine and then failed to load, which looks like a
+# broken image and reads like a broken feature.
+file_router = APIRouter(prefix="/users", dependencies=[Depends(require_token_or_query)])
 
 
 def _row_to_user(row: sqlite3.Row) -> UserOut:
@@ -28,7 +41,16 @@ def _row_to_user(row: sqlite3.Row) -> UserOut:
         cefr_level=row["cefr_level"],
         created_at=row["created_at"],
         onboarding_completed_at=row["onboarding_completed_at"],
+        has_avatar=_avatar_path(row) is not None,
     )
+
+
+def _avatar_path(row: sqlite3.Row) -> Path | None:
+    """The stored picture, if the row has one and it is still on disk."""
+    if "avatar_path" not in row.keys() or not row["avatar_path"]:
+        return None
+    path = Path(row["avatar_path"])
+    return path if path.is_file() else None
 
 
 def _get_user_row(conn: sqlite3.Connection, user_id: str) -> sqlite3.Row:
@@ -55,6 +77,99 @@ def create_user(payload: UserCreate, conn: sqlite3.Connection = Depends(get_db))
 
 @router.get("/{user_id}", response_model=UserOut)
 def get_user(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> UserOut:
+    return _row_to_user(_get_user_row(conn, user_id))
+
+
+_AVATAR_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                 ".webp": "image/webp", ".gif": "image/gif"}
+# A profile picture is shown at 48px. Anything beyond a few megabytes is a
+# photograph straight off a camera, and copying it in serves nobody.
+_AVATAR_MAX_BYTES = 8 * 1024 * 1024
+
+
+@router.patch("/{user_id}", response_model=UserOut)
+def update_profile(
+    user_id: str, payload: ProfileUpdate, conn: sqlite3.Connection = Depends(get_db)
+) -> UserOut:
+    """Change who you are: name, languages, level.
+
+    All of this was decided once during onboarding and then frozen — the
+    settings screen could show it and nothing could change it, which made a
+    typo in a display name permanent.
+    """
+    _get_user_row(conn, user_id)
+    fields = payload.model_dump(exclude_none=True)
+    if not fields:
+        return _row_to_user(_get_user_row(conn, user_id))
+
+    if "display_name" in fields:
+        name = fields["display_name"].strip()
+        if not name:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="A display name cannot be empty."
+            )
+        fields["display_name"] = name
+
+    assignments = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(
+        f"UPDATE users SET {assignments} WHERE id = ?", (*fields.values(), user_id)
+    )
+    return _row_to_user(_get_user_row(conn, user_id))
+
+
+@router.put("/{user_id}/avatar", response_model=UserOut)
+def set_avatar(
+    user_id: str, payload: AvatarIn, conn: sqlite3.Connection = Depends(get_db)
+) -> UserOut:
+    """Copy a picture from disk into the data folder and use it.
+
+    Copied rather than referenced: a profile picture that lives in whichever
+    folder it was picked from disappears the day that folder is tidied, and
+    the reader is left with a broken face and no idea why.
+    """
+    source = Path(payload.path).expanduser()
+    if not source.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="That file is no longer there."
+        )
+    suffix = source.suffix.lower()
+    if suffix not in _AVATAR_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"A picture has to be one of {', '.join(sorted(_AVATAR_TYPES))}.",
+        )
+    if source.stat().st_size > _AVATAR_MAX_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="That picture is larger than 8 MB — a smaller one will look the same.",
+        )
+
+    row = _get_user_row(conn, user_id)
+    destination = book_storage.avatars_dir() / f"{user_id}{suffix}"
+    shutil.copyfile(source, destination)
+    # A reader who swaps a png for a jpg leaves the old file behind otherwise.
+    previous = _avatar_path(row)
+    if previous is not None and previous != destination:
+        previous.unlink(missing_ok=True)
+    conn.execute("UPDATE users SET avatar_path = ? WHERE id = ?", (str(destination), user_id))
+    return _row_to_user(_get_user_row(conn, user_id))
+
+
+@file_router.get("/{user_id}/avatar")
+def get_avatar(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> FileResponse:
+    path = _avatar_path(_get_user_row(conn, user_id))
+    if path is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No picture set")
+    return FileResponse(path, media_type=_AVATAR_TYPES.get(path.suffix.lower()))
+
+
+@router.delete("/{user_id}/avatar", response_model=UserOut)
+def clear_avatar(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> UserOut:
+    row = _get_user_row(conn, user_id)
+    path = _avatar_path(row)
+    if path is not None:
+        path.unlink(missing_ok=True)
+    conn.execute("UPDATE users SET avatar_path = NULL WHERE id = ?", (user_id,))
     return _row_to_user(_get_user_row(conn, user_id))
 
 

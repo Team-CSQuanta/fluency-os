@@ -61,7 +61,11 @@ class ReaderPrefsUpdate(BaseModel):
     page_theme: Literal["auto", "light", "sepia", "dark"]
     heat_on: bool
     panel_open: bool
-    panel_tab: Literal["toc", "search", "marks", "text", "ai", "level"]
+    # The panel was grouped into four tabs; "text", "ai" and "level" were
+    # folded into them. Old values are still read back out of settings rows
+    # written before that, and the client maps them forward — only what it
+    # writes is constrained here.
+    panel_tab: Literal["toc", "search", "marks", "study"]
     page_view: bool = False
     page_scroll: Literal["vertical", "horizontal"] = "vertical"
     page_zoom: float = Field(default=1.0, ge=PAGE_ZOOM_MIN, le=PAGE_ZOOM_MAX)

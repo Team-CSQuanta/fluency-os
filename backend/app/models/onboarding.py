@@ -20,6 +20,35 @@ class UserOut(BaseModel):
     cefr_level: str | None
     created_at: str
     onboarding_completed_at: str | None
+    #: Whether a profile picture has been set. The file itself is served from
+    #: /users/{id}/avatar; the path it lives at is nobody's business but the
+    #: backend's.
+    has_avatar: bool = False
+
+
+class ProfileUpdate(BaseModel):
+    """Editing who you are, after onboarding is over.
+
+    Every field optional: the settings screen saves one row at a time, and a
+    patch that insisted on all of them would make changing a display name a
+    chance to overwrite a language by accident.
+    """
+
+    display_name: str | None = None
+    native_language: str | None = None
+    target_language: str | None = None
+    cefr_level: str | None = None
+
+
+class AvatarIn(BaseModel):
+    """A picture already on this machine.
+
+    A path rather than an upload, because that is how every other file gets
+    into FluencyOS: the reader picks it in their own file dialog and the app
+    copies it in.
+    """
+
+    path: str
 
 
 class PlacementUpdate(BaseModel):

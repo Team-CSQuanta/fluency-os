@@ -89,7 +89,7 @@ export const useShellStore = create<ShellState>((set, get) => {
     collapsed: false,
     theme: 'dark',
     uiScale: readStoredScale(),
-    heatTip: 'hover a day',
+    heatTip: '',
     nowPlaying: '',
     nowPlayingId: null,
     nowReading: 'The Overstory — Richard Powers',

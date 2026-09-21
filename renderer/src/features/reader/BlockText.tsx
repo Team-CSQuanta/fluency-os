@@ -119,7 +119,7 @@ export function BlockText({
       <span>
         {segments.map((seg, i) => {
           // A heat span is a whole word, so it doubles as the click target
-          // for the AI panel's lookup — no extra tokenising in the DOM.
+          // for the Study panel's lookup — no extra tokenising in the DOM.
           const heatStyle = seg.heat
             ? {
                 borderBottom: '1.5px solid var(--acc)',

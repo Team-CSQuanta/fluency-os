@@ -7,9 +7,11 @@ from fastapi.responses import FileResponse
 
 from app.db import get_connection, get_db
 from app.models.books import (
+    PageHeatOut,
     PageLabelCreate,
     PageLabelOut,
     PageTextLayerOut,
+    PageWordHeatOut,
     PageWordOut,
     BlockOut,
     BookCountsOut,
@@ -35,7 +37,14 @@ from app.models.highlights import (
 from app.models.reading import SessionHeartbeat, SessionOpen, SessionOut
 from app.models.search import SearchHitOut, SnippetSegmentOut
 from app.security import require_token
-from app.services import book_search, book_storage, pagination, reading_goal
+from app.services import (
+    book_search,
+    book_storage,
+    difficulty_heat,
+    pagination,
+    reader_level,
+    reading_goal,
+)
 from app.services.ingest import pipeline
 from app.utils.ids import uuid7
 from app.utils.time import iso8601_utc_now
@@ -297,7 +306,14 @@ def get_page_image(
 def get_page_text_layer(
     book_id: str, page: int, conn: sqlite3.Connection = Depends(get_db)
 ) -> PageTextLayerOut:
-    """Where every word on the rendered page is.
+    """Where every word on the rendered page is."""
+    return _page_text_layer(conn, book_id, page)
+
+
+def _page_text_layer(
+    conn: sqlite3.Connection, book_id: str, page: int
+) -> PageTextLayerOut:
+    """The boxed words of one rendered page.
 
     The page image is a picture, so nothing on it can be selected, looked up
     or highlighted — which is why the reader had to tell people that those
@@ -364,6 +380,46 @@ def get_page_text_layer(
     partial.write_text(layer.model_dump_json())
     partial.replace(cached)
     return layer
+
+
+@router.get("/{book_id}/page/{page}/heat", response_model=PageHeatOut)
+def get_page_heat(
+    book_id: str,
+    page: int,
+    user_id: str | None = None,
+    target_cefr: str | None = None,
+    conn: sqlite3.Connection = Depends(get_db),
+) -> PageHeatOut:
+    """Which words on a printed page are above the reader's level.
+
+    The difficulty tint is the reason this app exists, and until now it only
+    existed in the reflowed view: a reader on the publisher's own page — the
+    one with the figures, the tables and the equations — was told nothing
+    about which words were going to be hard. Same lexicon, same target, same
+    answer as /reading/heat gives for a block; only the coordinates differ,
+    because a page has boxes where a paragraph has character offsets.
+    """
+    row = _get_book_row(conn, book_id)
+    try:
+        resolved = reader_level.resolve_target(conn, user_id, target_cefr)
+    except reader_level.UnknownBand as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    # Per-book opt-out, answered before the page is parsed: a book with the
+    # overlay off should not pay to render a text layer nobody will tint.
+    if not row["heat_overlay"]:
+        return PageHeatOut(target_cefr=resolved, enabled=False, words=[], total_above_level=0)
+
+    layer = _page_text_layer(conn, book_id, page)
+    hot = difficulty_heat.above_level_boxes([w.t for w in layer.words], resolved)
+    return PageHeatOut(
+        target_cefr=resolved,
+        enabled=True,
+        words=[
+            PageWordHeatOut(i=h.index, word=h.word, cefr=h.cefr, simpler=h.simpler) for h in hot
+        ],
+        total_above_level=len(hot),
+    )
 
 
 @router.get("/{book_id}/toc", response_model=list[ChapterOut])

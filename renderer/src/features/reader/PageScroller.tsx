@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { matchingWordIndices } from '@/features/reader/pageFind';
 import { PageTextLayer } from '@/features/reader/PageTextLayer';
 import { fetchBlobUrl } from '@/lib/apiClient';
 import { useReaderStore } from '@/store/readerStore';
@@ -126,6 +127,41 @@ export function PageScroller({
     settled.current = page;
     reachFor(page);
   }, [page, root, reachFor]);
+
+  /* Scrolling to a search match.
+   *
+   * Here rather than in the page that draws the match, because this is the
+   * component that owns the scroll: a child scrolling itself into view fires
+   * while the page ratio it just learned is still being applied to every
+   * slot above it, and lands a page out. */
+  const find = useReaderStore((s) => s.find);
+  const layers = useReaderStore((s) => s.layers);
+  const scrolledForFind = useRef<number | null>(null);
+
+  /** How far down the target page its first match sits, 0-1. */
+  const findY = useMemo(() => {
+    if (!find) return null;
+    const layer = layers[find.page];
+    if (!layer) return null;
+    const hits = matchingWordIndices(layer.words, find.terms);
+    if (hits.length === 0) return null;
+    const word = layer.words[hits[0]];
+    return (word.y + word.h / 2) / layer.height;
+  }, [find, layers]);
+
+  useEffect(() => {
+    if (!find || findY === null || !root || box.w === 0) return;
+    if (scrolledForFind.current === find.token) return;
+    const slot = root.querySelector(`[data-page-slot="${find.page}"]`);
+    if (!(slot instanceof HTMLElement)) return;
+    scrolledForFind.current = find.token;
+    quietUntil.current = performance.now() + 500;
+    // A third of the way down rather than centred: the eye goes to the match
+    // and then reads on, so what follows it should be on screen too.
+    root.scrollTo({
+      top: Math.max(0, slot.offsetTop + findY * slot.clientHeight - root.clientHeight / 3),
+    });
+  }, [find, findY, root, box.w]);
 
   const onVisible = useCallback(
     (n: number) => {

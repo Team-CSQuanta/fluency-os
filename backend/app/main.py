@@ -7,6 +7,7 @@ from app.config import configure_from_argv, settings
 from app.db import get_connection
 from app.migrations.runner import run_migrations
 from app.routers import (
+    activity,
     books,
     challenge,
     conversation,
@@ -57,6 +58,7 @@ app.add_middleware(
 app.include_router(forest.router)
 app.include_router(health.router)
 app.include_router(users.router)
+app.include_router(users.file_router)
 app.include_router(placement.router)
 app.include_router(hardware.router)
 app.include_router(books.router)
@@ -68,6 +70,7 @@ app.include_router(vocabulary.router)
 app.include_router(conversation.router)
 app.include_router(review.router)
 app.include_router(engine.router)
+app.include_router(activity.router)
 
 
 def main() -> None:

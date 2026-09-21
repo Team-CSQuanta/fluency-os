@@ -102,17 +102,6 @@ export function ReadingPanel() {
             />
           }
         />
-        <Row
-          label="Show the printed page"
-          sub="For PDFs: the publisher's own typeset page beside the extracted text, so figures, tables and equations are not lost to the extractor."
-          control={
-            <Toggle
-              label="Show the printed page"
-              checked={prefs.page_view}
-              onChange={(v) => setPrefs({ page_view: v })}
-            />
-          }
-        />
       </Section>
 
       <Section title="The side panel">

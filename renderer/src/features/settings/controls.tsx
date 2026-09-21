@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 /** The settings page's vocabulary of controls.
  *
@@ -176,6 +176,86 @@ export function Slider({
 
 /** For the things this page reports but does not own — the model, the voice,
  * the clip engine. Sends you to the screen that does own them. */
+/** A value you can type over. Saves when you leave the field or press
+ * Enter, because a settings row that saves on every keystroke writes a row
+ * per letter and shows a failure halfway through a word. */
+export function EditableText({
+  value,
+  onSave,
+  placeholder,
+  width = 180,
+}: {
+  value: string;
+  onSave: (next: string) => void;
+  placeholder?: string;
+  width?: number;
+}) {
+  const [draft, setDraft] = useState(value);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => setDraft(value), [value]);
+
+  const commit = () => {
+    const next = draft.trim();
+    if (!next || next === value) {
+      setDraft(value);
+      return;
+    }
+    onSave(next);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1200);
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      {saved && <span className="font-mono text-[9.5px] text-acc">saved ✓</span>}
+      <input
+        value={draft}
+        placeholder={placeholder}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          if (e.key === 'Escape') {
+            setDraft(value);
+            e.currentTarget.blur();
+          }
+        }}
+        style={{ width }}
+        className="rounded-field border border-line2 bg-transparent px-[9px] py-[6px] text-right font-sans text-[12px] text-tx outline-none focus:border-accLine focus:bg-accSoft"
+      />
+    </div>
+  );
+}
+
+/** A value chosen from a list. */
+export function Choice<T extends string>({
+  value,
+  options,
+  onChange,
+  width = 180,
+}: {
+  value: T | null;
+  options: Array<{ value: T; label: string }>;
+  onChange: (next: T) => void;
+  width?: number;
+}) {
+  return (
+    <select
+      value={value ?? ''}
+      onChange={(e) => onChange(e.target.value as T)}
+      style={{ width }}
+      className="cursor-pointer rounded-field border border-line2 bg-panel px-[9px] py-[6px] font-sans text-[12px] text-tx outline-none focus:border-accLine"
+    >
+      {value === null && <option value="">not set</option>}
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 export function GoTo({ children, onClick }: { children: ReactNode; onClick: () => void }) {
   return (
     <button onClick={onClick} className="font-mono text-[10.5px] text-acc hover:underline">

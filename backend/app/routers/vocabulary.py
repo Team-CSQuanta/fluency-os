@@ -123,6 +123,7 @@ def _row_to_context_out(row: sqlite3.Row) -> VocabContextOut:
         source_label=row["source_label"],
         book_id=row["book_id"],
         block_index=row["block_index"],
+        page=row["page"] if "page" in keys else None,
         created_at=row["created_at"],
         media_item_id=row["media_item_id"] if "media_item_id" in keys else None,
         start_ms=row["start_ms"] if "start_ms" in keys else None,
@@ -201,6 +202,7 @@ def save_word(payload: VocabWordCreate, conn: sqlite3.Connection = Depends(get_d
         sentence=payload.sentence,
         book_id=payload.book_id,
         block_index=payload.block_index,
+        page=payload.page,
     )
     if result is None:
         raise HTTPException(

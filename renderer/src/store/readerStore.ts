@@ -20,8 +20,10 @@ import type {
   ReaderPrefsOut,
   SearchHitOut,
   SessionOut,
+  AiExplainOut,
   WordLookupOut,
   PageTextLayerOut,
+  PageHeatOut,
   PageHighlightOut,
   HighlightRect,
   HighlightStyle,
@@ -62,6 +64,15 @@ interface ReaderState {
   // The block the current lookup's word was clicked in — the vocabulary
   // save action needs this for context provenance (book_id + block_index).
   lookupBlockIndex: number | null;
+  /** The sentence the word was met in, kept so that saving the word keeps
+   * it too — a word with no context is a flashcard with no memory attached. */
+  lookupSentence: string | null;
+  /** The printed page it was met on, when there is one. */
+  lookupPage: number | null;
+  /** The AI's reading of the word in that sentence. */
+  explain: AiExplainOut | null;
+  explainStatus: 'idle' | 'loading' | 'error';
+  explainError: string | null;
   levelMode: LevelMode;
   leveled: LeveledTextOut | null;
   levelStatus: 'idle' | 'loading' | 'error';
@@ -92,7 +103,9 @@ interface ReaderState {
   createBookmark: (blockIndex: number, label: string) => Promise<void>;
   deleteBookmark: (id: string) => Promise<void>;
   setSearchQuery: (query: string) => void;
-  lookupWord: (word: string, sentence?: string, blockIndex?: number) => Promise<void>;
+  lookupWord: (word: string, sentence?: string, blockIndex?: number, page?: number) => Promise<void>;
+  /** Ask the AI what the word means in the sentence it was met in. */
+  explainInContext: () => Promise<void>;
 
   // The printed page, made selectable. See PageTextLayer.tsx.
   /** Word boxes, keyed by page.
@@ -106,12 +119,32 @@ interface ReaderState {
   /** Every page highlight in the book — they are fetched once, on open, and
    * each page's marks are those with its number. */
   allPageHighlights: PageHighlightOut[];
+  /** Which words on a page are above the reader's level, keyed by page and
+   * indexed into that page's layer. Held to the same window as the layers,
+   * because it is useless without them. */
+  pageHeat: Record<number, PageHeatOut>;
+  /** The words under the reader's selection on the printed page, or null.
+   * A page selection is not a block: it can cross blocks and can cover a
+   * caption or an equation the extractor never recorded. */
+  pageSelectionText: string | null;
+  /** What a search hit matched, so the printed page can show where it is.
+   * `token` changes on every jump, which is what re-scrolls to the first
+   * match when the same hit is pressed twice. */
+  find: { terms: string[]; page: number; token: number } | null;
   /** How tall a page is against its width, learned from the first page that
    * loads. Every slot in the book is that shape until proven otherwise, so a
    * page that has not loaded yet still holds the right amount of room. */
   pageRatio: number;
   setPageRatio: (ratio: number) => void;
   loadPageLayer: (page: number) => Promise<void>;
+  /** What the reader has selected on the printed page, so the panels can
+   * work from it the way they work from a selected paragraph. */
+  setPageSelection: (text: string | null) => void;
+  /** Light up a hit's words wherever they appear on the pages on screen. */
+  findOnPage: (terms: string[], page: number) => void;
+  clearFind: () => void;
+  /** Level an arbitrary passage — the printed page's answer to levelBlock. */
+  levelSelection: (text: string) => Promise<void>;
   addPageHighlight: (h: {
     page: number;
     rects: HighlightRect[];
@@ -169,6 +202,11 @@ const INITIAL: Pick<
   | 'lookup'
   | 'lookupStatus'
   | 'lookupBlockIndex'
+  | 'lookupSentence'
+  | 'lookupPage'
+  | 'explain'
+  | 'explainStatus'
+  | 'explainError'
   | 'levelMode'
   | 'leveled'
   | 'levelStatus'
@@ -178,6 +216,9 @@ const INITIAL: Pick<
   | 'status'
   | 'error'
   | 'layers'
+  | 'pageHeat'
+  | 'pageSelectionText'
+  | 'find'
   | 'labelsByPage'
   | 'allPageHighlights'
 > = {
@@ -202,6 +243,11 @@ const INITIAL: Pick<
   lookup: null,
   lookupStatus: 'idle',
   lookupBlockIndex: null,
+  lookupSentence: null,
+  lookupPage: null,
+  explain: null,
+  explainStatus: 'idle',
+  explainError: null,
   // Defaults to a mode that actually works offline; the two generative modes
   // are selectable but gated.
   levelMode: 'inline',
@@ -213,6 +259,9 @@ const INITIAL: Pick<
   status: 'idle',
   error: null,
   layers: {},
+  pageHeat: {},
+  pageSelectionText: null,
+  find: null,
   labelsByPage: {},
   allPageHighlights: [],
 };
@@ -250,10 +299,7 @@ const DEFAULT_PREFS: ReaderPrefsOut = {
  * of megabytes held for pages that are no longer on screen. */
 const LAYER_WINDOW = 12;
 
-function keepRecent(
-  layers: Record<number, PageTextLayerOut>,
-  around: number,
-): Record<number, PageTextLayerOut> {
+function keepRecent<T>(layers: Record<number, T>, around: number): Record<number, T> {
   const pages = Object.keys(layers).map(Number);
   if (pages.length <= LAYER_WINDOW) return layers;
   const kept = pages
@@ -420,7 +466,9 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   },
 
   setSearchQuery: (query) => {
-    set({ searchQuery: query });
+    // Editing the query makes whatever is lit on the page stale, so it goes
+    // out with the hits it came from.
+    set({ searchQuery: query, find: null });
     cancelPendingSearch();
 
     if (query.trim() === '') {
@@ -448,10 +496,21 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     }, SEARCH_DEBOUNCE_MS);
   },
 
-  lookupWord: async (word, sentence, blockIndex) => {
+  lookupWord: async (word, sentence, blockIndex, page) => {
     const clean = word.trim();
     if (!clean) return;
-    set({ lookupStatus: 'loading', lookupBlockIndex: blockIndex ?? null });
+    set({
+      lookupStatus: 'loading',
+      lookupBlockIndex: blockIndex ?? null,
+      // Kept rather than only sent: the sentence is what the AI explains and
+      // what the vocabulary entry remembers, and it used to be thrown away
+      // the moment the lookup returned.
+      lookupSentence: sentence?.trim() || null,
+      lookupPage: page ?? null,
+      explain: null,
+      explainStatus: 'idle',
+      explainError: null,
+    });
     try {
       const query = new URLSearchParams({ w: clean });
       if (sentence) query.set('ctx', sentence);
@@ -462,7 +521,38 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     }
   },
 
-  clearLookup: () => set({ lookup: null, lookupStatus: 'idle', lookupBlockIndex: null }),
+  clearLookup: () =>
+    set({
+      lookup: null,
+      lookupStatus: 'idle',
+      lookupBlockIndex: null,
+      lookupSentence: null,
+      lookupPage: null,
+      explain: null,
+      explainStatus: 'idle',
+      explainError: null,
+    }),
+
+  explainInContext: async () => {
+    const { lookup, lookupSentence } = get();
+    if (!lookup || !lookupSentence) return;
+    set({ explainStatus: 'loading', explainError: null });
+    try {
+      const result = await api.post<AiExplainOut>('/vocabulary/ai-explain', {
+        user_id: requireUserId(),
+        word: lookup.word,
+        context: lookupSentence,
+      });
+      set({ explain: result, explainStatus: 'idle' });
+    } catch (err) {
+      // The server says why — no model, model still loading, a provider that
+      // refused — and that is worth more than a guess made here.
+      set({
+        explainStatus: 'error',
+        explainError: friendlyMessage(err, 'Explaining this word in context'),
+      });
+    }
+  },
 
   // A4 and US Letter are 1.41 and 1.29 tall; a textbook is usually between
   // them. Only used until a real page says otherwise.
@@ -485,13 +575,20 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     if (get().layers[page]) return;
     const userId = useAppStore.getState().currentUserId;
     try {
-      const [layer, labels] = await Promise.all([
+      const [layer, labels, heat] = await Promise.all([
         api.get<PageTextLayerOut>(`/books/${bookId}/page/${page}/text-layer`),
         userId
           ? api.get<PageLabelOut[]>(
               `/books/${bookId}/page-labels?user_id=${encodeURIComponent(userId)}&page=${page}`,
             )
           : Promise.resolve([] as PageLabelOut[]),
+        // Fetched with the layer because it indexes into it, and allowed to
+        // fail on its own: a page you cannot tint is still a page you can read.
+        api
+          .get<PageHeatOut>(
+            `/books/${bookId}/page/${page}/heat${userId ? `?user_id=${encodeURIComponent(userId)}` : ''}`,
+          )
+          .catch(() => null),
       ]);
       // The reader may have closed the book while this was in flight.
       if (get().bookId !== bookId) return;
@@ -499,6 +596,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       set((st) => ({
         layers: keepRecent({ ...st.layers, [page]: layer }, page),
         labelsByPage: { ...st.labelsByPage, [page]: labels },
+        pageHeat: heat ? keepRecent({ ...st.pageHeat, [page]: heat }, page) : st.pageHeat,
       }));
     } catch {
       // A page that cannot be laid over is still a page that can be read;
@@ -635,7 +733,10 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
         `/reading/prefs?user_id=${encodeURIComponent(userId)}`,
       );
       if (prefsTouched) return;
-      set({ prefs });
+      // Merged onto the defaults rather than taken whole: a row saved by an
+      // older build has none of the fields added since, and reading one of
+      // those back undefined takes the reader down with it.
+      set({ prefs: { ...DEFAULT_PREFS, ...prefs } });
     } catch {
       // Defaults are already in place; a failed load must not block reading.
     }
@@ -683,8 +784,16 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
 
   setLevelMode: (mode) => {
     set({ levelMode: mode });
-    const { levelBlockIndex } = get();
-    if (levelBlockIndex !== null) void get().levelBlock(levelBlockIndex, mode);
+    const { levelBlockIndex, pageSelectionText, leveled } = get();
+    if (levelBlockIndex !== null) {
+      void get().levelBlock(levelBlockIndex, mode);
+      return;
+    }
+    // A passage from the printed page has no block to re-level, so it is
+    // levelled again from the words themselves. Only once something has
+    // actually been levelled: changing the mode is not a request to spend a
+    // generative call on a selection nobody has asked about.
+    if (leveled && pageSelectionText) void get().levelSelection(pageSelectionText);
   },
 
   levelBlock: async (blockIndex, mode) => {
@@ -705,7 +814,66 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       });
       // A slower earlier request must not overwrite a newer one's result.
       if (seq !== levelRequestSeq || get().bookId !== bookId) return;
-      set({ leveled: result, levelStatus: 'idle' });
+      // Shaped before it is stored: the panel maps over `segments` and
+      // `substitutions`, and an answer missing either used to take the whole
+      // reader down rather than degrade.
+      set({
+        leveled: {
+          ...result,
+          segments: result.segments ?? [],
+          substitutions: result.substitutions ?? [],
+        },
+        levelStatus: 'idle',
+      });
+    } catch {
+      if (seq !== levelRequestSeq) return;
+      set({ leveled: null, levelStatus: 'error' });
+    }
+  },
+
+  findOnPage: (terms, page) => {
+    if (terms.length === 0) return;
+    set((s) => ({ find: { terms, page, token: (s.find?.token ?? 0) + 1 } }));
+  },
+
+  clearFind: () => set({ find: null }),
+
+  setPageSelection: (text) => {
+    const next = text?.trim() ? text.trim() : null;
+    // Set unconditionally and the store churns on every mouse-up over the
+    // page, re-rendering the whole reader for a selection that has not
+    // changed.
+    if (get().pageSelectionText === next) return;
+    set({ pageSelectionText: next });
+  },
+
+  levelSelection: async (text) => {
+    const { bookId, levelMode } = get();
+    const passage = text.trim();
+    if (!bookId || !passage) return;
+
+    levelRequestSeq += 1;
+    const seq = levelRequestSeq;
+    set({ levelStatus: 'loading', levelBlockIndex: null });
+
+    try {
+      const result = await api.post<LeveledTextOut>('/reading/level-text', {
+        text: passage,
+        mode: levelMode,
+        user_id: useAppStore.getState().currentUserId,
+      });
+      if (seq !== levelRequestSeq || get().bookId !== bookId) return;
+      // Shaped before it is stored: the panel maps over `segments` and
+      // `substitutions`, and an answer missing either used to take the whole
+      // reader down rather than degrade.
+      set({
+        leveled: {
+          ...result,
+          segments: result.segments ?? [],
+          substitutions: result.substitutions ?? [],
+        },
+        levelStatus: 'idle',
+      });
     } catch {
       if (seq !== levelRequestSeq) return;
       set({ leveled: null, levelStatus: 'error' });

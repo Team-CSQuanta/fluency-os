@@ -18,6 +18,8 @@ export interface FluencyOSBridge {
   pickBookFiles: () => Promise<string[]>;
   pickMediaFiles: () => Promise<string[]>;
   pickSubtitleFile: () => Promise<string | null>;
+  /** An image from disk — used for the profile picture. */
+  pickImageFile: () => Promise<string | null>;
   getPathForFile: (file: File) => string;
   minimizeWindow: () => void;
   maximizeWindow: () => void;

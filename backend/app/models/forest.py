@@ -32,28 +32,21 @@ class BiomeOut(BaseModel):
 
 
 class ForestOut(BaseModel):
+    """The forest as a picture of a vocabulary, and nothing else.
+
+    It used to carry a currency too — sunlight earned per review, spent on
+    streak freezes and on reviving a dormant tree. The freeze was the clearest
+    problem: it could be bought, it was counted, and nothing anywhere ever
+    consulted it, so the streak it promised to protect broke regardless. A
+    reward that does not work is worse than no reward, and the forest says
+    enough on its own: these are your words, this is how well you hold them.
+    """
+
     trees: list[TreeOut]
-    biomes: list[BiomeOut]
     # One count per growth stage, in stage order.
     stages: list[int]
     stage_names: list[str]
-    sunlight: int
-    sunlight_earned: int
-    streak_freezes: int
     dormant: int
-    costs: dict[str, int]
-
-
-class SpendIn(BaseModel):
-    user_id: str
-    kind: str
-    vocab_word_id: str | None = None
-
-
-class SpendOut(BaseModel):
-    kind: str
-    cost: int
-    balance: int
 
 
 class FocusStartIn(BaseModel):
@@ -62,8 +55,10 @@ class FocusStartIn(BaseModel):
 
 
 class FocusOut(BaseModel):
+    """A block of time the learner sat through. A commitment device, not a
+    faucet: it pays nothing, it only records that it happened."""
+
     id: str
     minutes: int
     started_at: str
     completed_at: str | None = None
-    sunlight: int = 0

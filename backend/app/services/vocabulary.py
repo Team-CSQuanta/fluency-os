@@ -27,6 +27,7 @@ def save_word(
     sentence: str | None,
     book_id: str | None,
     block_index: int | None,
+    page: int | None = None,
 ) -> tuple[sqlite3.Row, bool] | None:
     """Insert-or-fetch the vocab_words row for this user+word, then append a
     context if one wasn't already captured for this exact book/block.
@@ -75,7 +76,9 @@ def save_word(
     # pointing at it has no word to belong to.
     review.ensure_card(conn, user_id, row["id"])
 
-    _add_context_if_new(conn, row["id"], sentence=sentence, book_id=book_id, block_index=block_index)
+    _add_context_if_new(
+        conn, row["id"], sentence=sentence, book_id=book_id, block_index=block_index, page=page
+    )
     return row, already_existed
 
 
@@ -444,29 +447,69 @@ def _add_context_if_new(
     sentence: str | None,
     book_id: str | None,
     block_index: int | None,
+    page: int | None = None,
 ) -> None:
-    if not sentence or book_id is None or block_index is None:
+    """Record where the word was met, if this place is not already recorded.
+
+    A word met in reflowed text arrives with a block; one met on a printed
+    page arrives with a page instead, because a selection there is a run of
+    boxes on an image rather than a paragraph anything recorded. Either is
+    enough to say where the word came from, and that sentence is the whole
+    value of the entry later: a word with no context is a flashcard with no
+    memory attached.
+    """
+    if not sentence or book_id is None or (block_index is None and page is None):
         return
-    existing = conn.execute(
-        "SELECT id FROM vocab_contexts WHERE vocab_word_id = ? AND book_id = ? AND block_index = ?",
-        (vocab_word_id, book_id, block_index),
-    ).fetchone()
+    # One context per place. Which column identifies "the place" depends on
+    # which one the reader's view could supply.
+    if block_index is not None:
+        existing = conn.execute(
+            "SELECT id FROM vocab_contexts WHERE vocab_word_id = ? AND book_id = ? AND block_index = ?",
+            (vocab_word_id, book_id, block_index),
+        ).fetchone()
+    else:
+        existing = conn.execute(
+            "SELECT id FROM vocab_contexts WHERE vocab_word_id = ? AND book_id = ? AND page = ?",
+            (vocab_word_id, book_id, page),
+        ).fetchone()
     if existing is not None:
         return
     conn.execute(
         """
-        INSERT INTO vocab_contexts (id, vocab_word_id, kind, snippet, source_label, book_id, block_index, created_at)
-        VALUES (?, ?, 'page', ?, ?, ?, ?, ?)
+        INSERT INTO vocab_contexts
+          (id, vocab_word_id, kind, snippet, source_label, book_id, block_index, page, created_at)
+        VALUES (?, ?, 'page', ?, ?, ?, ?, ?, ?)
         """,
-        (uuid7(), vocab_word_id, sentence, _page_label(conn, book_id, block_index), book_id, block_index, iso8601_utc_now()),
+        (
+            uuid7(),
+            vocab_word_id,
+            sentence,
+            _page_label(conn, book_id, block_index, page),
+            book_id,
+            block_index,
+            page if page is not None else _page_number_for(conn, book_id, block_index),
+            iso8601_utc_now(),
+        ),
     )
 
 
-def _page_label(conn: sqlite3.Connection, book_id: str, block_index: int) -> str:
+def _page_number_for(conn: sqlite3.Connection, book_id: str, block_index: int | None) -> int | None:
+    """The printed page a block falls on, so every context knows its page
+    whichever way it arrived."""
+    if block_index is None:
+        return None
+    book = conn.execute("SELECT * FROM books WHERE id = ?", (book_id,)).fetchone()
+    return None if book is None else _page_number(conn, book, block_index)
+
+
+def _page_label(
+    conn: sqlite3.Connection, book_id: str, block_index: int | None, page: int | None = None
+) -> str:
     book = conn.execute("SELECT * FROM books WHERE id = ?", (book_id,)).fetchone()
     if book is None:
         return "Unknown source"
-    return f"{book['title']} · p.{_page_number(conn, book, block_index)}"
+    shown = page if block_index is None else _page_number(conn, book, block_index)
+    return f"{book['title']} · p.{shown}"
 
 
 def _page_number(conn: sqlite3.Connection, book: sqlite3.Row, block_index: int) -> int:

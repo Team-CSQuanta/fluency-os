@@ -22,6 +22,15 @@ export interface UserOut {
   cefr_level: string | null;
   created_at: string;
   onboarding_completed_at: string | null;
+  /** Whether a profile picture is set; the file is at /users/{id}/avatar. */
+  has_avatar: boolean;
+}
+
+export interface ProfileUpdate {
+  display_name?: string;
+  native_language?: string;
+  target_language?: string;
+  cefr_level?: string;
 }
 
 export interface PlacementUpdate {
@@ -140,6 +149,21 @@ export interface GoalDayOut {
   percent: number;
 }
 
+export interface DayActivityOut {
+  date: string;
+  pages: number;
+  minutes: number;
+  reviews: number;
+}
+
+export interface ActivityOut {
+  days: DayActivityOut[];
+  total_pages: number;
+  total_reviews: number;
+  /** Days with anything on them at all. */
+  active_days: number;
+}
+
 export interface ReadingStatsOut {
   goal_pages: number;
   pages_today: number;
@@ -152,7 +176,7 @@ export interface ReadingStatsOut {
 export type LevelMode = 'inline' | 'lexical' | 'contextual' | 'semantic';
 
 export type PageTheme = 'auto' | 'light' | 'sepia' | 'dark';
-export type PanelTab = 'toc' | 'search' | 'marks' | 'text' | 'ai' | 'level';
+export type PanelTab = 'toc' | 'search' | 'marks' | 'study';
 
 export interface ReaderPrefsOut {
   font_size: number;
@@ -1060,23 +1084,12 @@ export interface TreeOut {
   due: string | null;
 }
 
-export interface BiomeOut {
-  key: string;
-  label: string;
-  blurb: string;
-  count: number;
-}
-
 export interface ForestOut {
   trees: TreeOut[];
-  biomes: BiomeOut[];
+  /** One count per growth stage, in stage order. */
   stages: number[];
   stage_names: string[];
-  sunlight: number;
-  sunlight_earned: number;
-  streak_freezes: number;
   dormant: number;
-  costs: Record<string, number>;
 }
 
 export interface FocusOut {
@@ -1084,7 +1097,6 @@ export interface FocusOut {
   minutes: number;
   started_at: string;
   completed_at: string | null;
-  sunlight: number;
 }
 
 // --- Settings (the page's own payload) ----------------------------------
@@ -1146,6 +1158,23 @@ export interface PageWordOut {
   t: string;
   /** Which line of the page. Used to tell a line break from a space. */
   ln: number;
+}
+
+export interface PageWordHeatOut {
+  /** Position in the page layer's own word list — the boxes are not resent. */
+  i: number;
+  /** The hard word inside the box, which is not always the whole box. */
+  word: string;
+  cefr: string;
+  simpler: string | null;
+}
+
+export interface PageHeatOut {
+  target_cefr: string;
+  /** False when the book's own heat overlay flag is off. */
+  enabled: boolean;
+  words: PageWordHeatOut[];
+  total_above_level: number;
 }
 
 export interface PageTextLayerOut {
