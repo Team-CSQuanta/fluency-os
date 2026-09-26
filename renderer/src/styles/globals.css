@@ -1,10 +1,69 @@
+/* Bundled locally — see index.html. Inter for the interface, IBM Plex Mono
+   for the technical/label text. `font-display: block` rather than `swap`:
+   the files are local so there is no wait to paper over, and a swap would
+   only introduce a flash of a different metric. */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('/fonts/inter-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+  src: url('/fonts/inter-500.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: block;
+  src: url('/fonts/inter-600.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  src: url('/fonts/inter-700.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('/fonts/plex-mono-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+  src: url('/fonts/plex-mono-500.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: block;
+  src: url('/fonts/plex-mono-600.woff2') format('woff2');
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 /* Design tokens ported verbatim from claude-ui-mockup-files/FluencyOS.html */
 :root {
-  --sans: 'Public Sans', system-ui, sans-serif;
+  /* Inter, measured at x-height 0.546em against Public Sans's 0.517 — a
+     ~6% larger lowercase at the same px size, which matters in an
+     interface with several hundred labels at 11px and below. It is also
+     drawn for screens at small sizes, with open apertures that keep
+     a/e/s/c from filling in. */
+  --sans: 'Inter', system-ui, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
   /* The accent, as channels so every tint derives from one place rather than
      from copies of an rgba() literal scattered through the components. */
@@ -34,6 +93,16 @@ body {
 }
 
 body[data-theme='dark'] {
+  /* Tells the browser to draw the parts of the interface we do not draw
+     ourselves — the popup list a <select> opens, checkboxes, spinners, the
+     focus ring's contrast — in dark rather than light.
+
+     Without it Chromium assumes a light page whatever our own colours say, so
+     the dropdown behind "recently added" or "all levels" opened as a white
+     panel of near-white text: the control was readable but the list it opened
+     was not. That popup is drawn by the browser and cannot be reached with
+     ordinary CSS, so this declaration is the only way to reach it. */
+  color-scheme: dark;
   --bg: #131514;
   --bg2: #191c1b;
   --panel: #1e2120;
@@ -49,6 +118,7 @@ body[data-theme='dark'] {
 }
 
 body[data-theme='light'] {
+  color-scheme: light;
   --bg: #f2f2f0;
   --bg2: #f8f8f6;
   --panel: #ffffff;
@@ -82,4 +152,78 @@ body {
 }
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* The settings sliders.
+ *
+ * `appearance: none` is needed to draw a 3px track instead of the browser's
+ * chunky default — but it also removes the thumb, and a slider with no thumb
+ * is a coloured line you cannot tell is draggable. Chromium and Firefox name
+ * that pseudo-element differently and neither can be reached from a utility
+ * class, so it lives here.
+ */
+.fos-slider {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--line);
+}
+.fos-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--acc);
+  /* The ring keeps the thumb legible where it sits on top of the filled
+     part of the track, which is the same colour. */
+  border: 2px solid var(--panel);
+  cursor: pointer;
+}
+.fos-slider::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--acc);
+  border: 2px solid var(--panel);
+  cursor: pointer;
+}
+.fos-slider:focus-visible {
+  outline: 2px solid var(--accLine);
+  outline-offset: 4px;
+}
+
+/* The invisible text over a rendered book page.
+ *
+ * The glyphs are never seen — the page image underneath has the real ones —
+ * so the only thing drawn here is the selection itself. A solid colour would
+ * hide the print it is meant to be marking, so the colour is laid on the page
+ * the way a highlighter pen is: it darkens what is under it and cannot make
+ * anything lighter, which leaves the ink readable through it.
+ *
+ * That is also why the colour is opaque rather than a wash. A see-through
+ * colour painted twice over the same spot comes out deeper, and these marks
+ * DO overlap: the browser paints a selection over the height the font can
+ * reach, not the line box, so every line bleeds a few pixels into the next
+ * one. With a wash, those few pixels showed up as dark stripes between the
+ * lines. An opaque colour simply covers itself, so twice is the same as once
+ * — and because the whole layer is blended with the page in one go, the
+ * whole selection comes out one even tone however many marks made it.
+ */
+.fos-text-layer {
+  /* Nothing here should catch a click meant for the page, except the text
+     itself, which needs to be draggable. */
+  pointer-events: none;
+  /* On the parent, not the marks: it groups the layer and blends it with the
+     page once. On each mark it would blend them with each other as well. */
+  mix-blend-mode: multiply;
+}
+.fos-text-layer span {
+  pointer-events: auto;
+}
+.fos-text-layer ::selection {
+  background: #b9d4ff;
+}
+.fos-text-layer ::-moz-selection {
+  background: #b9d4ff;
 }

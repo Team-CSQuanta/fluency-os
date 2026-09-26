@@ -1,21 +1,32 @@
 import json
+import shutil
 import sqlite3
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import FileResponse
 
 from app.db import get_db
 from app.models.onboarding import (
+    AvatarIn,
     CompanionUpdate,
     PlacementUpdate,
+    ProfileUpdate,
     UserCreate,
     UserOut,
     UserSettingsUpdate,
 )
-from app.security import require_token
+from app.models.settings import AppSettingsOut, AppSettingsPatch
+from app.security import require_token, require_token_or_query
+from app.services import book_storage
 from app.utils.ids import uuid7
 from app.utils.time import iso8601_utc_now
 
 router = APIRouter(prefix="/users", dependencies=[Depends(require_token)])
+
+# An <img src> cannot carry a custom header, so the picture takes the
+# handshake token in the query string, as video and thumbnails already do.
+file_router = APIRouter(prefix="/users", dependencies=[Depends(require_token_or_query)])
 
 
 def _row_to_user(row: sqlite3.Row) -> UserOut:
@@ -27,7 +38,16 @@ def _row_to_user(row: sqlite3.Row) -> UserOut:
         cefr_level=row["cefr_level"],
         created_at=row["created_at"],
         onboarding_completed_at=row["onboarding_completed_at"],
+        has_avatar=_avatar_path(row) is not None,
     )
+
+
+def _avatar_path(row: sqlite3.Row) -> Path | None:
+    """The stored picture, if the row has one and it is still on disk."""
+    if "avatar_path" not in row.keys() or not row["avatar_path"]:
+        return None
+    path = Path(row["avatar_path"])
+    return path if path.is_file() else None
 
 
 def _get_user_row(conn: sqlite3.Connection, user_id: str) -> sqlite3.Row:
@@ -54,6 +74,93 @@ def create_user(payload: UserCreate, conn: sqlite3.Connection = Depends(get_db))
 
 @router.get("/{user_id}", response_model=UserOut)
 def get_user(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> UserOut:
+    return _row_to_user(_get_user_row(conn, user_id))
+
+
+_AVATAR_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                 ".webp": "image/webp", ".gif": "image/gif"}
+# Shown at 48px: beyond a few megabytes there is nothing to gain.
+_AVATAR_MAX_BYTES = 8 * 1024 * 1024
+
+
+@router.patch("/{user_id}", response_model=UserOut)
+def update_profile(
+    user_id: str, payload: ProfileUpdate, conn: sqlite3.Connection = Depends(get_db)
+) -> UserOut:
+    """Change name, languages or level. Every field is optional: the settings
+    screen saves one row at a time."""
+    _get_user_row(conn, user_id)
+    fields = payload.model_dump(exclude_none=True)
+    if not fields:
+        return _row_to_user(_get_user_row(conn, user_id))
+
+    if "display_name" in fields:
+        name = fields["display_name"].strip()
+        if not name:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="A display name cannot be empty."
+            )
+        fields["display_name"] = name
+
+    assignments = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(
+        f"UPDATE users SET {assignments} WHERE id = ?", (*fields.values(), user_id)
+    )
+    return _row_to_user(_get_user_row(conn, user_id))
+
+
+@router.put("/{user_id}/avatar", response_model=UserOut)
+def set_avatar(
+    user_id: str, payload: AvatarIn, conn: sqlite3.Connection = Depends(get_db)
+) -> UserOut:
+    """Copy a picture from disk into the data folder and use it.
+
+    Copied rather than referenced, so tidying the folder it came from cannot
+    break it.
+    """
+    source = Path(payload.path).expanduser()
+    if not source.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="That file is no longer there."
+        )
+    suffix = source.suffix.lower()
+    if suffix not in _AVATAR_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"A picture has to be one of {', '.join(sorted(_AVATAR_TYPES))}.",
+        )
+    if source.stat().st_size > _AVATAR_MAX_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="That picture is larger than 8 MB — a smaller one will look the same.",
+        )
+
+    row = _get_user_row(conn, user_id)
+    destination = book_storage.avatars_dir() / f"{user_id}{suffix}"
+    shutil.copyfile(source, destination)
+    # A reader who swaps a png for a jpg leaves the old file behind otherwise.
+    previous = _avatar_path(row)
+    if previous is not None and previous != destination:
+        previous.unlink(missing_ok=True)
+    conn.execute("UPDATE users SET avatar_path = ? WHERE id = ?", (str(destination), user_id))
+    return _row_to_user(_get_user_row(conn, user_id))
+
+
+@file_router.get("/{user_id}/avatar")
+def get_avatar(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> FileResponse:
+    path = _avatar_path(_get_user_row(conn, user_id))
+    if path is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No picture set")
+    return FileResponse(path, media_type=_AVATAR_TYPES.get(path.suffix.lower()))
+
+
+@router.delete("/{user_id}/avatar", response_model=UserOut)
+def clear_avatar(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> UserOut:
+    row = _get_user_row(conn, user_id)
+    path = _avatar_path(row)
+    if path is not None:
+        path.unlink(missing_ok=True)
+    conn.execute("UPDATE users SET avatar_path = NULL WHERE id = ?", (user_id,))
     return _row_to_user(_get_user_row(conn, user_id))
 
 
@@ -102,6 +209,97 @@ def update_settings(
     )
 
 
+# --------------------------------------------------------------------------
+# The settings page.
+#
+# The onboarding PUT above writes the whole row from one payload, which is
+# right for onboarding — it is filling the row in — and wrong for everything
+# afterwards. A settings page changes one control at a time, and a whole-row
+# write from a page that did not display every column would quietly reset the
+# ones it left out.
+
+
+def _settings_row(conn: sqlite3.Connection, user_id: str) -> sqlite3.Row:
+    """This user's settings, created with the schema's own defaults if the row
+    is missing. Skipping onboarding is allowed, so absence is not an error."""
+    _get_user_row(conn, user_id)
+    conn.execute(
+        "INSERT INTO user_settings (user_id) VALUES (?) ON CONFLICT(user_id) DO NOTHING",
+        (user_id,),
+    )
+    return conn.execute("SELECT * FROM user_settings WHERE user_id = ?", (user_id,)).fetchone()
+
+
+@router.get("/{user_id}/settings", response_model=AppSettingsOut)
+def get_settings(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> AppSettingsOut:
+    """Everything the settings page shows.
+
+    Until this existed the page had no way to read its own values, so it
+    displayed a hard-coded list — "MacBook Mic", "18.4 GB used", "af_heart" —
+    for a user whose microphone, disk and voice were all something else.
+    """
+    row = _settings_row(conn, user_id)
+    return AppSettingsOut(
+        target_retention=row["target_retention_srs"],
+        new_cards_per_day=row["new_cards_per_day"],
+        daily_page_goal=row["daily_page_goal"],
+        notifications_enabled=bool(row["notifications_enabled"]),
+        quiet_hours_start=row["quiet_hours_start"] or "22:00",
+        quiet_hours_end=row["quiet_hours_end"] or "08:00",
+        conversation_mic_sensitivity=row["conversation_mic_sensitivity"],
+        conversation_turn_pace=row["conversation_turn_pace"],
+        scene_embeds_enabled=bool(row["scene_embeds_enabled"]),
+        llm_mode=row["llm_mode"],
+        llm_model_id=row["llm_model_id"],
+        api_provider=row["api_provider"],
+        openrouter_model=row["openrouter_model"],
+        gemini_model=row["gemini_model"],
+        tts_engine=row["tts_engine"],
+        stt_model_id=row["stt_model_id"],
+        # The keys themselves stay on the machine. Whether one is set is not a
+        # secret, and the page needs it to say "set" rather than showing a box
+        # that looks empty when it is not.
+        openrouter_key_set=bool(row["openrouter_api_key"]),
+        gemini_key_set=bool(row["gemini_api_key"]),
+    )
+
+
+#: Payload field -> column. Only the settings this page owns; the player's and
+#: the reader's are written where their controls live.
+_PATCHABLE = {
+    "target_retention": "target_retention_srs",
+    "new_cards_per_day": "new_cards_per_day",
+    "daily_page_goal": "daily_page_goal",
+    "notifications_enabled": "notifications_enabled",
+    "quiet_hours_start": "quiet_hours_start",
+    "quiet_hours_end": "quiet_hours_end",
+    "conversation_mic_sensitivity": "conversation_mic_sensitivity",
+    "conversation_turn_pace": "conversation_turn_pace",
+    "scene_embeds_enabled": "scene_embeds_enabled",
+}
+_BOOL_SETTINGS = {"notifications_enabled", "scene_embeds_enabled"}
+
+
+@router.patch("/{user_id}/settings", response_model=AppSettingsOut)
+def patch_settings(
+    user_id: str, payload: AppSettingsPatch, conn: sqlite3.Connection = Depends(get_db)
+) -> AppSettingsOut:
+    """Change only what was sent, and answer with the whole settings object so
+    the page never has to guess what the row now holds."""
+    _settings_row(conn, user_id)
+    fields = payload.model_dump(exclude_unset=True)
+    # exclude_unset keeps "not mentioned" apart from "set to null"; an explicit
+    # null for any of these would be a bad write, so it is dropped either way.
+    fields = {k: v for k, v in fields.items() if v is not None}
+    if fields:
+        assignments = ", ".join(f"{_PATCHABLE[name]} = ?" for name in fields)
+        values = [int(v) if name in _BOOL_SETTINGS else v for name, v in fields.items()]
+        conn.execute(
+            f"UPDATE user_settings SET {assignments} WHERE user_id = ?", (*values, user_id)
+        )
+    return get_settings(user_id, conn)
+
+
 @router.post("/{user_id}/companion", status_code=status.HTTP_204_NO_CONTENT)
 def set_companion(
     user_id: str, payload: CompanionUpdate, conn: sqlite3.Connection = Depends(get_db)
@@ -115,11 +313,6 @@ def set_companion(
         "INSERT INTO app_meta (key, value) VALUES (?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (f"user:{user_id}:companion_species", payload.companion_species),
-    )
-    conn.execute(
-        "INSERT INTO app_meta (key, value) VALUES (?, ?) "
-        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        (f"user:{user_id}:starting_biome", payload.starting_biome),
     )
 
 

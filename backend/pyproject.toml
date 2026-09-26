@@ -11,6 +11,25 @@ dependencies = [
     "lxml>=6.1.2",
     "pymupdf>=1.28.2",
     "mobi>=0.4.1",
+    "python-multipart>=0.0.20",
+    "llama-cpp-python>=0.3.5",
+    "faster-whisper>=1.1.0",
+    "huggingface-hub>=0.27.0",
+    "kokoro-onnx>=0.6.1",
+    # The default voice engine. Brings PyTorch with it (~260MB to download,
+    # ~1GB installed), which is the real cost of this choice — but it is the
+    # engine the app speaks with, so it cannot sit behind an extra.
+    #
+    # On Linux, install with:
+    #   uv pip install -e . --extra-index-url https://download.pytorch.org/whl/cpu
+    # Without that index pip resolves the CUDA build of torch and pulls ~3GB
+    # of GPU packages that a CPU-only install will never use.
+    "pocket-tts>=3.1.0",
+    # Declared directly even though pocket-tts already pulls it in. It has to
+    # be a direct dependency for the [tool.uv.sources] pin below to bind —
+    # uv applies sources to the project's own dependencies, not to transitive
+    # ones, so without this line torch resolves from PyPI as the CUDA build.
+    "torch>=2.5",
 ]
 
 [dependency-groups]
@@ -25,3 +44,16 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+# torch resolves to the CUDA build on PyPI, which drags in ~3GB of nvidia-*
+# packages that a CPU-only install never loads. Pinning the index here rather
+# than passing --extra-index-url on the command line is deliberate: `uv run`
+# re-syncs from this file, so a flag only helps the one command that carries
+# it and the very next `uv run` undoes the work.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }

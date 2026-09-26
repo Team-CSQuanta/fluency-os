@@ -70,12 +70,6 @@ export const COMPANIONS = [
   { key: 'cat', label: 'Cat' },
 ] as const;
 
-export const BIOMES = [
-  { key: 'meadow', label: 'Meadow', desc: 'Default region for manually added words' },
-  { key: 'cinema_clearing', label: 'Cinema Clearing', desc: 'Words captured from video' },
-  { key: 'library_grove', label: 'Library Grove', desc: 'Words captured from books' },
-] as const;
-
 export const CEFR_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'] as const;
 
 // Predefined native-language options (glosses, dual subtitles, translations).

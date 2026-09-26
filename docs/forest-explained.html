@@ -1,0 +1,386 @@
+<!doctype html><meta charset="utf-8">
+<title>The Forest</title><style>
+@page { size:A4; margin:15mm 13mm; }
+@font-face { font-family:'Inter'; src:url('file:///home/foyez/Academics/Summer 2026/SE LAB/fluency-os/renderer/public/fonts/inter-400.woff2') format('woff2'); font-weight:400; }
+@font-face { font-family:'Inter'; src:url('file:///home/foyez/Academics/Summer 2026/SE LAB/fluency-os/renderer/public/fonts/inter-500.woff2') format('woff2'); font-weight:500; }
+@font-face { font-family:'Inter'; src:url('file:///home/foyez/Academics/Summer 2026/SE LAB/fluency-os/renderer/public/fonts/inter-600.woff2') format('woff2'); font-weight:600; }
+@font-face { font-family:'Inter'; src:url('file:///home/foyez/Academics/Summer 2026/SE LAB/fluency-os/renderer/public/fonts/inter-700.woff2') format('woff2'); font-weight:700; }
+@font-face { font-family:'IBM Plex Mono'; src:url('file:///home/foyez/Academics/Summer 2026/SE LAB/fluency-os/renderer/public/fonts/plex-mono-400.woff2') format('woff2'); font-weight:400; }
+@font-face { font-family:'IBM Plex Mono'; src:url('file:///home/foyez/Academics/Summer 2026/SE LAB/fluency-os/renderer/public/fonts/plex-mono-600.woff2') format('woff2'); font-weight:600; }
+* { box-sizing:border-box; }
+body { font-family:'Inter',Helvetica,Arial,sans-serif; font-size:10.1pt; line-height:1.62; color:#1a1c20; margin:0; }
+h1 { font-size:26pt; line-height:1.12; margin:0 0 6pt; letter-spacing:-0.022em; }
+h2 { font-size:15pt; margin:20pt 0 8pt; padding-bottom:5pt; border-bottom:2px solid #2f8f4e; page-break-after:avoid; }
+h3 { font-size:11.3pt; margin:14pt 0 5pt; color:#1f5f38; page-break-after:avoid; }
+p { margin:0 0 8pt; }
+b { font-weight:600; }
+ul { margin:0 0 9pt; padding-left:15pt; }
+li { margin:0 0 3pt; }
+.mono { font-family:'IBM Plex Mono',monospace; font-size:8.9pt; background:#eef4ef; padding:0.5pt 3pt; border-radius:3px; }
+.cover { height:250mm; display:flex; flex-direction:column; justify-content:center; }
+.cover .sub { font-size:12.5pt; color:#55596b; margin-top:5pt; line-height:1.5; }
+.cover .meta { margin-top:24pt; font-family:'IBM Plex Mono',monospace; font-size:8.4pt; color:#6b7080; line-height:1.95; }
+.rule { height:3px; background:#2f8f4e; width:70px; margin:14pt 0; }
+.lead { font-size:10.7pt; color:#2e3140; }
+table.t { border-collapse:collapse; width:100%; margin:8pt 0 12pt; font-size:9.3pt; page-break-inside:avoid; }
+table.t th { text-align:left; background:#eef4ef; padding:5pt 8pt; border:1px solid #d7e6dc; font-weight:600; }
+table.t td { padding:5pt 8pt; border:1px solid #e4eee8; vertical-align:top; }
+table.t td.n { font-family:'IBM Plex Mono',monospace; font-size:8.8pt; white-space:nowrap; }
+.tip { background:#f2f8f4; border-left:3px solid #2f8f4e; padding:8pt 11pt; margin:9pt 0 11pt; font-size:9.7pt; }
+.warn { background:#fdf6ee; border-left:3px solid #c98026; padding:8pt 11pt; margin:9pt 0 11pt; font-size:9.7pt; }
+.struct { page-break-inside:avoid; font-family:'IBM Plex Mono',monospace; font-size:8.3pt; line-height:1.62; white-space:pre;
+          background:#f7faf8; border:1px solid #dde9e2; border-radius:5px; padding:11pt 13pt; margin:8pt 0 12pt; }
+.sec { page-break-before:always; }
+.fig { margin:10pt 0 14pt; text-align:center; }
+.fig .cap { font-family:'IBM Plex Mono',monospace; font-size:8pt; color:#6b7080; margin-top:5pt; }
+.stagebar { display:flex; align-items:flex-end; gap:6pt; margin:22pt 0 4pt; height:90pt; page-break-inside:avoid; }
+.stagebar .col { flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; }
+.stagebar .bar { width:100%; background:#2f8f4e; border-radius:3px 3px 0 0; }
+.stagebar .num { font-family:'IBM Plex Mono',monospace; font-size:9pt; font-weight:600; margin-bottom:3pt; }
+.stagebar .lab { font-size:7.6pt; color:#55596b; margin-top:4pt; text-align:center; line-height:1.3; }
+</style><body>
+
+<div class="cover">
+  <div class="rule"></div>
+  <h1>The Forest</h1>
+  <div class="sub">How a vocabulary becomes a wood — the growth mechanism,
+  the six stages, and the technologies that draw them</div>
+  <div class="meta">
+    Written for: someone who needs to explain or extend this feature<br>
+    Scope: <span>app/services/forest.py</span>, <span>app/services/fsrs.py</span>,
+    <span>features/forest/</span><br><br>
+    System: FluencyOS &nbsp;·&nbsp; Electron + React client, FastAPI + SQLite server<br>
+    Scheduler: FSRS 4.5, implemented in-repo, published default weights<br>
+    Scene: three.js, procedural low-poly geometry with optional GLB packs
+  </div>
+</div>
+
+<div class="sec"><h2>1. What the forest is</h2>
+
+<p class="lead">One tree per saved word. The tree's size is how well the word is
+remembered, its colour is how much trouble it is in, and <b>none of it is
+stored</b>. There is no trees table, no growth counter, no per-tree row
+anywhere in the database.</p>
+
+<p>Everything on the screen is computed, on request, from tables the rest of
+the app already maintains: <span class="mono">vocab_words</span> for what was
+saved, <span class="mono">review_cards</span> for how well it is held, and
+<span class="mono">review_logs</span> for how it was used. The forest is a
+drawing of the scheduler's state, not a second copy of it.</p>
+
+<p>That is a deliberate design choice with a practical consequence. A stored
+tree would drift: the forest would show a thriving oak for a word the
+scheduler knows was forgotten last week. Because nothing is stored, the two
+can never disagree, and the forest cannot be gamed. It grows when the
+learner's memory grows, and by no other means.</p>
+
+<div class="tip"><b>The one exception.</b> Focus sessions are written down
+(<span class="mono">forest_focus_sessions</span>), because sitting through
+twenty-five minutes is a decision, not something derivable from other
+tables.</div>
+
+<h3>What the screen shows</h3>
+<ul>
+  <li>the planted clearing itself, in 3D, one plant per word;</li>
+  <li><b>Growth</b> — how many words stand at each of the six stages;</li>
+  <li><b>Tallest tree</b> — the best-held word in the collection;</li>
+  <li><b>Focus session</b> — a timer you commit to and mark as sat through;</li>
+  <li>a detail card for whichever plant is hovered or clicked: its stage, how
+      long it holds for, its health, its lapses and how often it has been said
+      unprompted.</li>
+</ul>
+</div>
+
+<div class="sec"><h2>2. Technologies</h2>
+
+<table class="t">
+<tr><th style="width:22%">Layer</th><th style="width:30%">Technology</th><th>Where</th></tr>
+<tr><td>Desktop shell</td><td>Electron 33</td><td><span class="mono">electron/main/</span> — owns the window and starts the backend</td></tr>
+<tr><td>Screen</td><td>React 18 + zustand</td><td><span class="mono">features/forest/Forest.tsx</span>, <span class="mono">store/forestStore.ts</span></td></tr>
+<tr><td>3D scene</td><td>three.js 0.186</td><td><span class="mono">features/forest/three/</span> — scene, tree models, asset loaders</td></tr>
+<tr><td>API</td><td>FastAPI</td><td><span class="mono">routers/forest.py</span> — three routes, one of them read-only</td></tr>
+<tr><td>Logic</td><td>Python, no dependencies</td><td><span class="mono">services/forest.py</span> — stages, health, dormancy</td></tr>
+<tr><td>Scheduling</td><td>FSRS 4.5, implemented in-repo</td><td><span class="mono">services/fsrs.py</span> — ~100 lines of published arithmetic</td></tr>
+<tr><td>Storage</td><td>SQLite</td><td><span class="mono">vocab_words</span>, <span class="mono">review_cards</span>, <span class="mono">review_logs</span></td></tr>
+</table>
+
+<h3>The three routes</h3>
+<div class="struct">GET  /forest?user_id=…                  the whole forest, in one query
+POST /forest/focus                      start a focus session (1–180 minutes)
+POST /forest/focus/{id}/complete        mark it sat through, checked against the clock</div>
+
+<p>The scene is loaded lazily behind a React <span class="mono">Suspense</span>
+boundary, so three.js and the geometry are not part of the bundle the app opens
+with — the forest pays for itself only when it is visited.</p>
+
+<h3>Why FSRS is implemented here rather than installed</h3>
+<p>The published <span class="mono">fsrs</span> package would be one more thing
+to fetch at launch. The app starts its backend with <span class="mono">uv
+run</span>, which re-syncs dependencies on every start, so a package that
+cannot be downloaded does not degrade the scheduler — it stops the whole
+application from starting. The algorithm is about a hundred lines of published
+arithmetic with no dependencies of its own, so it lives in the repository.</p>
+</div>
+
+<div class="sec"><h2>3. The growth mechanism</h2>
+
+<p class="lead">A tree's size is one number: the word's <b>stability</b>. FSRS
+defines stability as <i>the number of days until the probability of recalling
+this word falls to 90%</i>. A word with a stability of 3 is one you would
+probably still know in three days; a word with a stability of 90 is one you
+would probably still know in three months.</p>
+
+<p>That number is already a measure of how well-rooted a word is, so the six
+stages are simply readable names for bands of it.</p>
+
+<div class="fig">
+<svg width="470" height="150" viewBox="0 0 470 150" xmlns="http://www.w3.org/2000/svg">
+  <rect x="0" y="0" width="470" height="150" fill="#f7faf8" stroke="#dde9e2" rx="5"/>
+  <g font-family="IBM Plex Mono, monospace" font-size="8.5" fill="#1a1c20">
+    <rect x="18" y="20" width="86" height="26" rx="4" fill="#fff" stroke="#c9dcd0"/>
+    <text x="61" y="31" text-anchor="middle">word saved</text>
+    <text x="61" y="41" text-anchor="middle" fill="#6b7080">vocab_words</text>
+
+    <rect x="18" y="62" width="86" height="26" rx="4" fill="#fff" stroke="#c9dcd0"/>
+    <text x="61" y="73" text-anchor="middle">review card</text>
+    <text x="61" y="83" text-anchor="middle" fill="#6b7080">state = new</text>
+
+    <rect x="140" y="41" width="104" height="40" rx="4" fill="#fff" stroke="#c9dcd0"/>
+    <text x="192" y="56" text-anchor="middle">a rating arrives</text>
+    <text x="192" y="68" text-anchor="middle" fill="#6b7080">flashcard OR</text>
+    <text x="192" y="77" text-anchor="middle" fill="#6b7080">conversation use</text>
+
+    <rect x="280" y="41" width="86" height="40" rx="4" fill="#eef4ef" stroke="#2f8f4e"/>
+    <text x="323" y="58" text-anchor="middle" font-weight="600">FSRS</text>
+    <text x="323" y="71" text-anchor="middle" fill="#6b7080">new stability</text>
+
+    <rect x="392" y="41" width="62" height="40" rx="4" fill="#fff" stroke="#c9dcd0"/>
+    <text x="423" y="58" text-anchor="middle">stage</text>
+    <text x="423" y="71" text-anchor="middle" fill="#6b7080">0 – 5</text>
+
+    <rect x="140" y="104" width="314" height="28" rx="4" fill="#fff" stroke="#c9dcd0"/>
+    <text x="297" y="115" text-anchor="middle">the forest is drawn from these on every open —</text>
+    <text x="297" y="126" text-anchor="middle" fill="#6b7080">nothing about a tree is written down</text>
+  </g>
+  <g stroke="#9bb8a7" fill="none" stroke-width="1.2">
+    <path d="M61 46 L61 62" marker-end="url(#a)"/>
+    <path d="M104 75 L140 66" marker-end="url(#a)"/>
+    <path d="M244 61 L280 61" marker-end="url(#a)"/>
+    <path d="M366 61 L392 61" marker-end="url(#a)"/>
+    <path d="M423 81 L423 95 L297 95 L297 104" marker-end="url(#a)"/>
+  </g>
+  <defs><marker id="a" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+    <path d="M0 0 L7 3.5 L0 7 z" fill="#9bb8a7"/></marker></defs>
+</svg>
+<div class="cap">One word, from saved to planted</div>
+</div>
+
+<h3>The six bands</h3>
+<p>The thresholds live in one line of <span class="mono">forest.py</span>:
+<span class="mono">STAGE_DAYS = (1, 3, 7, 21, 60)</span>. They climb roughly
+threefold because stability itself grows that way — the distance from Seed to
+Sprout is a day, and from Young tree to Ancient is two months.</p>
+
+<table class="t">
+<tr><th style="width:20%">Stage</th><th style="width:22%">Stability</th><th>What it means about the word</th></tr>
+<tr><td><b>Seed</b></td><td class="n">never reviewed,<br>or &lt; 1 day</td><td>Saved, but nothing yet shows you can hold it. Every word starts here.</td></tr>
+<tr><td><b>Sprout</b></td><td class="n">1 – 3 days</td><td>Held overnight. One successful review, or a shaky one.</td></tr>
+<tr><td><b>Seedling</b></td><td class="n">3 – 7 days</td><td>Held for most of a week.</td></tr>
+<tr><td><b>Sapling</b></td><td class="n">7 – 21 days</td><td>Held for a week or more. Past the point where most forgetting happens.</td></tr>
+<tr><td><b>Young tree</b></td><td class="n">21 – 60 days</td><td>Held for a month. This word is largely yours.</td></tr>
+<tr><td><b>Ancient tree</b></td><td class="n">60 days +</td><td>Held for two months or more, and climbing by years per review.</td></tr>
+</table>
+
+<div class="warn"><b>A new card is always a Seed</b>, whatever stability it
+claims. <span class="mono">stage_for</span> checks
+<span class="mono">state == "new"</span> first, so a word that has never been
+answered cannot appear as anything else.</div>
+
+<h3>What moves a word up</h3>
+<p>Only a rating. The first one sets the stability outright, from the FSRS
+default weights:</p>
+
+<table class="t">
+<tr><th style="width:26%">First answer</th><th style="width:26%">Stability it sets</th><th>Stage it lands in</th></tr>
+<tr><td>Again</td><td class="n">0.49 days</td><td>Seed</td></tr>
+<tr><td>Hard</td><td class="n">1.40 days</td><td>Sprout</td></tr>
+<tr><td>Good</td><td class="n">3.71 days</td><td>Seedling</td></tr>
+<tr><td>Easy</td><td class="n">13.82 days</td><td>Sapling</td></tr>
+</table>
+
+<p>After that, each successful recall multiplies stability by a growth factor
+that depends on how hard the card is, how stable it already was, and how close
+to forgetting it you were when you answered. Answering a card <i>late</i>, when
+recall had genuinely decayed, grows it more than answering it early.</p>
+
+<p>Run with the real scheduler, always answering <b>Good</b> exactly when the
+card falls due:</p>
+
+<div class="struct">review  1: stability    3.7 d   next in    4 d   ->  Seedling
+review  2: stability   22.7 d   next in   23 d   ->  Young tree
+review  3: stability  108.6 d   next in  109 d   ->  Ancient tree</div>
+
+<p>So an Ancient tree takes only three correct answers — but it takes roughly
+<b>four weeks of calendar time</b> to give them, because each one has to wait
+for the card to come due. This is the mechanism that makes the forest honest:
+you cannot sit down for an hour and grow one.</p>
+
+<h3>What brings a word down</h3>
+<p>Forgetting. A lapse does not nudge stability, it collapses it, from the
+same real scheduler:</p>
+
+<div class="struct">40.0 d  ->  4.3 d          Young tree  ->  Seedling</div>
+
+<p>The tree shrinks back to where the memory actually is. It is the same
+number the scheduler will use to decide when you next see the card, so the
+picture and the queue always agree.</p>
+
+<div class="tip"><b>Ratings come from two places.</b> A flashcard answer is
+one. Using the word in conversation is the other — spoken outcomes map onto
+the same four ratings and move the same FSRS state. A word you say unprompted
+grows its tree exactly as a card you answered would.</div>
+</div>
+
+<div class="sec"><h2>4. Reading your own forest</h2>
+
+<p class="lead">The Growth list is a census: how many words stand at each
+stage right now. A distribution of <span class="mono">25 / 11 / 2 / 3 / 2 /
+0</span> — 43 words in total — says something quite specific.</p>
+
+<div class="stagebar">
+  <div class="col"><div class="num">25</div><div class="bar" style="height:76pt"></div><div class="lab">Seed</div></div>
+  <div class="col"><div class="num">11</div><div class="bar" style="height:33pt"></div><div class="lab">Sprout</div></div>
+  <div class="col"><div class="num">2</div><div class="bar" style="height:6pt"></div><div class="lab">Seedling</div></div>
+  <div class="col"><div class="num">3</div><div class="bar" style="height:9pt"></div><div class="lab">Sapling</div></div>
+  <div class="col"><div class="num">2</div><div class="bar" style="height:6pt"></div><div class="lab">Young<br>tree</div></div>
+  <div class="col"><div class="num">0</div><div class="bar" style="height:1pt;background:#c9dcd0"></div><div class="lab">Ancient<br>tree</div></div>
+</div>
+
+<h3>What each number is telling you</h3>
+
+<p><b>Seed: 25.</b> These are words you have saved but not yet answered — or
+answered and got wrong. They are not weak memories; for the most part they are
+memories that have not been tested at all. This is the normal shape for a
+collection that is being filled faster than it is being reviewed, which is what
+reading with lookups does. A single review session moves most of them.</p>
+
+<p><b>Sprout: 11.</b> Answered once, holding for a day or two. This is the
+most fragile band — a word here is genuinely at risk, and the scheduler will
+bring it back within days.</p>
+
+<p><b>Seedling 2, Sapling 3, Young tree 2.</b> Seven words have survived
+several reviews spread over weeks. The dip at Seedling is not a problem: these
+bands are narrow (3–7 days, then 7–21) and a word passes through them quickly
+when reviews are answered on time.</p>
+
+<p><b>Ancient tree: 0.</b> Expected, and not a failure. Sixty days of
+stability cannot be reached in less than about a month of elapsed time
+whatever you do, because each review has to wait for its due date.</p>
+
+<div class="tip"><b>The shape to aim for</b> is a pyramid that slowly inverts.
+Early on, almost everything is a Seed. As reviews accumulate, the mass moves
+right. If the Seed count keeps climbing while the right-hand bands stay flat,
+the collection is growing faster than it is being reviewed — the fix is review
+sessions, not more saving.</div>
+
+<h3>Why the tallest tree matters</h3>
+<p>The panel names the best-held word in the collection. It is the one number
+in the forest that can only go up honestly: it is the highest stability any
+word has reached, and nothing but repeated, correctly-spaced recall produces
+it.</p>
+</div>
+
+<div class="sec"><h2>5. Health, wilt and dormancy</h2>
+
+<p class="lead">Size says how well a word is held. Colour says whether it is in
+trouble. The two are computed separately and deliberately do not mix.</p>
+
+<div class="struct">health = max(0, 100 - lapses × 12)          # permanent scars
+if overdue:
+    wilt   = min(1, overdue_days / 14)      # current trouble
+    health = health × (1 - wilt)</div>
+
+<p>Lapses are scars: a word forgotten three times carries that history
+permanently, at twelve points each. Being overdue is a wilt: it deepens for a
+fortnight and it lifts the moment the word is reviewed. They are kept apart
+because one number covering both would say the same thing about a word
+forgotten three times and relearned — which is fine now — and a word never
+forgotten but three weeks overdue, which is not.</p>
+
+<table class="t">
+<tr><th style="width:26%">State</th><th style="width:26%">Canopy</th><th>Meaning</th></tr>
+<tr><td>Healthy</td><td class="n">green #63b355</td><td>No lapses, not overdue.</td></tr>
+<tr><td>Wilting</td><td class="n">towards amber #c2a85a</td><td>Lapsed before, or overdue now. Still recoverable.</td></tr>
+<tr><td>Dormant</td><td class="n">grey #9a9a8e</td><td>Suspended, or more than 30 days overdue.</td></tr>
+</table>
+
+<p>A dormant plant has dropped its leaves rather than died: reviewing the word
+wakes it, at whatever stability it still holds. Its stage does not change while
+it sleeps — dormancy is about attention, not about memory.</p>
+</div>
+
+<div class="sec"><h2>6. How the scene draws it</h2>
+
+<p class="lead">The 3D clearing is built from the same numbers, with nothing
+added and nothing stored.</p>
+
+<table class="t">
+<tr><th style="width:24%">Property</th><th style="width:30%">Comes from</th><th>Rule</th></tr>
+<tr><td>Which plant</td><td>a hash of the word</td><td>Broadleaf, conifer or shrub. The same word is always the same plant, so the forest is recognisable between visits.</td></tr>
+<tr><td>How big</td><td>the stage</td><td>Scale runs <span class="mono">0.42 → 1.9</span> across the six stages.</td></tr>
+<tr><td>Canopy colour</td><td>health and dormancy</td><td>Green through amber; grey when dormant.</td></tr>
+<tr><td>Accent colour</td><td>a hash of the word</td><td>Petals and caps keep their own colour whatever the health, or the plot stops reading as a garden.</td></tr>
+<tr><td>Where it stands</td><td>blue-noise sampling</td><td>For each plant, twelve candidate spots are thrown and the one furthest from everything already planted wins.</td></tr>
+<tr><td>How far apart</td><td>the mean stage</td><td>Spacing grows with the size of what is planted, so a young vocabulary reads as undergrowth and a mature one as woodland.</td></tr>
+</table>
+
+<p>Two traps this avoids, both tried first: a plain grid reads as an orchard,
+and jittering a grid only produces a wonky orchard because the eye finds the
+rows anyway. Pure random placement is the other extreme — it clumps, and trees
+end up standing inside each other.</p>
+
+<p>The geometry is procedural: cones and a tapered cylinder with flat shading,
+which is how low-poly foliage is made, so the scene is complete with nothing
+downloaded. A converted GLB model pack drops in alongside if one is present.</p>
+</div>
+
+<div class="sec"><h2>7. Focus sessions</h2>
+
+<p>A focus session is a block of time — between 1 and 180 minutes — that the
+learner commits to. It is the only part of the forest that is written to the
+database, because it is the only part that is a decision rather than a
+derivation.</p>
+
+<p>Completion is checked against the clock, not taken from the client: a timer
+marked complete by a button press is a button, not a commitment. It pays
+nothing. The record that it happened is the whole of it.</p>
+
+<div class="tip"><b>Previously:</b> focus minutes and review outcomes earned
+<i>sunlight</i>, a currency spent on streak freezes and on reviving dormant
+trees. It has been removed. The streak freeze was the reason — it could be
+bought, it was counted on screen, and nothing in the streak calculation ever
+consulted it, so the streak it promised to protect broke anyway. The forest
+now rewards nothing and reflects everything.</div>
+</div>
+
+<div class="sec"><h2>8. Where to look in the code</h2>
+
+<table class="t">
+<tr><th style="width:44%">File</th><th>What is in it</th></tr>
+<tr><td><span class="mono">app/services/forest.py</span></td><td><span class="mono">STAGES</span>, <span class="mono">STAGE_DAYS</span>, <span class="mono">stage_for</span>, <span class="mono">health_for</span>, the single query behind <span class="mono">trees()</span>, focus sessions</td></tr>
+<tr><td><span class="mono">app/services/fsrs.py</span></td><td>The scheduler. Stability, difficulty, intervals, the 17 published weights</td></tr>
+<tr><td><span class="mono">app/services/review.py</span></td><td>Where ratings arrive and cards are written; mastery levels</td></tr>
+<tr><td><span class="mono">app/routers/forest.py</span></td><td>The three routes</td></tr>
+<tr><td><span class="mono">features/forest/Forest.tsx</span></td><td>The screen: growth census, tallest tree, detail card, focus timer</td></tr>
+<tr><td><span class="mono">features/forest/three/ForestScene.tsx</span></td><td>Scene, camera, planting, lighting</td></tr>
+<tr><td><span class="mono">features/forest/three/treeModels.ts</span></td><td>Species, scale per stage, canopy and accent colour</td></tr>
+<tr><td><span class="mono">store/forestStore.ts</span></td><td>Fetching and focus-session state</td></tr>
+<tr><td><span class="mono">backend/tests/test_forest.py</span></td><td>17 tests: stage boundaries, health, dormancy, focus sessions</td></tr>
+</table>
+
+<h3>The one sentence to remember</h3>
+<p class="lead">The forest has no state of its own. Every tree is a rendering
+of one number the scheduler owns — how many days that word will survive in
+memory — so the wood can only grow when the memory does.</p>
+</div>
+</body>

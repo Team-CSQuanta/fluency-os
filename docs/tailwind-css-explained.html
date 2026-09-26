@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tailwind CSS for This Project</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 16mm 16mm; }
+
+  :root {
+    --acc: #6f51a6;
+    --accSoft: #f1eef7;
+    --accLine: #cfc2e6;
+    --ink: #1a1d1b;
+    --ink2: #4a5350;
+    --ink3: #7b8481;
+    --line: #dfe3e1;
+    --panel: #f7f8f7;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: 'DejaVu Sans', 'Liberation Sans', system-ui, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.65;
+    color: var(--ink);
+  }
+
+  code, .mono { font-family: 'DejaVu Sans Mono', 'Liberation Mono', monospace; }
+
+  h1 {
+    font-size: 25pt; line-height: 1.15; letter-spacing: -0.02em;
+    margin: 0 0 6px; font-weight: 700;
+  }
+  h2 {
+    font-size: 15pt; margin: 26px 0 10px; padding-top: 10px;
+    border-top: 2px solid var(--acc); font-weight: 700; letter-spacing: -0.01em;
+    break-after: avoid; page-break-after: avoid;
+  }
+  h3 {
+    font-size: 11.5pt; margin: 16px 0 6px; font-weight: 700; color: var(--ink);
+    break-after: avoid; page-break-after: avoid;
+  }
+  p { margin: 0 0 9px; }
+  ul, ol { margin: 0 0 9px; padding-left: 20px; }
+  li { margin-bottom: 4px; }
+
+  code {
+    font-size: 9pt; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 3px; padding: 0.5px 4px; color: #4b2b6a;
+  }
+
+  .cover {
+    border-bottom: 3px solid var(--acc);
+    padding-bottom: 16px; margin-bottom: 4px;
+  }
+  .sub { font-size: 12pt; color: var(--ink2); margin: 0 0 10px; }
+  .meta { font-size: 8.5pt; color: var(--ink3); font-family: 'DejaVu Sans Mono', monospace; }
+
+  .lead {
+    background: var(--accSoft); border-left: 3px solid var(--acc);
+    padding: 11px 14px; margin: 14px 0; font-size: 10.5pt;
+  }
+  .note {
+    background: #fdfaf3; border-left: 3px solid #c8a44a;
+    padding: 10px 13px; margin: 12px 0; font-size: 9.5pt; color: #4a4335;
+  }
+  .gotcha {
+    background: #fdf2f0; border-left: 3px solid #c0563f;
+    padding: 10px 13px; margin: 12px 0; font-size: 9.5pt; color: #5a2c20;
+  }
+
+  table { width: 100%; border-collapse: collapse; margin: 10px 0 14px; font-size: 9.5pt; }
+  th {
+    text-align: left; background: var(--panel); border: 1px solid var(--line);
+    padding: 6px 9px; font-weight: 700; font-size: 8.5pt;
+    text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink2);
+  }
+  td { border: 1px solid var(--line); padding: 6px 9px; vertical-align: top; }
+  td.mono, th.mono { font-family: 'DejaVu Sans Mono', monospace; font-size: 8.5pt; }
+
+  pre {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 5px;
+    padding: 11px 13px; font-size: 8.5pt; line-height: 1.5; overflow: hidden;
+    font-family: 'DejaVu Sans Mono', monospace; margin: 10px 0 14px;
+    white-space: pre-wrap; color: #2f3733;
+  }
+  pre .c { color: #7b8481; }
+  pre .hl { background: #efe6fa; }
+
+  .vs { display: flex; gap: 10px; margin: 10px 0 14px; align-items: stretch; }
+  .vs > div { flex: 1; border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; break-inside: avoid; }
+  .vs .old { background: #fbf7f3; }
+  .vs .new { background: #f4faf6; }
+  .vs .tag { font-size: 8pt; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; margin-bottom: 6px; }
+  .vs .old .tag { color: #9a5a2a; }
+  .vs .new .tag { color: #3E7C5A; }
+
+  .cards { display: flex; gap: 10px; margin: 12px 0 16px; }
+  .card {
+    flex: 1; border: 1px solid var(--line); border-radius: 6px;
+    padding: 11px 12px; background: #fff; break-inside: avoid;
+  }
+  .card .k {
+    font-size: 8pt; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--acc); font-weight: 700; margin-bottom: 5px;
+    font-family: 'DejaVu Sans Mono', monospace;
+  }
+  .card .v { font-size: 9.5pt; color: var(--ink2); line-height: 1.55; }
+
+  .anat { display: flex; gap: 0; margin: 10px 0 16px; font-family: 'DejaVu Sans Mono', monospace; font-size: 11pt; flex-wrap: wrap; }
+  .anat .part { border: 1.5px solid var(--acc); border-radius: 5px; padding: 5px 9px; margin: 0 3px 8px 0; background: var(--accSoft); }
+  .anat .lbl { display: block; font-family: 'DejaVu Sans', sans-serif; font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink3); margin-top: 3px; text-align: center; }
+
+  section { break-inside: auto; }
+  h2, h3 { break-inside: avoid; }
+  table, pre, .lead, .note, .gotcha, .vs, .cards, .anat { break-inside: avoid; }
+
+  .footer-note {
+    margin-top: 22px; padding-top: 10px; border-top: 1px solid var(--line);
+    font-size: 8.5pt; color: var(--ink3);
+  }
+
+  .toc { margin: 16px 0 10px; }
+  .toc ol { padding-left: 22px; }
+  .toc li { margin-bottom: 6px; font-size: 10.5pt; }
+  .toc .pg { color: var(--ink3); font-family: 'DejaVu Sans Mono', monospace; font-size: 9pt; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="meta">FLUENCYOS · INTERNAL WALKTHROUGH · TAILWIND CSS PRIMER</div>
+  <h1>Tailwind CSS for This Project</h1>
+  <div class="sub">A from-scratch introduction to Tailwind CSS, written for someone who already knows CSS
+  well but has never used Tailwind — grounded entirely in how it's actually used in this codebase.</div>
+</div>
+
+<div class="lead">
+  <b>You already know everything except the naming.</b> Tailwind doesn't add new styling powers CSS doesn't
+  already have — <code>display: flex</code> is still <code>display: flex</code>. What changes is that instead
+  of inventing a class name and writing a rule for it in a stylesheet, you reach for a class name Tailwind has
+  already defined for you, and write it directly on the element. This document walks through that idea, then
+  the three specific ways <i>this</i> project bends the default Tailwind style — because it ported an existing
+  pixel-perfect design rather than starting a new one from Tailwind's default scale.
+</div>
+
+<div class="toc">
+  <h3>Contents</h3>
+  <ol>
+    <li>The core idea: rules become class names <span class="pg">— the mental shift</span></li>
+    <li>Reading a class name <span class="pg">— anatomy of a utility</span></li>
+    <li>How the CSS actually gets built <span class="pg">— content scanning, the 3 directives</span></li>
+    <li>Cheat-sheet: what this project actually uses <span class="pg">— grouped by CSS property</span></li>
+    <li>This project's twist #1 — arbitrary values <span class="pg">— why 1,700+ square brackets</span></li>
+    <li>This project's twist #2 — custom color tokens <span class="pg">— how theming works without <code>dark:</code></span></li>
+    <li>This project's twist #3 — when classes aren't enough <span class="pg">— the inline-style escape hatch</span></li>
+    <li>A real component, fully annotated <span class="pg">— class by class</span></li>
+    <li>Where to look in the code <span class="pg">— the three config files</span></li>
+  </ol>
+</div>
+
+<h2>1. The core idea: rules become class names</h2>
+
+<p>In hand-written CSS, you name a concept, then define it once:</p>
+
+<div class="vs">
+  <div class="old">
+    <div class="tag">plain css — the way you know</div>
+    <div class="v mono">.toolbar {<br>&nbsp;&nbsp;display: flex;<br>&nbsp;&nbsp;align-items: center;<br>&nbsp;&nbsp;gap: 8px;<br>&nbsp;&nbsp;padding: 12px;<br>}</div>
+    <div class="v" style="margin-top:8px">…then in HTML: <code>&lt;div class="toolbar"&gt;</code></div>
+  </div>
+  <div class="new">
+    <div class="tag">tailwind — one class per property</div>
+    <div class="v mono">&lt;div class="flex items-center gap-2 p-3"&gt;</div>
+    <div class="v" style="margin-top:8px">No <code>.toolbar</code> rule to invent or maintain. Each word is a
+    complete, ready-made utility: one word, one CSS declaration.</div>
+  </div>
+</div>
+
+<p>Both approaches produce the exact same computed styles. The difference is entirely about <i>where you look
+to know what an element looks like</i>: with plain CSS, you check the markup for a class name, then jump to a
+stylesheet (maybe a different file) to see what it means. With Tailwind, the markup <i>is</i> the answer — every
+property affecting that element is listed right there, in the <code>class</code> attribute, in plain sight.</p>
+
+<p>This trade-off has a real cost worth naming honestly: the <code>className</code> strings get long, and
+they can look noisy at first. What you get back is that you never have to invent a name for something (is it
+<code>.card</code>, <code>.card-panel</code>, <code>.panel-box</code>?), and you never end up with a stylesheet
+containing ten near-identical rules that drifted apart over time — every element's styling is self-contained.</p>
+
+<h2>2. Reading a class name — anatomy of a utility</h2>
+
+<p>Nearly every Tailwind class you'll see in this codebase follows one shape. Take a real one from
+<code class="mono">renderer/src/features/shell/ScreenHeader.tsx</code>:</p>
+
+<div class="anat">
+  <div class="part">hover<span class="lbl">state</span></div>
+  <div class="part">:<span class="lbl">separator</span></div>
+  <div class="part">border-acc<span class="lbl">property + value</span></div>
+</div>
+
+<p><code class="mono">hover:border-acc</code> means: <i>"when this element is hovered, set its border color to
+the value named <code>acc</code>."</i> Drop the <code>hover:</code> prefix and <code>border-acc</code> alone
+means the same thing unconditionally. Other prefixes work the same way — <code class="mono">disabled:</code>,
+<code class="mono">focus:</code>, <code class="mono">last:</code> (used in
+<code class="mono">Settings.tsx</code> to drop the border on the last row of a list) all exist in this project.
+Two prefixes that <i>don't</i> appear anywhere in this codebase are worth knowing about anyway, precisely
+because their absence is a deliberate choice:</p>
+
+<table>
+  <tr><th style="width:22%">Prefix family</th><th style="width:20%">Used here?</th><th>Why</th></tr>
+  <tr><td class="mono">sm: md: lg: xl:</td><td><b>No</b> (0 occurrences)</td>
+  <td>These pick different styles at different <i>browser widths</i> — essential for a public website viewed
+  on phones and desktops. FluencyOS is a desktop app with one window and a defined minimum size
+  (<code class="mono">minWidth: 960</code> in <code class="mono">electron/main/index.ts</code>), so there's no
+  "mobile layout" to design for.</td></tr>
+  <tr><td class="mono">dark:</td><td><b>No</b> (0 occurrences)</td>
+  <td>Tailwind's built-in dark-mode prefix swaps a class outright (<code class="mono">bg-white dark:bg-black</code>).
+  This project instead lets the same class (e.g. <code class="mono">bg-panel</code>) resolve to a different
+  <i>value</i> depending on which theme's CSS variables are active — see Section 6.</td></tr>
+</table>
+
+<h2>3. How the CSS actually gets built</h2>
+
+<p>Tailwind doesn't ship a giant stylesheet containing every possible utility (that would be megabytes).
+Instead, three things work together in this project:</p>
+
+<div class="cards">
+  <div class="card">
+    <div class="k">1 · the directives</div>
+    <div class="v"><code class="mono">renderer/src/styles/globals.css</code> starts with three lines:
+    <div class="mono" style="margin-top:5px">@tailwind base;<br>@tailwind components;<br>@tailwind utilities;</div>
+    Each is later replaced by generated CSS: <code class="mono">base</code> is a browser reset (like
+    normalize.css), <code class="mono">components</code> is empty here (an escape hatch for custom reusable
+    classes, unused in this project), <code class="mono">utilities</code> is the actual pile of
+    <code class="mono">.flex</code>, <code class="mono">.p-3</code>-style classes.</div>
+  </div>
+  <div class="card">
+    <div class="k">2 · content scanning</div>
+    <div class="v"><code class="mono">tailwind.config.ts</code> lists which files to scan as plain text for
+    class names:
+    <div class="mono" style="margin-top:5px">content: ['./index.html', './src/**/*.{ts,tsx}']</div>
+    Tailwind never runs your code — it literally text-searches these files for anything that looks like a
+    class name it recognizes, and generates CSS <i>only</i> for classes it actually finds. This is why the
+    final CSS file is small despite Tailwind "knowing" thousands of possible utilities.</div>
+  </div>
+  <div class="card">
+    <div class="k">3 · PostCSS</div>
+    <div class="v"><code class="mono">postcss.config.js</code> plugs Tailwind into the build as a CSS
+    post-processor. Vite (the dev server / bundler from the main codebase document) runs PostCSS automatically
+    on every <code class="mono">.css</code> file, so this step needs no manual attention while developing.</div>
+  </div>
+</div>
+
+<div class="gotcha">
+  <b>The gotcha this implies:</b> because Tailwind finds classes by scanning source text, a class name that
+  only exists at runtime — built by joining strings — can be invisible to it. Section 7 shows exactly where
+  this bites, and how this project avoids it.
+</div>
+
+<h2>4. Cheat-sheet: what this project actually uses</h2>
+<p>Tailwind ships hundreds of utilities; this project uses a fairly small, consistent subset. Everything below
+was found by searching the actual <code class="mono">.tsx</code> files, so this table is a real map of what
+you'll encounter reading the code — not the full Tailwind manual.</p>
+
+<table>
+  <tr><th style="width:16%">Group</th><th style="width:34%">Classes you'll see</th><th>Plain CSS equivalent</th></tr>
+  <tr><td>Layout</td><td class="mono">flex, grid, hidden, relative, absolute, overflow-y-auto</td>
+  <td><code>display:flex/grid/none</code>, <code>position:relative/absolute</code>, <code>overflow-y:auto</code></td></tr>
+  <tr><td>Flex/grid detail</td><td class="mono">flex-1, flex-none, flex-col, items-center, justify-between, gap-2, grid-cols-4</td>
+  <td><code>flex:1</code>, <code>flex:none</code>, <code>flex-direction:column</code>, <code>align-items:center</code>,
+  <code>justify-content:space-between</code>, <code>gap:8px</code>, <code>grid-template-columns:repeat(4,1fr)</code></td></tr>
+  <tr><td>Sizing</td><td class="mono">w-full, h-full, min-w-0, min-h-0, max-w-[660px]</td>
+  <td><code>width:100%</code>, <code>height:100%</code>, <code>min-width:0</code>, <code>min-height:0</code>,
+  <code>max-width:660px</code></td></tr>
+  <tr><td>Spacing</td><td class="mono">p-4, px-3, py-2, m-0, mt-[14px], gap-[6px]</td>
+  <td><code>padding</code>, <code>padding-left/right</code>, <code>padding-top/bottom</code>, <code>margin</code>,
+  <code>margin-top:14px</code>, <code>gap:6px</code></td></tr>
+  <tr><td>Typography</td><td class="mono">font-sans, font-mono, font-semibold, text-[12.5px], tracking-[-0.02em], leading-[1.6], uppercase, truncate</td>
+  <td><code>font-family</code>, <code>font-weight:600</code>, <code>font-size:12.5px</code>,
+  <code>letter-spacing</code>, <code>line-height</code>, <code>text-transform:uppercase</code>,
+  <code>text-overflow:ellipsis;white-space:nowrap;overflow:hidden</code></td></tr>
+  <tr><td>Color / background</td><td class="mono">text-tx, text-tx2, bg-panel, bg-acc, border-line2</td>
+  <td><code>color</code>/<code>background</code>/<code>border-color</code>, using <b>this project's own custom
+  color names</b> — see Section 6</td></tr>
+  <tr><td>Borders &amp; radius</td><td class="mono">border, border-t, border-dashed, rounded-full, rounded-field, rounded-panel</td>
+  <td><code>border-width:1px</code>, <code>border-top-width:1px</code>, <code>border-style:dashed</code>,
+  <code>border-radius:9999px</code>, and two project-specific radii (Section 6)</td></tr>
+  <tr><td>Effects</td><td class="mono">shadow-panel, opacity-60, brightness-110 (via <code class="mono">hover:</code>)</td>
+  <td><code>box-shadow</code> (custom, Section 6), <code>opacity:0.6</code>, <code>filter:brightness(1.1)</code></td></tr>
+  <tr><td>Interaction</td><td class="mono">hover:border-acc, hover:text-acc, disabled:opacity-40</td>
+  <td><code>:hover { border-color: ... }</code>, <code>:disabled { opacity: 0.4 }</code> — Tailwind expands the
+  prefix into the matching CSS pseudo-class automatically</td></tr>
+</table>
+
+<h2>5. This project's twist #1 — arbitrary values</h2>
+
+<p>A stock Tailwind class like <code class="mono">p-3</code> maps to a value from a predefined scale (roughly
+multiples of 4px). That's fine when you're designing fresh and happy to round to that scale. This project
+instead <b>ported an existing pixel-perfect mockup</b> (the static HTML file in
+<code class="mono">claude-ui-mockup-files/</code>), so it needs exact values Tailwind's default scale doesn't
+offer — <code class="mono">13.5px</code> font sizes, <code class="mono">0.02em</code> letter-spacing, and so
+on. Tailwind supports this with square-bracket syntax: <b>any utility can take a one-off value in brackets
+instead of a scale keyword.</b></p>
+
+<div class="vs">
+  <div class="old">
+    <div class="tag">default scale</div>
+    <div class="v mono">p-3&nbsp;&nbsp;→ padding: 12px<br>text-sm → font-size: 14px<br>w-64&nbsp; → width: 16rem</div>
+  </div>
+  <div class="new">
+    <div class="tag">arbitrary value — used throughout this project</div>
+    <div class="v mono">p-[14px]&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ padding: 14px<br>text-[13.5px] → font-size: 13.5px<br>w-[270px]&nbsp;&nbsp;&nbsp;&nbsp; → width: 270px</div>
+  </div>
+</div>
+
+<p>This is not a rare escape hatch here — a search across <code class="mono">renderer/src</code> turns up
+<b>over 1,700</b> square-bracket arbitrary values. That number is a direct fingerprint of "this UI was ported
+from an exact existing design," and it's worth saying so plainly if asked: a Tailwind project designed from
+scratch usually leans much more on the default scale, because there's no pre-existing pixel value to match.</p>
+
+<pre>// real example — renderer/src/features/conversation/Report.tsx
+&lt;div className="grid grid-cols-[1.2fr_0.8fr_0.7fr_1fr_1.4fr] gap-[10px] border-b border-line2 py-[10px]"&gt;</pre>
+<p>Even <code class="mono">grid-template-columns</code> — a value with no sensible fixed "scale" at all — takes
+an arbitrary value the same way: <code class="mono">grid-cols-[1.2fr_0.8fr_...]</code>. Underscores inside the
+brackets stand in for spaces (a real space would end the class name), and Tailwind converts them back when
+generating the CSS.</p>
+
+<h2>6. This project's twist #2 — custom color tokens</h2>
+
+<p>Stock Tailwind ships color names like <code class="mono">bg-red-500</code> or <code class="mono">text-slate-700</code>.
+This project uses none of those — instead, <code class="mono">tailwind.config.ts</code> defines its own color
+names, each pointing at a CSS custom property (variable) rather than a fixed hex code:</p>
+
+<pre>// renderer/tailwind.config.ts (trimmed)
+colors: {
+  acc: 'var(--acc)',        <span class="c">// the accent/brand color</span>
+  accSoft: 'var(--accSoft)', accLine: 'var(--accLine)',
+  bg: 'var(--bg)', bg2: 'var(--bg2)',
+  panel: 'var(--panel)', panel2: 'var(--panel2)',
+  line: 'var(--line)', line2: 'var(--line2)',
+  tx: 'var(--tx)', tx2: 'var(--tx2)', tx3: 'var(--tx3)',   <span class="c">// text, at 3 opacity steps</span>
+},
+borderRadius: { panel: '10px', field: '7px' },   <span class="c">// → rounded-panel, rounded-field</span>
+boxShadow: { panel: 'var(--shadow)' },           <span class="c">// → shadow-panel</span></pre>
+
+<p>The actual values those variables hold live in <code class="mono">renderer/src/styles/globals.css</code>,
+and — this is the important part — <b>there are two different sets of values, one per theme</b>:</p>
+
+<pre>body[data-theme='dark']  { --bg: #131514; --panel: #1e2120; --tx: #e9ebe9; <span class="c">/* ... */</span> }
+body[data-theme='light'] { --bg: #f2f2f0; --panel: #ffffff; --tx: #171a19; <span class="c">/* ... */</span> }</pre>
+
+<p>So when JSX writes <code class="mono">className="bg-panel text-tx"</code>, that compiles to plain CSS
+referencing the variables (<code class="mono">background: var(--panel); color: var(--tx)</code>) — Tailwind's
+part is done at build time and never changes again. What actually changes at runtime is only one attribute,
+toggled by <code class="mono">shellStore.toggleTheme()</code> (in the file you have open,
+<code class="mono">renderer/src/store/shellStore.ts</code>):</p>
+
+<pre>document.body.setAttribute('data-theme', next);   <span class="c">// 'dark' or 'light'</span></pre>
+
+<p>The browser's own CSS cascade does the rest: every element using <code class="mono">bg-panel</code>
+anywhere in the app instantly resolves to a different color, because the variable it points to changed — not
+because any component re-rendered with different class names. This is <i>why</i> this project never needed
+Tailwind's <code class="mono">dark:</code> prefix from Section 2: the class names never differ between themes,
+only the values they resolve to.</p>
+
+<h2>7. This project's twist #3 — when classes aren't enough</h2>
+
+<div class="gotcha">
+  <b>The rule from Section 3, restated as a warning:</b> Tailwind generates CSS by scanning your source files
+  as plain text. A complete class name like <code class="mono">"bg-acc"</code> is visible to that scan. A class
+  name assembled at runtime, like <code class="mono">`bg-${colorVar}`</code>, is <b>not</b> — the scanner never
+  sees the string <code class="mono">"bg-acc"</code> anywhere in the file, so it never generates that CSS rule,
+  and the style silently fails to apply.
+</div>
+
+<p>This project hits that exact wall constantly — many screens color an element based on data that only exists
+at runtime (a score, a due/overdue state, whichever tab is active). The fix used throughout the codebase is:
+<b>keep Tailwind for everything static, and drop to a plain inline <code class="mono">style</code> object for
+the handful of values that are genuinely dynamic.</b> Real example, from
+<code class="mono">renderer/src/features/settings/Settings.tsx</code>:</p>
+
+<pre>&lt;button
+  className="rounded-field px-[10px] py-2 text-left font-sans text-[12.5px] font-medium hover:bg-line2"
+  style={{
+    background: on ? 'var(--accSoft)' : 'transparent',   <span class="c">// depends on component state (`on`)</span>
+    color: on ? 'var(--acc)' : 'var(--tx2)',              <span class="c">// → can't be a static class name</span>
+  }}
+&gt;</pre>
+
+<p>Everything that is <i>always true</i> about this button (its padding, font, corner rounding, hover
+background) is a plain Tailwind class. The two properties that depend on <code class="mono">on</code> — a
+boolean computed while the app is running — go into a regular React <code class="mono">style</code> prop,
+which is just a plain JavaScript object mapped straight onto the DOM element's inline
+<code class="mono">style</code> attribute, exactly as <code class="mono">element.style.background = '...'</code>
+would in plain JS/DOM code you've written before.</p>
+
+<p>You'll see this same split constantly: progress bar widths (<code class="mono">style={{ width: `${pct}%` }}</code>),
+per-row colors pulled from a data array, and computed layout values (the Forest screen's isometric tile
+positions) are all inline styles for exactly this reason — not inconsistency, but working around a real,
+documented limitation of how Tailwind decides what CSS to generate.</p>
+
+<h2>8. A real component, fully annotated</h2>
+<p>One more pass over the same button from Section 7, this time translating every single class into the exact
+plain CSS property it produces:</p>
+
+<table>
+  <tr><th style="width:24%">Class</th><th>Plain CSS it becomes</th></tr>
+  <tr><td class="mono">rounded-field</td><td><code>border-radius: 7px;</code> — a name this project defined in <code class="mono">tailwind.config.ts</code>, not a stock Tailwind value</td></tr>
+  <tr><td class="mono">px-[10px]</td><td><code>padding-left: 10px; padding-right: 10px;</code></td></tr>
+  <tr><td class="mono">py-2</td><td><code>padding-top: 8px; padding-bottom: 8px;</code> — Tailwind's default scale (step "2" = 8px)</td></tr>
+  <tr><td class="mono">text-left</td><td><code>text-align: left;</code></td></tr>
+  <tr><td class="mono">font-sans</td><td><code>font-family: var(--sans);</code> — this project's font stack, from <code class="mono">tailwind.config.ts</code>'s <code class="mono">fontFamily</code> extension</td></tr>
+  <tr><td class="mono">text-[12.5px]</td><td><code>font-size: 12.5px;</code></td></tr>
+  <tr><td class="mono">font-medium</td><td><code>font-weight: 500;</code></td></tr>
+  <tr><td class="mono">hover:bg-line2</td><td><code>&amp;:hover { background: var(--line2); }</code></td></tr>
+</table>
+
+<p>Eight classes, eight properties, zero surprises — every word in the class list is exactly one declaration,
+which is the entire premise of "utility-first CSS" made concrete.</p>
+
+<h2>9. Where to look in the code</h2>
+<table>
+  <tr><th style="width:30%">File</th><th>What it's responsible for</th></tr>
+  <tr><td class="mono">renderer/tailwind.config.ts</td><td>Which files to scan for class names
+  (<code class="mono">content</code>), and every custom name this project adds on top of stock Tailwind —
+  colors, font families, border radii, shadow.</td></tr>
+  <tr><td class="mono">renderer/postcss.config.js</td><td>Wires the Tailwind plugin into the CSS build
+  pipeline; you'll rarely need to open this.</td></tr>
+  <tr><td class="mono">renderer/src/styles/globals.css</td><td>The three <code class="mono">@tailwind</code>
+  directives, plus every CSS variable's actual value for the dark and light themes.</td></tr>
+</table>
+
+<div class="footer-note">
+  Companion reading: <i>FluencyOS — Frontend, Electron &amp; Onboarding Explained</i> covers React, Electron,
+  Vite and TypeScript the same way this document covers Tailwind. All class-usage counts and examples above
+  were taken directly from the current <code class="mono">renderer/src</code> source, not from Tailwind's
+  general documentation.
+</div>
+
+</body>
+</html>

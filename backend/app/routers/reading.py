@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.db import get_db
 from app.models.reading import (
+    LevelTextRequest,
     BlockHeatOut,
     GoalDayOut,
     GoalUpdate,
@@ -31,13 +32,21 @@ from app.models.reading import (
     WordSenseOut,
 )
 from app.security import require_token
-from app.services import cefr_lexicon, difficulty_heat, leveling, reading_goal
+from app.services import (
+    cefr_lexicon,
+    dictionary,
+    difficulty_heat,
+    leveling,
+    pronunciation,
+    reader_level,
+    reading_goal,
+)
+from app.services.ingest.pipeline import normalise_text_hash
 from app.services.leveling import cache as level_cache
 from app.utils.time import local_date_today
 
 router = APIRouter(prefix="/reading", dependencies=[Depends(require_token)])
 
-DEFAULT_CEFR = "B1"
 
 
 def _stats(conn: sqlite3.Connection, user_id: str) -> ReadingStatsOut:
@@ -78,23 +87,11 @@ def update_goal(payload: GoalUpdate, conn: sqlite3.Connection = Depends(get_db))
 def _resolve_target_cefr(
     conn: sqlite3.Connection, user_id: str | None, requested: str | None
 ) -> str:
-    """An explicit request wins; otherwise the reader's own placement level;
-    otherwise B1. The same page tints differently for a B1 and a C1 reader,
-    which is the entire feature."""
-    if requested:
-        if not cefr_lexicon.is_valid_band(requested):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"target_cefr must be one of {', '.join(cefr_lexicon.CEFR_ORDER)}",
-            )
-        return requested.upper()
-
-    if user_id:
-        row = conn.execute("SELECT cefr_level FROM users WHERE id = ?", (user_id,)).fetchone()
-        if row is not None and row["cefr_level"] and cefr_lexicon.is_valid_band(row["cefr_level"]):
-            return row["cefr_level"].upper()
-
-    return DEFAULT_CEFR
+    """The reader's target band, as an HTTP concern: see reader_level."""
+    try:
+        return reader_level.resolve_target(conn, user_id, requested)
+    except reader_level.UnknownBand as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get("/heat", response_model=HeatOut)
@@ -160,7 +157,16 @@ def lookup_word(
     user_id: str | None = None,
     conn: sqlite3.Connection = Depends(get_db),
 ) -> WordLookupOut:
-    """The AI panel's dictionary payload, from the bundled lexicon.
+    """The AI panel's dictionary payload.
+
+    Nearest source first: the bundled lexicon, then whatever this machine has
+    already looked up, and only then the network. Clicking a word in a book
+    used to consult the bundled list alone, which carries definitions for a
+    few hundred words — so nearly every word in a real novel came back "not
+    in the dictionary" while an answer was a second away.
+
+    The CEFR band and the simpler synonym still come from the lexicon
+    whatever answered, because no online dictionary has them.
 
     `ctx` (the sentence the word appeared in) is accepted now so the client
     contract doesn't change when contextual explanation lands in Phase 7 —
@@ -171,41 +177,55 @@ def lookup_word(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="w is required")
 
     entry = cefr_lexicon.lookup(word)
+    try:
+        answer = dictionary.look_up(conn, word)
+    except dictionary.DictionaryServiceUnavailable:
+        # Reading is an offline activity and must stay one. A dictionary that
+        # cannot be reached falls back to whatever the lexicon knows rather
+        # than turning a click on a word into an error.
+        answer = None
 
-    if entry is None:
+    senses: list[WordSenseOut] = []
+    synonyms: list[str] = []
+    ipa: str | None = None
+    if answer is not None and answer.result.found:
+        senses = [
+            WordSenseOut(definition=sense.definition, example=sense.example)
+            for sense in answer.result.senses
+            if sense.definition
+        ]
+        synonyms = list(answer.result.synonyms)
+        ipa = answer.result.ipa
+    elif entry is not None and entry.definition:
+        senses = [WordSenseOut(definition=entry.definition, example=entry.example)]
+        synonyms = list(entry.synonyms)
+
+    if not senses and entry is None:
         return WordLookupOut(
             word=word,
             lemma=None,
             pos=None,
-            cefr=None,
-            ipa=None,
+            cefr=cefr_lexicon.band_of(word),
+            ipa=pronunciation.display(pronunciation.ipa_for(word)),
             senses=[],
             synonyms=[],
             simpler=None,
             found=False,
-            context_available=False,
-            context_note=None,
         )
-
-    senses: list[WordSenseOut] = []
-    if entry.definition:
-        senses.append(WordSenseOut(definition=entry.definition, example=entry.example))
 
     return WordLookupOut(
         word=word,
-        lemma=entry.lemma,
-        pos=entry.pos or None,
-        cefr=entry.cefr,
-        # No pronunciation data in the bundled list yet — the panel hides the
-        # slot rather than inventing an IPA transcription.
-        ipa=None,
+        lemma=entry.lemma if entry is not None else None,
+        pos=(entry.pos or None) if entry is not None else None,
+        # band_of covers the ~8.8k-word band table, not just the curated list.
+        cefr=(entry.cefr if entry is not None else None) or cefr_lexicon.band_of(word),
+        # CMUdict, offline, for 126k words — used whenever the source that
+        # answered had no phonetics of its own.
+        ipa=pronunciation.display(ipa or pronunciation.ipa_for(word)),
         senses=senses,
-        synonyms=list(entry.synonyms),
-        simpler=entry.simpler,
-        found=True,
-        # Needs generation (Phase 7); never faked.
-        context_available=False,
-        context_note=None,
+        synonyms=synonyms,
+        simpler=entry.simpler if entry is not None else None,
+        found=bool(senses),
     )
 
 
@@ -268,7 +288,9 @@ def level_block(
         )
         return _to_out(result, cached=cached, requested_mode=mode)
 
-    engine = leveling.LlmEngine(leveling.configured_model(conn, payload.user_id))
+    engine = leveling.LlmEngine(
+        leveling.configured_model(conn, payload.user_id), conn=conn, user_id=payload.user_id
+    )
     try:
         result, cached = level_cache.get_or_generate(
             conn,
@@ -281,6 +303,88 @@ def level_block(
         return _to_out(result, cached=cached, requested_mode=mode)
     except leveling.EngineUnavailable as exc:
         return _unavailable(conn, row, mode=mode, target=target, reason=str(exc))
+
+
+#: A selection longer than this is a page, not a passage — and a local
+#: model asked for a page takes minutes and returns something worse.
+_MAX_LEVEL_TEXT = 1200
+
+
+@router.post("/level-text", response_model=LeveledTextOut)
+def level_text(payload: LevelTextRequest, conn: sqlite3.Connection = Depends(get_db)) -> LeveledTextOut:
+    """Simplify a passage the reader selected on the page.
+
+    Same engines, same cache, same modes as /level — the only difference is
+    where the text came from. A selection on a rendered page is not a block:
+    it can cross block boundaries, and it can cover a caption, a table cell or
+    an equation that the text extractor never recorded, which is exactly the
+    material a reader is most likely to want put in plainer words.
+
+    Keyed on the text itself, so two readers selecting the same sentence in
+    the same book share one generation, and so does the same reader coming
+    back to it.
+    """
+    text = (payload.text or "").strip()
+    if not text:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="There is no text to simplify."
+        )
+    if len(text) > _MAX_LEVEL_TEXT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="That is too much text to put in simpler words at once — "
+            "try a sentence or two.",
+        )
+    if payload.mode not in leveling.MODES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"mode must be one of {', '.join(leveling.MODES)}",
+        )
+
+    target = _resolve_target_cefr(conn, payload.user_id, payload.target_cefr)
+    text_hash = normalise_text_hash(text)
+    # A stand-in for the block row the fallback path expects, carrying the
+    # only two fields it reads.
+    row = {"text": text, "text_hash": text_hash}
+
+    if payload.mode in leveling.RULES_MODES:
+        if payload.require_model:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Simpler wording is written by the AI. Ask for one of the rewrites.",
+            )
+        result, cached = level_cache.get_or_generate(
+            conn,
+            text=text,
+            text_hash=text_hash,
+            mode=payload.mode,
+            target_cefr=target,
+            engine=leveling.rules,
+        )
+        return _to_out(result, cached=cached, requested_mode=payload.mode)
+
+    engine = leveling.LlmEngine(
+        leveling.configured_model(conn, payload.user_id), conn=conn, user_id=payload.user_id
+    )
+    try:
+        result, cached = level_cache.get_or_generate(
+            conn,
+            text=text,
+            text_hash=text_hash,
+            mode=payload.mode,
+            target_cefr=target,
+            engine=engine,
+        )
+        return _to_out(result, cached=cached, requested_mode=payload.mode)
+    except leveling.EngineUnavailable as exc:
+        # The caller that writes over the page would rather be told than be
+        # handed something else — and 503 is the answer the app already knows
+        # how to offer to start the AI from.
+        if payload.require_model:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+            ) from exc
+        return _unavailable(conn, row, mode=payload.mode, target=target, reason=str(exc))
 
 
 def _unavailable(
@@ -345,7 +449,8 @@ def get_reader_prefs(
     row = conn.execute(
         """
         SELECT reader_font_size, reader_page_theme, reader_heat_on,
-               reader_panel_open, reader_panel_tab
+               reader_panel_open, reader_panel_tab,
+               reader_page_scroll, reader_page_zoom
         FROM user_settings WHERE user_id = ?
         """,
         (user_id,),
@@ -358,6 +463,8 @@ def get_reader_prefs(
         heat_on=bool(row["reader_heat_on"]),
         panel_open=bool(row["reader_panel_open"]),
         panel_tab=row["reader_panel_tab"],
+        page_scroll=row["reader_page_scroll"],
+        page_zoom=row["reader_page_zoom"],
     )
 
 
@@ -375,15 +482,18 @@ def update_reader_prefs(
         """
         INSERT INTO user_settings (
           user_id, reader_font_size, reader_page_theme, reader_heat_on,
-          reader_panel_open, reader_panel_tab
+          reader_panel_open, reader_panel_tab,
+          reader_page_scroll, reader_page_zoom
         )
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET
           reader_font_size = excluded.reader_font_size,
           reader_page_theme = excluded.reader_page_theme,
           reader_heat_on = excluded.reader_heat_on,
           reader_panel_open = excluded.reader_panel_open,
-          reader_panel_tab = excluded.reader_panel_tab
+          reader_panel_tab = excluded.reader_panel_tab,
+          reader_page_scroll = excluded.reader_page_scroll,
+          reader_page_zoom = excluded.reader_page_zoom
         """,
         (
             payload.user_id,
@@ -392,6 +502,8 @@ def update_reader_prefs(
             int(payload.heat_on),
             int(payload.panel_open),
             payload.panel_tab,
+            payload.page_scroll,
+            payload.page_zoom,
         ),
     )
     return ReaderPrefsOut(
@@ -400,4 +512,6 @@ def update_reader_prefs(
         heat_on=payload.heat_on,
         panel_open=payload.panel_open,
         panel_tab=payload.panel_tab,
+        page_scroll=payload.page_scroll,
+        page_zoom=payload.page_zoom,
     )

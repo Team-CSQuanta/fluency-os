@@ -20,6 +20,27 @@ class UserOut(BaseModel):
     cefr_level: str | None
     created_at: str
     onboarding_completed_at: str | None
+    #: Whether a profile picture has been set. The file itself is served from
+    #: /users/{id}/avatar; the path it lives at is nobody's business but the
+    #: backend's.
+    has_avatar: bool = False
+
+
+class ProfileUpdate(BaseModel):
+    """Editing who you are, after onboarding. Every field is optional so a
+    patch cannot overwrite a language while fixing a name."""
+
+    display_name: str | None = None
+    native_language: str | None = None
+    target_language: str | None = None
+    cefr_level: str | None = None
+
+
+class AvatarIn(BaseModel):
+    """A picture already on this machine — a path, as with every other file
+    the app takes in."""
+
+    path: str
 
 
 class PlacementUpdate(BaseModel):
@@ -53,4 +74,3 @@ class UserSettingsUpdate(BaseModel):
 
 class CompanionUpdate(BaseModel):
     companion_species: Literal["fox", "owl", "deer", "cat"]
-    starting_biome: str

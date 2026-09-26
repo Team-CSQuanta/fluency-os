@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FluencyOS — Frontend, Electron &amp; Onboarding Explained</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 16mm 16mm; }
+
+  :root {
+    --acc: #6f51a6;
+    --accSoft: #f1eef7;
+    --accLine: #cfc2e6;
+    --ink: #1a1d1b;
+    --ink2: #4a5350;
+    --ink3: #7b8481;
+    --line: #dfe3e1;
+    --panel: #f7f8f7;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: 'DejaVu Sans', 'Liberation Sans', system-ui, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.65;
+    color: var(--ink);
+  }
+
+  code, .mono { font-family: 'DejaVu Sans Mono', 'Liberation Mono', monospace; }
+
+  h1 {
+    font-size: 25pt; line-height: 1.15; letter-spacing: -0.02em;
+    margin: 0 0 6px; font-weight: 700;
+  }
+  h2 {
+    font-size: 15pt; margin: 26px 0 10px; padding-top: 10px;
+    border-top: 2px solid var(--acc); font-weight: 700; letter-spacing: -0.01em;
+    break-after: avoid; page-break-after: avoid;
+  }
+  h3 {
+    font-size: 11.5pt; margin: 16px 0 6px; font-weight: 700; color: var(--ink);
+    break-after: avoid; page-break-after: avoid;
+  }
+  h4 {
+    font-size: 10pt; margin: 12px 0 5px; font-weight: 700; color: var(--acc);
+    break-after: avoid; page-break-after: avoid; text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  p { margin: 0 0 9px; }
+  ul, ol { margin: 0 0 9px; padding-left: 20px; }
+  li { margin-bottom: 4px; }
+
+  code {
+    font-size: 9pt; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 3px; padding: 0.5px 4px; color: #4b2b6a;
+  }
+
+  .cover {
+    border-bottom: 3px solid var(--acc);
+    padding-bottom: 16px; margin-bottom: 4px;
+  }
+  .sub { font-size: 12pt; color: var(--ink2); margin: 0 0 10px; }
+  .meta { font-size: 8.5pt; color: var(--ink3); font-family: 'DejaVu Sans Mono', monospace; }
+
+  .lead {
+    background: var(--accSoft); border-left: 3px solid var(--acc);
+    padding: 11px 14px; margin: 14px 0; font-size: 10.5pt;
+  }
+  .note {
+    background: #fdfaf3; border-left: 3px solid #c8a44a;
+    padding: 10px 13px; margin: 12px 0; font-size: 9.5pt; color: #4a4335;
+  }
+  .honest {
+    background: #f4faf6; border-left: 3px solid #3E7C5A;
+    padding: 10px 13px; margin: 12px 0; font-size: 9.5pt; color: #22392c;
+  }
+
+  table { width: 100%; border-collapse: collapse; margin: 10px 0 14px; font-size: 9.5pt; }
+  th {
+    text-align: left; background: var(--panel); border: 1px solid var(--line);
+    padding: 6px 9px; font-weight: 700; font-size: 8.5pt;
+    text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink2);
+  }
+  td { border: 1px solid var(--line); padding: 6px 9px; vertical-align: top; }
+  td.mono, th.mono { font-family: 'DejaVu Sans Mono', monospace; font-size: 8.5pt; }
+
+  pre {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 5px;
+    padding: 11px 13px; font-size: 8.5pt; line-height: 1.5; overflow: hidden;
+    font-family: 'DejaVu Sans Mono', monospace; margin: 10px 0 14px;
+    white-space: pre-wrap; color: #2f3733;
+  }
+  pre .c { color: #7b8481; }
+
+  .flow { margin: 12px 0 16px; }
+  .flow .step {
+    display: flex; gap: 11px; margin-bottom: 9px; break-inside: avoid;
+  }
+  .flow .n {
+    flex: none; width: 21px; height: 21px; border-radius: 50%;
+    background: var(--acc); color: #fff; font-size: 8.5pt; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'DejaVu Sans Mono', monospace;
+  }
+  .flow .body { flex: 1; font-size: 10pt; }
+  .flow .body b { font-weight: 700; }
+
+  .cards { display: flex; gap: 10px; margin: 12px 0 16px; }
+  .card {
+    flex: 1; border: 1px solid var(--line); border-radius: 6px;
+    padding: 11px 12px; background: #fff; break-inside: avoid;
+  }
+  .card .k {
+    font-size: 8pt; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--acc); font-weight: 700; margin-bottom: 5px;
+    font-family: 'DejaVu Sans Mono', monospace;
+  }
+  .card .v { font-size: 9.5pt; color: var(--ink2); line-height: 1.55; }
+
+  .vs { display: flex; gap: 10px; margin: 10px 0 14px; align-items: stretch; }
+  .vs > div { flex: 1; border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; break-inside: avoid; }
+  .vs .old { background: #fbf7f3; }
+  .vs .new { background: #f4faf6; }
+  .vs .tag { font-size: 8pt; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; margin-bottom: 6px; }
+  .vs .old .tag { color: #9a5a2a; }
+  .vs .new .tag { color: #3E7C5A; }
+
+  section { break-inside: auto; }
+  h2, h3 { break-inside: avoid; }
+  table, pre, .lead, .note, .honest, .vs, .cards { break-inside: avoid; }
+
+  .footer-note {
+    margin-top: 22px; padding-top: 10px; border-top: 1px solid var(--line);
+    font-size: 8.5pt; color: var(--ink3);
+  }
+
+  .toc { margin: 16px 0 10px; }
+  .toc ol { padding-left: 22px; }
+  .toc li { margin-bottom: 6px; font-size: 10.5pt; }
+  .toc .pg { color: var(--ink3); font-family: 'DejaVu Sans Mono', monospace; font-size: 9pt; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="meta">FLUENCYOS · INTERNAL WALKTHROUGH · PREPARED FOR A COURSE PRESENTATION</div>
+  <h1>Frontend, Electron &amp; Onboarding — Explained</h1>
+  <div class="sub">A plain-English guide to the parts of FluencyOS built on React, Electron, Vite, Tailwind CSS
+  and TypeScript — written assuming no prior exposure to any of these tools, only general programming and
+  HTML/CSS knowledge.</div>
+</div>
+
+<div class="lead">
+  <b>Who this is for.</b> You already know how to program, and you know HTML and CSS. You have not
+  necessarily used React, Electron, Vite, Tailwind CSS, TypeScript, or Zustand before. Every section below
+  introduces a new tool by comparing it to something you already know, before showing the real code from this
+  project that uses it. By the end, you should be able to explain to your teacher <i>what</i> each piece is,
+  <i>why</i> it exists, and <i>how</i> a user's click travels from the screen down to a saved database row
+  during onboarding.
+</div>
+
+<div class="toc">
+  <h3>Contents</h3>
+  <ol>
+    <li>What kind of app is this, physically? <span class="pg">— desktop app, not a website</span></li>
+    <li>The five tools, one at a time <span class="pg">— Node.js, TypeScript, React, Vite, Tailwind CSS</span></li>
+    <li>Electron: two programs pretending to be one <span class="pg">— main process vs renderer</span></li>
+    <li>The security bridge <span class="pg">— preload, contextBridge, the handshake token</span></li>
+    <li>Touring the frontend folder <span class="pg">— features, stores, App.tsx</span></li>
+    <li>The onboarding wizard, step by step <span class="pg">— the centerpiece of this guide</span></li>
+    <li>What's really wired up vs. what's a mock <span class="pg">— an honest map</span></li>
+    <li>Running it live, and a glossary <span class="pg">— for the demo and Q&amp;A</span></li>
+  </ol>
+</div>
+
+<h2>1. What kind of app is this, physically?</h2>
+
+<p>FluencyOS looks like a normal desktop program — it has its own window, its own icon, a title bar with
+minimize/maximize/close buttons, and it keeps running without a browser open. But under the hood, the entire
+visible interface is a webpage: HTML, CSS and JavaScript, exactly like a website. The trick is a tool called
+<b>Electron</b>, which packages a stripped-down Chrome browser and a copy of Node.js together into one
+program, so that a webpage can be shown as if it were a native app, and — unlike a normal webpage — that page
+is allowed to open native file-picker dialogs, spawn other programs on your computer, and read your hardware
+specs.</p>
+
+<p>So there are really <b>two halves</b> to this project, and your teacher will care about both:</p>
+
+<div class="cards">
+  <div class="card">
+    <div class="k">Half 1 — the backend</div>
+    <div class="v">A Python (FastAPI) server, started automatically in the background, that owns the SQLite
+    database and does the real work (scoring the placement test, saving the user's profile, checking hardware
+    capability). Not the focus of this document.</div>
+  </div>
+  <div class="card">
+    <div class="k">Half 2 — this document</div>
+    <div class="v">The <b>Electron shell</b> (the desktop-app wrapper) and the <b>renderer</b> (the React
+    webpage running inside that window) — including the five-step onboarding wizard a new user completes the
+    first time they open the app.</div>
+  </div>
+</div>
+
+<h2>2. The five tools, one at a time</h2>
+
+<p>None of these tools change what a browser fundamentally does with HTML/CSS/JS. Each one solves an
+annoyance you'd eventually hit while hand-writing a large app the plain way. Read each comparison, then look
+at the "in this project" line to see it isn't abstract.</p>
+
+<h3>2.1 Node.js — JavaScript outside the browser</h3>
+<p>You already know JavaScript as "the language that runs inside a webpage." Node.js is the same language,
+running as a normal program on your computer instead — it can read files, start other programs, and open
+network ports, the way Python or a compiled program can. Electron's desktop-app half (see Section 3) is a
+Node.js program. So are the build scripts that assemble this project.</p>
+
+<h3>2.2 TypeScript — JavaScript with a spell-checker for types</h3>
+<p>TypeScript is JavaScript with one thing bolted on: before your code ever runs, a checker reads it and
+complains if, say, a function expecting a number is handed a piece of text. It compiles down to ordinary
+JavaScript — the browser or Node.js never sees TypeScript itself, only its plain-JS output. Every
+<code>.ts</code> / <code>.tsx</code> file in this project is really "JavaScript plus type annotations."</p>
+
+<pre>// Plain JavaScript — this typo is only discovered when the app crashes at runtime
+function assessHardware(cpuCores, totalRamBytes) { <span class="c">/* ... */</span> }
+assessHardware("4", 6_000_000_000);  // "4" the string slips through silently
+
+// TypeScript — the same typo is a red squiggly line before you even save the file
+function assessHardware(cpuCores: number, totalRamBytes: number) { <span class="c">/* ... */</span> }
+assessHardware("4", 6_000_000_000);  // ✗ Argument of type 'string' is not assignable to 'number'</pre>
+
+<h3>2.3 React — describing the screen instead of editing it by hand</h3>
+<p>In plain HTML/JS, you update the page by finding an element and mutating it:
+<code>document.getElementById('score').textContent = newScore;</code>. That's fine for a small page, but it
+gets unmanageable once dozens of things on screen can each change independently. React flips the approach:
+you write a function that says <i>"given this data, here is what the whole screen should look like,"</i> and
+React figures out which bits of real HTML actually need to change, and updates only those.</p>
+
+<div class="vs">
+  <div class="old">
+    <div class="tag">the way you already know</div>
+    <div class="v mono">const el = document.getElementById('name');<br>el.textContent = user.name;<br>el.classList.toggle('empty', !user.name);</div>
+  </div>
+  <div class="new">
+    <div class="tag">the react way</div>
+    <div class="v mono">&lt;div className={user.name ? '' : 'empty'}&gt;<br>&nbsp;&nbsp;{user.name}<br>&lt;/div&gt;</div>
+  </div>
+</div>
+
+<p>That HTML-looking snippet inside JavaScript is called <b>JSX</b> — it is not a new language, it is JavaScript
+that lets you write tags directly, which then get converted into plain <code>document.createElement</code>-style
+calls behind the scenes. Curly braces <code>{ }</code> drop back into normal JavaScript expressions, exactly
+like a template literal's <code>${ }</code>.</p>
+
+<p>A <b>component</b> is just a JavaScript function that returns some JSX — think of it as a custom HTML tag
+you invent yourself. This project has one component per screen (e.g. <code>Dashboard()</code>,
+<code>Review()</code>) and smaller reusable ones inside them (e.g. a <code>TextField</code> component used for
+every text input in the onboarding form, shown in Section 6).</p>
+
+<table>
+  <tr><th style="width:22%">React word</th><th>What it means, in your existing vocabulary</th></tr>
+  <tr><td class="mono">component</td><td>A function that returns some UI — like a custom, reusable HTML tag you define yourself.</td></tr>
+  <tr><td class="mono">props</td><td>The arguments passed into that function — like attributes on an HTML tag (<code>&lt;TextField label="Name" /&gt;</code>).</td></tr>
+  <tr><td class="mono">state</td><td>A variable that, when changed, tells React "re-run this function and update the screen." Plain JS variables don't do that on their own.</td></tr>
+  <tr><td class="mono">hook</td><td>A special function (always starting with <code>use...</code>, e.g. <code>useState</code>, <code>useEffect</code>) that plugs a component into React's re-rendering machinery.</td></tr>
+</table>
+
+<h3>2.4 Vite — a smarter local web server</h3>
+<p>You've probably run something like <code>python -m http.server</code> to preview a static site locally.
+Vite is that idea, upgraded: it serves the app on <code>http://127.0.0.1:5173</code>, but it also
+<b>instantly refreshes the browser the moment you save a file</b> ("hot reload" — no manual refresh), and it
+understands TypeScript/JSX and converts them on the fly. When you're ready to ship, <code>vite build</code>
+switches modes and instead bundles every file into a handful of optimized, minified <code>.js</code>/<code>.css</code>
+files under <code>renderer/dist/</code> — the same idea as concatenating and minifying scripts by hand, automated.</p>
+
+<h3>2.5 Tailwind CSS — writing style rules as class names</h3>
+<p>Normally you write a CSS rule once and reference it by a class name you invent:</p>
+
+<div class="vs">
+  <div class="old">
+    <div class="tag">plain css</div>
+    <div class="v mono">.toolbar {<br>&nbsp;&nbsp;display: flex;<br>&nbsp;&nbsp;gap: 8px;<br>&nbsp;&nbsp;padding: 12px;<br>}</div>
+    <div class="v" style="margin-top:6px">…then in HTML: <code>&lt;div class="toolbar"&gt;</code></div>
+  </div>
+  <div class="new">
+    <div class="tag">tailwind css</div>
+    <div class="v mono">&lt;div className="flex gap-2 p-3"&gt;</div>
+    <div class="v" style="margin-top:6px">No separate CSS rule to name or maintain — each utility class already
+    means one property. <code>flex</code> = <code>display:flex</code>, <code>gap-2</code> = <code>gap:8px</code>,
+    <code>p-3</code> = <code>padding:12px</code>.</div>
+  </div>
+</div>
+
+<p>Tailwind still compiles down to a real <code>.css</code> file — nothing magic happens at runtime — it just
+means you rarely hand-write new CSS rules; you compose existing utility classes instead, which keeps every
+component's styling visible right next to its markup instead of split into a separate stylesheet.</p>
+
+<div class="note">
+  <b>This project's twist:</b> the actual pixel/color values aren't hardcoded into Tailwind's config — they're
+  CSS custom properties (<code>--acc</code>, <code>--bg</code>, <code>--tx</code>, …) defined once in
+  <code class="mono">renderer/src/styles/globals.css</code>, and Tailwind is configured to treat them as
+  color names (<code>text-tx</code>, <code>bg-acc</code>). Toggling dark/light theme just swaps which set of
+  variable values is active — every component using <code>text-tx</code> updates automatically, without any
+  component needing to know which theme is active.
+</div>
+
+<h3>2.6 Zustand — one shared object every component can read and write</h3>
+<p>In plain JS, if two unrelated parts of a page need to share a value (say, "which theme is active"), you'd
+reach for a global variable, or pass it down manually through every function in between. React discourages
+plain global variables because it wouldn't know when to re-render. <b>Zustand</b> is a tiny library that gives
+you a global-variable-like "store" that <i>does</i> notify React when it changes.</p>
+
+<pre>// Anywhere in the app, any component can do this — no manual passing-down required:
+const theme = useShellStore(s =&gt; s.theme);          // read one field
+const toggleTheme = useShellStore(s =&gt; s.toggleTheme); // read one action</pre>
+
+<p>This project has three such stores: <code class="mono">appStore</code> (is a user logged in, is onboarding
+done), <code class="mono">shellStore</code> (which screen is showing, dark/light theme, is the sidebar
+collapsed), and <code class="mono">onboardingStore</code> (every field of the five-step wizard, plus the
+functions that validate and save each step — the star of Section 6).</p>
+
+<h2>3. Electron: two programs pretending to be one</h2>
+
+<p>The single most important idea to explain to your teacher is that <b>an Electron app is really two separate
+JavaScript programs running at the same time</b>, with a strict wall between them:</p>
+
+<div class="cards">
+  <div class="card">
+    <div class="k">Main process</div>
+    <div class="v">A plain <b>Node.js</b> program. Full access to the operating system: it can read/write
+    files, spawn other programs, open native dialogs. There is exactly one of these per app. In this project
+    it lives under <code class="mono">electron/main/</code>.</div>
+  </div>
+  <div class="card">
+    <div class="k">Renderer process</div>
+    <div class="v">A <b>Chromium browser tab</b> showing the React app. By default it can do everything a
+    normal webpage can — and, deliberately, <i>nothing more</i>. It cannot touch the file system or spawn
+    processes directly. Lives under <code class="mono">renderer/src/</code>.</div>
+  </div>
+</div>
+
+<p>Why the wall? Security. A normal website you visit in Chrome cannot read your files or run programs on your
+machine — that sandbox is exactly what keeps a malicious webpage from wrecking your computer. Electron keeps
+that same sandbox around the renderer on purpose, even though the app is "trusted" here, because a bug or a
+future dependency's bug in the React code should still not be able to reach the file system directly.</p>
+
+<h3>3.1 What happens when you double-click the app</h3>
+
+<div class="flow">
+  <div class="step"><div class="n">1</div><div class="body"><b>Electron's main process starts</b> and waits until
+  it's ready (<code class="mono">app.whenReady()</code> in <code class="mono">electron/main/index.ts</code>).</div></div>
+  <div class="step"><div class="n">2</div><div class="body"><b>It launches the Python backend</b> as a child
+  process (<code class="mono">startBackend()</code>) — picks a free port, generates a random secret token
+  (Section 4.2), and waits (polling <code class="mono">/health</code>) until FastAPI answers.</div></div>
+  <div class="step"><div class="n">3</div><div class="body"><b>It creates the window</b>
+  (<code class="mono">createWindow()</code>) — a frameless <code class="mono">BrowserWindow</code>, sized
+  1280×860, with a custom preload script attached.</div></div>
+  <div class="step"><div class="n">4</div><div class="body"><b>It loads the page.</b> While developing, that's
+  literally <code class="mono">http://127.0.0.1:5173</code> — the Vite dev server from Section 2.4, so you get
+  hot reload while working. In a built/shipped app it instead loads the pre-built
+  <code class="mono">renderer/dist/index.html</code> file straight off disk — no server involved at all.</div></div>
+  <div class="step"><div class="n">5</div><div class="body"><b>On quit</b>
+  (<code class="mono">before-quit</code>), the main process kills the backend child process it started, so no
+  orphaned Python server keeps running after the window closes.</div></div>
+</div>
+
+<pre>// electron/main/index.ts — the entire boot sequence, trimmed
+app.whenReady().then(async () =&gt; {
+  backendHandle = await startBackend();   // step 2
+  await createWindow();                   // steps 3-4
+});
+
+app.on('before-quit', () =&gt; {
+  stopBackend(backendHandle);             // step 5
+});</pre>
+
+<p>Notice this file barely does anything itself — it delegates to <code class="mono">backend-process.ts</code>
+(spawning/health-checking the Python server) and <code class="mono">ipc-handlers.ts</code> (Section 4). That
+split — one small file per responsibility — is the same discipline you'd apply to any codebase, just applied
+to Electron's main process.</p>
+
+<h2>4. The security bridge: how the renderer is allowed to ask for anything at all</h2>
+
+<p>If the renderer (the React webpage) has <i>no</i> direct access to the file system or the OS, how does the
+onboarding wizard show a native "choose a folder" dialog, or read how much RAM your computer has? Through a
+narrow, explicitly-listed gate called the <b>preload script</b>.</p>
+
+<h3>4.1 The preload script and <code>contextBridge</code></h3>
+<p>Think of it like a hotel mini-bar: you, the guest (the renderer), cannot walk into the hotel's main storage
+room and take whatever you want. But the hotel places a small, curated set of items in your room that you
+<i>are</i> allowed to use. The preload script is that mini-bar stocking list — it runs with slightly more
+privilege than the renderer, and it deliberately exposes only a handful of specific functions onto
+<code class="mono">window.fluencyos</code>, nothing more:</p>
+
+<pre>// electron/preload/index.ts — the entire allowed API surface, verbatim
+contextBridge.exposeInMainWorld('fluencyos', {
+  getBackendInfo: () =&gt; ipcRenderer.invoke('backend:get-info'),
+  getSystemInfo: () =&gt; ipcRenderer.invoke('system:get-info'),
+  pickDataFolder: () =&gt; ipcRenderer.invoke('dialog:pick-folder'),
+  pickBookFiles: () =&gt; ipcRenderer.invoke('dialog:pick-book-files'),
+  getPathForFile: (file) =&gt; webUtils.getPathForFile(file),
+  minimizeWindow: () =&gt; ipcRenderer.send('window:minimize'),
+  maximizeWindow: () =&gt; ipcRenderer.send('window:maximize'),
+  closeWindow: () =&gt; ipcRenderer.send('window:close'),
+});</pre>
+
+<p>That's the entire list. The React code cannot ask for anything not on this list — there is no
+<code class="mono">window.fs.readFile</code> or similar lying around. Every call above is really a message sent
+to the main process (<code class="mono">ipcRenderer.invoke</code>/<code class="mono">.send</code> — Electron's
+Inter-Process Communication), which the main process answers in
+<code class="mono">electron/main/ipc-handlers.ts</code>:</p>
+
+<pre>// electron/main/ipc-handlers.ts — abbreviated
+ipcMain.handle('system:get-info', () =&gt; getSystemInfo());          // real os.cpus()/os.totalmem()
+ipcMain.handle('dialog:pick-folder', async () =&gt; {
+  const result = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] });
+  return result.canceled ? null : result.filePaths[0];
+});
+ipcMain.on('window:minimize', () =&gt; getWindow()?.minimize());</pre>
+
+<p>This is the concrete answer to "how does a webpage open a native folder-picker dialog?" — it doesn't; it
+politely asks the main process to do it, and receives the chosen path back as a plain string, through
+this narrow bridge.</p>
+
+<h3>4.2 The handshake token — why the local server has a password</h3>
+<p>The Python backend listens on a real HTTP port on your machine (e.g. <code class="mono">127.0.0.1:34233</code>).
+Any other program running on the same computer could, in principle, guess that port and start asking it for
+your data. To close that gap, the main process generates a random 32-byte secret <b>once per launch</b>
+(never written to disk, never logged) and requires every request to the backend to include it:</p>
+
+<pre>// electron/main/handshake.ts
+export function generateHandshakeToken(): string {
+  return randomBytes(32).toString('hex');
+}</pre>
+
+<pre>// renderer/src/lib/apiClient.ts — every single API call goes through this one function,
+// which attaches the token automatically so no screen component has to remember to
+async function request(path, init) {
+  const { baseUrl, token } = requireBackendInfo();
+  const res = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', 'X-FluencyOS-Token': token, ...(init?.headers ?? {}) },
+  });
+  <span class="c">/* ... */</span>
+}</pre>
+
+<p>The renderer only ever learns this secret by asking the main process for it
+(<code class="mono">window.fluencyos.getBackendInfo()</code> → <code class="mono">backend:get-info</code>
+handler), which is itself gated by the preload bridge above. A webpage running in some other browser tab has
+no way to obtain it.</p>
+
+<h2>5. Touring the frontend folder</h2>
+
+<p><code class="mono">renderer/src/</code> is a normal React + TypeScript project — nothing Electron-specific
+about its structure. It's organized "by feature," not "by file type":</p>
+
+<pre>renderer/src/
+  App.tsx                  <span class="c">← the traffic controller (Section 5.3)</span>
+  store/                   <span class="c">← Zustand stores (Section 2.6)</span>
+    appStore.ts             is a user signed in? is onboarding done?
+    shellStore.ts           which screen is showing, theme, sidebar state
+    onboardingStore.ts       the 5-step wizard's data + save logic (Section 6)
+  lib/
+    apiClient.ts            the one place that talks to the Python backend
+  features/                <span class="c">← one folder per screen</span>
+    onboarding/              the wizard (Section 6)
+    dashboard/, player/, reader/, vocabulary/, review/,
+    conversation/, challenge/, forest/, settings/, shell/
+      each usually has:  SomeScreen.tsx      (the UI, a React component)
+                          someMockData.ts    (sample data — see Section 7)</pre>
+
+<h3>5.1 Why "mock data" files exist at all</h3>
+<p>Several screens (Conversation, Forest, the Scene Challenge, Review) depend on features that don't have a
+real backend yet — there is no AI conversation engine, no spaced-repetition scheduler, no embeddings model
+wired up. Rather than leave those screens blank, each has a small <code class="mono">*MockData.ts</code> file
+holding realistic-looking sample data, with a comment at the top saying so honestly. This lets the whole UI be
+demoed end-to-end today, while making it obvious in the code (and to a reviewer) exactly which parts are
+real. Section 7 lists which is which.</p>
+
+<h3>5.2 A real component, read top to bottom</h3>
+<p>Here is one of the smaller, self-contained components in the project — a labeled text input used on the
+first onboarding step — annotated line by line, since it uses almost every React idea from Section 2.3 at once:</p>
+
+<pre>function TextField({ label, sub, value, onChange, placeholder }) {   <span class="c">// a component = a function...</span>
+  return (                                                            <span class="c">// ...that returns JSX</span>
+    &lt;div className="flex items-center justify-between ..."&gt;          <span class="c">// Tailwind utility classes</span>
+      &lt;div&gt;
+        &lt;div&gt;{label}&lt;/div&gt;                                          <span class="c">// {label} = a prop, in braces</span>
+        &lt;div&gt;{sub}&lt;/div&gt;
+      &lt;/div&gt;
+      &lt;input
+        value={value}                                                <span class="c">// controlled input: React owns the value</span>
+        onChange={(e) =&gt; onChange(e.target.value)}                    <span class="c">// same DOM event you already know</span>
+      /&gt;
+    &lt;/div&gt;
+  );
+}</pre>
+
+<p>It's used like a custom HTML tag, passing data in as attributes (props):</p>
+
+<pre>&lt;TextField
+  label="Display name"
+  value={profile.displayName}               <span class="c">// current value, read from the Zustand store</span>
+  onChange={(v) =&gt; updateProfile({ displayName: v })}  <span class="c">// writes back to the store on every keystroke</span>
+/&gt;</pre>
+
+<h3>5.3 App.tsx — the traffic controller</h3>
+<p>There is no URL-based router in this app (no <code class="mono">/dashboard</code>,
+<code class="mono">/settings</code> in an address bar — it's a desktop window, not a browser). Instead,
+<code class="mono">shellStore</code> just holds a plain string field called <code class="mono">screen</code>
+(e.g. <code class="mono">'dashboard'</code>, <code class="mono">'review'</code>), and <code class="mono">App.tsx</code>
+reads it and picks which component to show with an ordinary <code class="mono">switch</code> statement:</p>
+
+<pre>function ScreenContent() {
+  const screen = useShellStore((s) =&gt; s.screen);
+  switch (screen) {
+    case 'dashboard': return &lt;Dashboard /&gt;;
+    case 'review':    return &lt;Review /&gt;;
+    <span class="c">// ...one case per screen...</span>
+    default: return &lt;ComingSoon /&gt;;
+  }
+}</pre>
+
+<p>Clicking a sidebar link just calls <code class="mono">goScreen('review')</code>, which sets that one string
+in the store — Zustand then tells React "something changed," React re-runs <code class="mono">ScreenContent</code>,
+and the switch statement now returns a different component. No page reload, no network round-trip, because
+it was never really "navigation" in the browser sense — just one variable changing and React reacting to it.</p>
+
+<p>One level up, <code class="mono">App()</code> itself makes an even bigger either/or decision, and this is
+the exact switch that ends onboarding and enters the real app:</p>
+
+<pre>{!initError && backendReady && onboardingCompleted === false && &lt;OnboardingWizard /&gt;}
+{!initError && backendReady && onboardingCompleted === true  && &lt;MainApp /&gt;}</pre>
+
+<h2>6. The onboarding wizard, step by step</h2>
+
+<p>This is the flow you'll most likely want to walk your teacher through live. It is five steps, each its own
+component, all orchestrated by one shell component and one Zustand store.</p>
+
+<div class="cards">
+  <div class="card"><div class="k">Step 1 · Profile</div><div class="v">Name, native language, target
+  language, data folder.</div></div>
+  <div class="card"><div class="k">Step 2 · Placement</div><div class="v">A short CEFR-level quiz to estimate
+  the learner's current level.</div></div>
+  <div class="card"><div class="k">Step 3 · Engine</div><div class="v">Checks whether this computer can run a
+  local AI model well, or should use an API key instead.</div></div>
+</div>
+<div class="cards">
+  <div class="card"><div class="k">Step 4 · Habit</div><div class="v">Daily goals (reviews, conversation
+  minutes, reading, etc.) and quiet hours.</div></div>
+  <div class="card"><div class="k">Step 5 · Companion</div><div class="v">Pick a companion character; finishing
+  this step marks onboarding complete.</div></div>
+</div>
+
+<h3>6.1 The shell: <code>OnboardingWizard.tsx</code></h3>
+<p>This component doesn't know anything about what's <i>inside</i> each step — it only knows there are five of
+them. It keeps a lookup table from step number to component, and renders whichever one is current:</p>
+
+<pre>const STEP_COMPONENTS = { 1: StepProfile, 2: StepPlacement, 3: StepEngine, 4: StepHabit, 5: StepCompanion };
+
+export function OnboardingWizard() {
+  const step = useOnboardingStore((s) =&gt; s.step);          <span class="c">// current step number, from the store</span>
+  const StepComponent = STEP_COMPONENTS[step];               <span class="c">// look up which component to show</span>
+  <span class="c">// ...renders the progress rail, current step's title/body text, then:</span>
+  return (&lt;&gt; &lt;StepComponent /&gt; &lt;/&gt;);                        <span class="c">// &lt;StepComponent /&gt; — a variable used as a tag!</span>
+}</pre>
+
+<p>That last line is worth pointing out to your teacher: in JSX, a component stored in a normal JavaScript
+variable can be rendered by writing it as a tag, exactly like the hardcoded <code class="mono">&lt;div&gt;</code>
+tags elsewhere. This is what lets one small shell file support five completely different steps without an
+if/else chain for each one.</p>
+
+<h3>6.2 The store: one object holding the whole wizard's state</h3>
+<p><code class="mono">onboardingStore.ts</code> holds every field the five steps need
+(<code class="mono">profile</code>, <code class="mono">placement</code>, <code class="mono">hardware</code>,
+<code class="mono">engine</code>, <code class="mono">habit</code>, <code class="mono">companion</code>), plus
+a <code class="mono">submission</code> field tracking whether a save is in flight or failed. Every step reads
+straight from this one store and calls one of its update functions — nothing is passed down through props from
+parent to child the "plain React" way, which is exactly the problem Zustand (Section 2.6) exists to avoid.</p>
+
+<h3>6.3 Walking through Step 1 concretely — from click to database row</h3>
+<p>Here is the entire path a single keystroke takes, in order:</p>
+
+<div class="flow">
+  <div class="step"><div class="n">1</div><div class="body">User types into the "Display name" input.
+  <code class="mono">StepProfile.tsx</code>'s <code class="mono">TextField</code> fires its
+  <code class="mono">onChange</code>.</div></div>
+  <div class="step"><div class="n">2</div><div class="body">That calls
+  <code class="mono">updateProfile({ displayName: v })</code>, which does an <b>immutable update</b> — it
+  builds a brand-new profile object by spreading the old one and overwriting one field, rather than mutating
+  the old object in place:
+  <pre style="margin-top:6px">updateProfile: (patch) =&gt; set((s) =&gt; ({ profile: { ...s.profile, ...patch } }))</pre>
+  </div></div>
+  <div class="step"><div class="n">3</div><div class="body">Zustand notifies every component reading
+  <code class="mono">profile</code> that it changed. React re-renders the input with the new value — this is
+  what makes it a "controlled input": the on-screen text is always exactly what's in the store, never
+  out of sync.</div></div>
+  <div class="step"><div class="n">4</div><div class="body">User clicks <b>Continue</b>. This calls
+  <code class="mono">goNext()</code>, which first runs <code class="mono">validateStep(state)</code> — for
+  step 1, that's just "is the trimmed display name empty?" If so, it sets
+  <code class="mono">submission.error</code> and stops; the wizard shell displays that message and nothing
+  is sent anywhere yet.</div></div>
+  <div class="step"><div class="n">5</div><div class="body">If valid, it builds a plain object matching what
+  the backend expects and calls <code class="mono">api.post('/users', payload)</code> — which, remember from
+  Section 4.2, automatically carries the secret handshake token. FastAPI creates the row in SQLite and returns
+  the saved user (now with a real database ID).</div></div>
+  <div class="step"><div class="n">6</div><div class="body">The store saves that ID
+  (<code class="mono">set({ userId: user.id })</code>) — every later step needs it to know <i>which</i> user
+  row to update — and advances <code class="mono">step</code> from 1 to 2. The wizard shell's lookup table
+  swaps <code class="mono">StepProfile</code> out for <code class="mono">StepPlacement</code>.</div></div>
+</div>
+
+<pre>// onboardingStore.ts — goNext(), the real code for step 1, trimmed to the essentials
+goNext: async () =&gt; {
+  const validationError = validateStep(get());
+  if (validationError) { set({ submission: { status: 'error', error: validationError } }); return; }
+
+  set({ submission: { status: 'submitting', error: null } });
+  try {
+    if (state.step === 1) {
+      const user = await api.post('/users', {
+        display_name: state.profile.displayName.trim(),
+        native_language: state.profile.nativeLanguage.trim(),
+        target_language: state.profile.targetLanguage.trim(),
+        data_folder: state.profile.dataFolder.trim(),
+      });
+      set({ userId: user.id });
+    }
+    <span class="c">// ...similar blocks for steps 2, 4, 5 — see 6.4...</span>
+    set((s) =&gt; ({ step: s.step + 1, submission: { status: 'idle', error: null } }));
+  } catch (err) {
+    set({ submission: { status: 'error', error: err.message } });   <span class="c">// network/server errors surface the same way</span>
+  }
+}</pre>
+
+<h3>6.4 What each step actually saves</h3>
+<table>
+  <tr><th style="width:14%">Step</th><th style="width:40%">What happens on "Continue"</th><th>Backend call</th></tr>
+  <tr><td>1 · Profile</td><td>Creates the user row for the first time.</td><td class="mono">POST /users</td></tr>
+  <tr><td>2 · Placement</td><td>Saves the CEFR level — either self-reported, or the estimate computed from the
+  placement quiz the user just took.</td><td class="mono">PATCH /users/:id/placement</td></tr>
+  <tr><td>3 · Engine</td><td>No save on "Continue" — instead, as soon as this step loads, it silently asks the
+  main process for real CPU/RAM numbers and posts them to the backend to get a capability verdict (Section
+  6.5). Validation only blocks if local mode is chosen with no tier selected.</td>
+  <td class="mono">POST /engine/assess-hardware</td></tr>
+  <tr><td>4 · Habit</td><td>Saves Step 3's engine choice <i>and</i> Step 4's daily-goal settings together in one
+  call.</td><td class="mono">PUT /users/:id/settings</td></tr>
+  <tr><td>5 · Companion</td><td>Saves the chosen companion, then immediately marks onboarding complete — which
+  is the exact moment <code class="mono">App.tsx</code> switches from the wizard to the main app
+  (Section 5.3).</td><td class="mono">POST /users/:id/companion<br>POST /users/:id/onboarding/complete</td></tr>
+</table>
+
+<h3>6.5 Step 3 is the one genuinely "smart" step</h3>
+<p>Every other step just collects and saves form input. Step 3 additionally makes a real decision using real
+data from the machine it's running on:</p>
+<div class="flow">
+  <div class="step"><div class="n">1</div><div class="body">On mount, it calls
+  <code class="mono">loadHardwareInfo()</code>, which asks the main process (through the preload bridge, Section
+  4.1) for the real CPU core count and total RAM — <code class="mono">os.cpus().length</code> and
+  <code class="mono">os.totalmem()</code>, actual Node.js OS calls, not sample data.</div></div>
+  <div class="step"><div class="n">2</div><div class="body">It sends those two numbers to the Python backend's
+  <code class="mono">/engine/assess-hardware</code> endpoint, which runs a small pure function deciding whether
+  a "Light," "Balanced," or "Heavy" local AI model tier is realistic for this hardware, or whether no local tier
+  is realistic at all.</div></div>
+  <div class="step"><div class="n">3</div><div class="body">If nothing local is realistic, the store
+  automatically pre-selects "use an API key instead" mode — the user can still override it manually, but they
+  aren't steered toward a model their computer can't actually run smoothly.</div></div>
+</div>
+
+<div class="honest">
+  <b>Why this is worth highlighting to a teacher:</b> it's the one onboarding step that isn't just "a form that
+  saves what you typed" — it's the frontend, Electron, and backend all cooperating on one real decision, using
+  a number that couldn't have been faked ahead of time (this machine's actual RAM).
+</div>
+
+<h2>7. What's really wired up vs. what's a mock — an honest map</h2>
+<p>Being upfront about this distinction is a good habit in any project, and it's an easy, confident answer if
+a teacher asks "does this actually work end-to-end?":</p>
+
+<table>
+  <tr><th style="width:30%">Area</th><th>Status</th></tr>
+  <tr><td>Onboarding (all 5 steps)</td><td><b>Real.</b> Every step other than the wizard shell's own UI state
+  reads/writes the actual SQLite database through FastAPI, including the placement quiz scoring and the
+  hardware capability check.</td></tr>
+  <tr><td>Electron shell (window, title bar, backend process management, IPC bridge)</td>
+  <td><b>Real.</b> This is genuine desktop-app plumbing — the security bridge, the handshake token, and the
+  backend health-check are all live code, not simulated.</td></tr>
+  <tr><td>Dashboard, Vocabulary, Learn by Watching/Reading, Review, Settings</td>
+  <td><b>Real for what has a backend</b> (book import/reading, vocabulary storage), <b>mock for the rest</b>
+  (e.g. FSRS scheduling in Review is simulated locally, since no spaced-repetition engine exists yet).</td></tr>
+  <tr><td>Conversation, Session Report, Scene Challenge, Forest</td>
+  <td><b>Visual mock only.</b> There is no LLM/speech pipeline or embeddings model wired up yet, so these
+  screens are built against realistic sample data, clearly marked as such in each screen's
+  <code class="mono">*MockData.ts</code> file, so the UI can be demoed and reviewed today without pretending a
+  backend exists that doesn't yet.</td></tr>
+</table>
+
+<h2>8. Running it live, and a glossary for Q&amp;A</h2>
+
+<h3>8.1 The one command</h3>
+<pre>npm run dev</pre>
+<p>This single script (<code class="mono">scripts/dev.mjs</code>) does three things in order: starts the Vite
+dev server (Section 2.4), waits until it responds, then launches Electron pointed at it — and Electron's own
+startup (Section 3.1) spawns the Python backend itself. While it's running: <b>changes to renderer files
+hot-reload instantly</b> (no restart needed); changes to Electron's <code class="mono">main/</code> or
+<code class="mono">preload/</code> code need the whole thing restarted, since that half isn't watched by Vite.</p>
+
+<h3>8.2 Glossary — quick answers if your teacher asks "what is...?"</h3>
+<table>
+  <tr><th style="width:26%">Term</th><th>One-line definition</th></tr>
+  <tr><td class="mono">Electron</td><td>Packages Chromium + Node.js so a webpage can run as a desktop app with OS-level abilities.</td></tr>
+  <tr><td class="mono">Main process</td><td>The Node.js half of an Electron app — full OS access, exactly one per app.</td></tr>
+  <tr><td class="mono">Renderer process</td><td>The sandboxed Chromium tab showing the actual React UI.</td></tr>
+  <tr><td class="mono">IPC</td><td>"Inter-Process Communication" — the message-passing system the renderer uses to ask the main process to do something on its behalf.</td></tr>
+  <tr><td class="mono">Preload script / contextBridge</td><td>The narrow, explicit allow-list of functions the renderer is permitted to call into the main process.</td></tr>
+  <tr><td class="mono">React component</td><td>A function that returns JSX (UI) — reusable, like a custom HTML tag.</td></tr>
+  <tr><td class="mono">JSX</td><td>HTML-looking syntax written directly inside JavaScript/TypeScript files.</td></tr>
+  <tr><td class="mono">Props</td><td>Data passed into a component, like attributes on a tag.</td></tr>
+  <tr><td class="mono">State / hook</td><td>A value that, when changed, tells React to re-render; <code class="mono">useState</code>/<code class="mono">useEffect</code> are the built-in hooks that manage this.</td></tr>
+  <tr><td class="mono">Zustand store</td><td>A small shared object any component can read/write, with automatic re-rendering when it changes.</td></tr>
+  <tr><td class="mono">Vite</td><td>The local dev server + build tool — hot reload while developing, one optimized bundle when shipping.</td></tr>
+  <tr><td class="mono">Tailwind CSS</td><td>Pre-made utility CSS classes composed directly in markup, instead of hand-written custom classes.</td></tr>
+  <tr><td class="mono">TypeScript</td><td>JavaScript plus compile-time type checking; compiles down to plain JavaScript.</td></tr>
+  <tr><td class="mono">npm workspace</td><td>This repo's mechanism for treating <code class="mono">renderer/</code> as its own sub-project with its own <code class="mono">package.json</code>, while still being installed/run from the root.</td></tr>
+</table>
+
+<div class="footer-note">
+  Prepared as a study/presentation aid for FluencyOS's frontend, Electron shell, and onboarding flow. Every
+  code excerpt above is taken directly from the project (lightly trimmed for length) — file paths are given
+  so each one can be opened and shown live during a demo.
+</div>
+
+</body>
+</html>

@@ -18,7 +18,6 @@ export type ScreenKey =
 export interface NavItem {
   key: ScreenKey;
   label: string;
-  badge?: string;
 }
 
 export interface NavGroup {
@@ -39,7 +38,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Knowledge',
     items: [
       { key: 'vocab', label: 'Vocabulary' },
-      { key: 'review', label: 'Review', badge: '47' },
+      { key: 'review', label: 'Review' },
     ],
   },
   {
@@ -56,7 +55,7 @@ export const NAV_GROUPS: NavGroup[] = [
 export const SCREEN_TITLES: Record<ScreenKey, [string, string]> = {
   dashboard: ['Dashboard', 'What is due, how you are trending, what to do next'],
   library: ['Learn by watching', 'Your content library · nothing is uploaded, everything stays on this machine'],
-  player: ['Learn by watching', 'dual subtitles · clip context engine armed'],
+  player: ['Learn by watching', 'dual subtitles · click a word to look it up and keep the moment'],
   bookshelf: ['Learn by reading', 'Your bookshelf · adaptive text leveling · reading counts toward your daily goal'],
   reader: ['Learn by reading', 'adaptive text leveling · B1 target'],
   vocab: ['Vocabulary', 'Every word you have captured, with its contexts and cards'],
@@ -65,7 +64,7 @@ export const SCREEN_TITLES: Record<ScreenKey, [string, string]> = {
   conv: ['Conversation', 'Guided AI practice with target words injected'],
   convlive: ['Conversation', 'Guided AI practice with target words injected'],
   report: ['Session Report', 'Contextual accuracy, fluency proxies, and a focus for next time'],
-  challenge: ['Scene Description Challenge', 'Timed production against your own clips'],
+  challenge: ['Scene Description Challenge', 'Watch without subtitles, say what happened, be marked on it'],
   forest: ['Forest', 'Every vocabulary entry, growing'],
   settings: ['Settings', 'Local-first by default · nothing leaves the machine'],
 };

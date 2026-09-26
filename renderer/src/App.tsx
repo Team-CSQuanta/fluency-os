@@ -14,6 +14,9 @@ import { VocabularyEntry } from '@/features/vocabulary/VocabularyEntry';
 import { Review } from '@/features/review/Review';
 import { ConversationList } from '@/features/conversation/ConversationList';
 import { ConversationLive } from '@/features/conversation/ConversationLive';
+import { LeaveConversationDialog } from '@/features/conversation/LeaveConversationDialog';
+import { CloseDuringDownloadDialog } from '@/features/shell/CloseDuringDownloadDialog';
+import { ErrorDialog } from '@/features/shell/ErrorDialog';
 import { Report } from '@/features/conversation/Report';
 import { Challenge } from '@/features/challenge/Challenge';
 import { Forest } from '@/features/forest/Forest';
@@ -72,6 +75,9 @@ function MainApp() {
           <ScreenContent />
         </div>
       </div>
+      <LeaveConversationDialog />
+      <CloseDuringDownloadDialog />
+      <ErrorDialog />
     </div>
   );
 }
@@ -86,13 +92,25 @@ export function App() {
     void initialize();
   }, [initialize]);
 
+  // Chromium does not remember the zoom factor across launches, so the stored
+  // preference has to be re-applied each time or the setting silently resets.
+  const uiScale = useShellStore((s) => s.uiScale);
+  useEffect(() => {
+    window.fluencyos?.setUiScale(uiScale);
+  }, [uiScale]);
+
   const screenTitle = onboardingCompleted ? 'Dashboard' : 'Onboarding';
 
   return (
     <div className="flex h-screen flex-col bg-bg text-tx" style={{ fontFamily: 'var(--sans)' }}>
       <AppTitleBar screenTitle={screenTitle} />
       {initError && (
-        <div className="p-6 font-mono text-[12px] text-red-400">Failed to reach backend: {initError}</div>
+        <div className="grid flex-1 place-items-center p-6">
+          <div className="max-w-[420px] text-center">
+            <div className="font-sans text-[15px] font-semibold text-tx">FluencyOS couldn’t start</div>
+            <p className="mt-[8px] font-sans text-[12.5px] leading-[1.7] text-tx2">{initError}</p>
+          </div>
+        </div>
       )}
       {!initError && !backendReady && (
         <div className="grid flex-1 place-items-center font-mono text-[12px] text-tx3">starting…</div>
