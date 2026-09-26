@@ -16,6 +16,7 @@ import type {
   UserOut,
   UserSettingsUpdate,
 } from '@/types/api';
+import { friendlyMessage } from '@/lib/friendlyError';
 
 export type OnboardingStep = 1 | 2 | 3 | 4 | 5;
 
@@ -64,7 +65,6 @@ interface OnboardingState {
 
   companion: {
     species: CompanionSpecies | null;
-    startingBiome: string | null;
   };
 
   submission: {
@@ -89,7 +89,6 @@ interface OnboardingState {
   goNext: () => Promise<void>;
 }
 
-const DEFAULT_BIOME = 'meadow';
 
 export const useOnboardingStore = create<OnboardingState>((set, get) => ({
   step: 1,
@@ -129,7 +128,7 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
     quietHoursEnd: '08:00',
   },
 
-  companion: { species: null, startingBiome: DEFAULT_BIOME },
+  companion: { species: null },
 
   submission: { status: 'idle', error: null },
 
@@ -271,7 +270,6 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
         const userId = requireUserId(state.userId);
         const payload: CompanionUpdate = {
           companion_species: requireCompanion(state.companion.species),
-          starting_biome: state.companion.startingBiome ?? DEFAULT_BIOME,
         };
         await api.post(`/users/${userId}/companion`, payload);
         const user = await api.post<UserOut>(`/users/${userId}/onboarding/complete`);
@@ -285,7 +283,7 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
         submission: { status: 'idle', error: null },
       }));
     } catch (err) {
-      set({ submission: { status: 'error', error: err instanceof Error ? err.message : String(err) } });
+      set({ submission: { status: 'error', error: friendlyMessage(err, 'Saving your answers') } });
     }
   },
 }));

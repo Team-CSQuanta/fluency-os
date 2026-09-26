@@ -28,3 +28,4 @@ backend/.pytest_cache/
 claude-ui-mockup-files/
 fluencyos_spec.md
 renderer/tsconfig.tsbuildinfo
+low-poly-models/

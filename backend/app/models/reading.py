@@ -28,6 +28,12 @@ class GoalUpdate(BaseModel):
 
 PAGE_THEMES = ("auto", "light", "sepia", "dark")
 PANEL_TABS = ("toc", "search", "marks", "text", "ai", "level")
+PAGE_SCROLLS = ("vertical", "horizontal")
+# Half the width of the window up to four times it. Below the floor the print
+# is too small to read and the reader would have no way of knowing why;
+# above the ceiling a single page is larger than most screens can show at all.
+PAGE_ZOOM_MIN = 0.5
+PAGE_ZOOM_MAX = 4.0
 
 
 class ReaderPrefsOut(BaseModel):
@@ -36,6 +42,14 @@ class ReaderPrefsOut(BaseModel):
     heat_on: bool
     panel_open: bool
     panel_tab: str
+    # Whether a PDF opens showing its own typeset page beside the text.
+    # Defaulted so that a settings row written before this existed still
+    # validates rather than 500-ing the whole reader.
+    # Whether those pages run down the screen or across it.
+    page_scroll: str = "vertical"
+    # A multiple of the width that fits the window, not a percentage of a
+    # fixed size — see the migration.
+    page_zoom: float = 1.0
 
 
 class ReaderPrefsUpdate(BaseModel):
@@ -46,7 +60,13 @@ class ReaderPrefsUpdate(BaseModel):
     page_theme: Literal["auto", "light", "sepia", "dark"]
     heat_on: bool
     panel_open: bool
-    panel_tab: Literal["toc", "search", "marks", "text", "ai", "level"]
+    # The panel was grouped into four tabs; "text", "ai" and "level" were
+    # folded into them. Old values are still read back out of settings rows
+    # written before that, and the client maps them forward — only what it
+    # writes is constrained here.
+    panel_tab: Literal["toc", "search", "marks", "study"]
+    page_scroll: Literal["vertical", "horizontal"] = "vertical"
+    page_zoom: float = Field(default=1.0, ge=PAGE_ZOOM_MIN, le=PAGE_ZOOM_MAX)
 
 
 class LeveledSegmentOut(BaseModel):
@@ -141,8 +161,24 @@ class WordLookupOut(BaseModel):
     # False when the word isn't in the offline lexicon at all, so the panel
     # can say so rather than rendering a convincing-looking empty entry.
     found: bool
-    # An explanation of the word *as used in this sentence* needs generation.
-    # Always False until a model is configured (Phase 7) — the panel keeps
-    # its honest "offline stub" copy for that section only.
-    context_available: bool
-    context_note: str | None
+
+
+class LevelTextRequest(BaseModel):
+    """Simplify a passage the reader selected, rather than a stored block.
+
+    The block-based request above can only reach text the extractor found and
+    recorded. A selection on the printed page is an arbitrary run of words —
+    it may cross blocks, or cover a caption or an equation the extractor
+    dropped entirely — so it arrives as text.
+    """
+
+    text: str
+    mode: str
+    target_cefr: str | None = None
+    user_id: str | None = None
+    # Set by the reader's page labels, which write the result OVER the printed
+    # words. Degrading to a wordlist substitution is right for the side panel,
+    # which shows its result next to the original and says what it is — but a
+    # label covers the text it replaces, so one that says nothing new is worse
+    # than none. With this set, no model means no label and a plain answer.
+    require_model: bool = False

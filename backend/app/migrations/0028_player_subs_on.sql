@@ -1,0 +1,11 @@
+-- Whether subtitles are drawn over the picture at all.
+--
+-- The player had no off switch: the "subs on" chip in the corner reported the
+-- state of something that could not be changed. Listening without the text is
+-- the harder half of the exercise, and a learner who wants to try it had to
+-- unset the whole subtitle track to get there — losing which track they had
+-- chosen in the process.
+--
+-- On by default, and per learner rather than per file, like every other
+-- switch on the transport bar.
+ALTER TABLE user_settings ADD COLUMN player_subs_on INTEGER NOT NULL DEFAULT 1;

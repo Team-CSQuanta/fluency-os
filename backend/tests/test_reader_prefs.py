@@ -33,6 +33,8 @@ PREFS = {
     "heat_on": False,
     "panel_open": False,
     "panel_tab": "marks",
+    "page_scroll": "horizontal",
+    "page_zoom": 1.5,
 }
 
 
@@ -51,6 +53,10 @@ def test_reader_with_no_settings_row_gets_defaults(client, auth_headers):
         "heat_on": True,
         "panel_open": True,
         "panel_tab": "toc",
+        # Pages run down the screen, the way a document does everywhere else.
+        "page_scroll": "vertical",
+        # The whole page, as large as the window will show it.
+        "page_zoom": 1.0,
     }
 
 
@@ -76,7 +82,11 @@ def test_font_size_is_bounded_server_side(client, auth_headers):
 
 def test_unknown_theme_and_tab_are_rejected(client, auth_headers):
     user_id = _create_user(client, auth_headers)
-    for field, bad in (("page_theme", "neon"), ("panel_tab", "telepathy")):
+    for field, bad in (
+        ("page_theme", "neon"),
+        ("panel_tab", "telepathy"),
+        ("page_scroll", "spiral"),
+    ):
         res = client.put(
             "/reading/prefs",
             headers=auth_headers,
@@ -139,3 +149,31 @@ def test_reader_prefs_survive_the_daily_goal_being_set(client, auth_headers):
     assert _prefs(client, auth_headers, user_id) == PREFS
     stats = client.get("/reading/stats", headers=auth_headers, params={"user_id": user_id}).json()
     assert stats["goal_pages"] == 30
+
+
+def test_page_zoom_is_bounded_server_side(client, auth_headers):
+    """The reader has − and + buttons that stop; a stored 40x zoom would open
+    the book on one word of one page with no obvious way back."""
+    user_id = _create_user(client, auth_headers)
+    for bad in (0.1, 40):
+        res = client.put(
+            "/reading/prefs",
+            headers=auth_headers,
+            json={"user_id": user_id, **{**PREFS, "page_zoom": bad}},
+        )
+        assert res.status_code == 422
+
+
+def test_page_layout_is_optional_for_older_clients(client, auth_headers):
+    """A client that predates these fields saves the rest of the panel rather
+    than being rejected for omitting them."""
+    user_id = _create_user(client, auth_headers)
+    without = {k: v for k, v in PREFS.items() if k not in ("page_scroll", "page_zoom")}
+
+    res = client.put("/reading/prefs", headers=auth_headers, json={"user_id": user_id, **without})
+
+    assert res.status_code == 200
+    assert res.json()["page_scroll"] == "vertical"
+    assert res.json()["page_zoom"] == 1.0
+
+

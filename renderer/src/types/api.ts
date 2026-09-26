@@ -22,6 +22,15 @@ export interface UserOut {
   cefr_level: string | null;
   created_at: string;
   onboarding_completed_at: string | null;
+  /** Whether a profile picture is set; the file is at /users/{id}/avatar. */
+  has_avatar: boolean;
+}
+
+export interface ProfileUpdate {
+  display_name?: string;
+  native_language?: string;
+  target_language?: string;
+  cefr_level?: string;
 }
 
 export interface PlacementUpdate {
@@ -54,7 +63,6 @@ export interface UserSettingsUpdate {
 
 export interface CompanionUpdate {
   companion_species: CompanionSpecies;
-  starting_biome: string;
 }
 
 export interface PlacementQuestion {
@@ -127,6 +135,9 @@ export interface BookOut {
   /** Null until the book has been opened once — that is what "Not started" means. */
   last_read_at: string | null;
   percent: number;
+  /** Whether the book has original pages to render. Only PDFs do; every
+   * other format is reflowable and never had a page to begin with. */
+  has_page_images: boolean;
 }
 
 export interface GoalDayOut {
@@ -135,6 +146,21 @@ export interface GoalDayOut {
   pages: number;
   /** 0-100, already clamped against the goal — drives the week bar heights. */
   percent: number;
+}
+
+export interface DayActivityOut {
+  date: string;
+  pages: number;
+  minutes: number;
+  reviews: number;
+}
+
+export interface ActivityOut {
+  days: DayActivityOut[];
+  total_pages: number;
+  total_reviews: number;
+  /** Days with anything on them at all. */
+  active_days: number;
 }
 
 export interface ReadingStatsOut {
@@ -149,7 +175,7 @@ export interface ReadingStatsOut {
 export type LevelMode = 'inline' | 'lexical' | 'contextual' | 'semantic';
 
 export type PageTheme = 'auto' | 'light' | 'sepia' | 'dark';
-export type PanelTab = 'toc' | 'search' | 'marks' | 'text' | 'ai' | 'level';
+export type PanelTab = 'toc' | 'search' | 'marks' | 'study';
 
 export interface ReaderPrefsOut {
   font_size: number;
@@ -157,7 +183,14 @@ export interface ReaderPrefsOut {
   heat_on: boolean;
   panel_open: boolean;
   panel_tab: PanelTab;
+  /** Show a PDF's own typeset page beside the extracted text. */
+  /** Whether those pages run down the screen or across it. */
+  page_scroll: PageScroll;
+  /** A multiple of the width that fits the window, so 1 is a whole page. */
+  page_zoom: number;
 }
+
+export type PageScroll = 'vertical' | 'horizontal';
 
 export interface LeveledSegmentOut {
   text: string;
@@ -348,6 +381,833 @@ export interface WordLookupOut {
   /** False when the word isn't in the offline lexicon at all. */
   found: boolean;
   /** Explaining the word in its sentence needs a model — Phase 7. */
-  context_available: boolean;
-  context_note: string | null;
+}
+
+export type VocabContextKind = 'clip' | 'page' | 'turn';
+
+export interface VocabWordCreate {
+  user_id: string;
+  word: string;
+  sentence?: string | null;
+  book_id?: string | null;
+  block_index?: number | null;
+}
+
+export interface VocabNoteOut {
+  id: string;
+  text: string;
+  created_at: string;
+}
+
+export interface VocabContextOut {
+  id: string;
+  kind: VocabContextKind;
+  snippet: string;
+  source_label: string;
+  book_id: string | null;
+  block_index: number | null;
+  created_at: string;
+  /** Set when kind === 'clip': where in which video this was captured, and
+   * the state of the clip cut for it. */
+  media_item_id: string | null;
+  start_ms: number | null;
+  end_ms: number | null;
+  clip_id: string | null;
+  clip_status: ClipStatus | null;
+}
+
+export interface VocabWordOut {
+  id: string;
+  user_id: string;
+  word: string;
+  lemma: string;
+  pos: string | null;
+  cefr: string | null;
+  definition: string | null;
+  example: string | null;
+  simpler: string | null;
+  ipa: string | null;
+  audio_url: string | null;
+  synonyms: string[];
+  tags: string[];
+  context_count: number;
+  ai_mnemonic: string | null;
+  /** AI enrichment, stored apart from the dictionary's own fields so neither
+   * overwrites the other. */
+  ai_definition: string | null;
+  ai_examples: string[];
+  ai_usage_note: string | null;
+  /** The dictionary sense the enrichment was generated against. */
+  ai_sense_definition: string | null;
+  created_at: string;
+  /** Scheduling state, joined from the review card. */
+  card_state: string | null;
+  due: string | null;
+  stability_days: number | null;
+  difficulty: number | null;
+  reps: number;
+  lapses: number;
+  suspended: boolean;
+  mastery_level: number;
+  mastery_label: string;
+}
+
+export type VocabStatusFilter =
+  | 'all'
+  | 'due'
+  | 'new'
+  | 'learning'
+  | 'mastered'
+  | 'struggling'
+  | 'suspended';
+
+export type VocabSort = 'recent' | 'oldest' | 'alphabetical' | 'mastery' | 'due' | 'difficulty';
+
+export interface VocabOverviewOut {
+  total: number;
+  added_last_7_days: number;
+  due_now: number;
+  new_count: number;
+  learning: number;
+  struggling: number;
+  suspended: number;
+  by_cefr: Record<string, number>;
+  tags: Array<{ tag: string; count: number }>;
+}
+
+export interface VocabWordDetailOut extends VocabWordOut {
+  contexts: VocabContextOut[];
+  notes: VocabNoteOut[];
+  conversation_usage: Record<string, number>;
+  /** Flashcard ratings, kept apart from conversation outcomes — they are
+   * different kinds of evidence and merging them was a real bug. */
+  flashcard_reviews: Record<string, number>;
+}
+
+export interface VocabWordSaveOut {
+  word: VocabWordOut;
+  already_saved: boolean;
+}
+
+export interface DictionarySenseOut {
+  pos: string;
+  definition: string;
+  example: string | null;
+}
+
+export interface DictionarySearchOut {
+  word: string;
+  found: boolean;
+  ipa: string | null;
+  audio_url: string | null;
+  senses: DictionarySenseOut[];
+  synonyms: string[];
+  /** From our own offline lexicon, when it also happens to know the word. */
+  cefr: string | null;
+  simpler: string | null;
+}
+
+export interface AiExplainOut {
+  word: string;
+  pos: string;
+  definition: string;
+  example: string;
+  synonyms: string[];
+}
+
+export interface AiExamplesOut {
+  examples: string[];
+}
+
+export interface AiMnemonicOut {
+  mnemonic: string;
+}
+
+export interface AiPracticeOut {
+  question: string;
+}
+
+export type ScenarioKey = 'free' | 'coffee' | 'job' | 'debate';
+export type ConversationChannel = 'voice' | 'text';
+export type ConversationSpeaker = 'user' | 'ai';
+export type UsageOutcome = 'spontaneous' | 'prompted' | 'incorrect' | 'avoided';
+
+export interface ConversationSessionCreate {
+  user_id: string;
+  scenario: ScenarioKey;
+  channel: ConversationChannel;
+  /** "Practise this again" — reuse a previous session's target words. */
+  seed_word_ids?: string[];
+}
+
+export interface ConversationTurnOut {
+  id: string;
+  turn_index: number;
+  speaker: ConversationSpeaker;
+  text: string;
+  audio_url: string | null;
+  /** Sentence-sized audio pieces, fetched one at a time so the first can play
+   * while the rest are still being synthesized. */
+  audio_chunk_count: number;
+  /** The exact text of each audio piece, in order — what the word-by-word
+   * highlighting is timed against. Empty for turns never spoken aloud. */
+  audio_chunks: string[];
+  stt_confidence: number | null;
+  created_at: string;
+}
+
+export interface TargetWordOut {
+  id: string;
+  word: string;
+  used_outcome: UsageOutcome | null;
+}
+
+export interface ConversationSessionOut {
+  id: string;
+  user_id: string;
+  scenario: ScenarioKey;
+  channel: ConversationChannel;
+  target_words: TargetWordOut[];
+  started_at: string;
+  ended_at: string | null;
+  has_report: boolean;
+  /** Pinned when the session started — not necessarily what Settings says now. */
+  engine_provider: LlmProvider;
+  engine_label: string;
+}
+
+export interface ConversationSessionDetailOut extends ConversationSessionOut {
+  turns: ConversationTurnOut[];
+}
+
+export interface TurnSubmitOut {
+  user_turn: ConversationTurnOut;
+  ai_turn: ConversationTurnOut;
+}
+
+export interface ReportErrorOut {
+  bad: string;
+  good: string;
+  why: string;
+}
+
+export interface ReportRoutingRowOut {
+  word: string;
+  outcome: UsageOutcome;
+  evidence_turn: number | null;
+}
+
+export interface ConversationReportOut {
+  session_id: string;
+  /** 1 = written before the current analysis existed; fields below may be null. */
+  report_version: number;
+  summary: string;
+  turn_count: number;
+  routing: ReportRoutingRowOut[];
+  errors: ReportErrorOut[];
+
+  /** Dials, 0-100. Null means not measured, which is not the same as zero. */
+  contextual_accuracy_pct: number | null;
+  grammatical_precision: number | null;
+  lexical_range: number | null;
+  pronunciation_score: number | null;
+
+  /** Fluency proxies. */
+  words_per_minute: number | null;
+  filler_rate_per_100w: number | null;
+  avg_response_delay_seconds: number | null;
+  longest_run_words: number | null;
+  type_token_ratio: number | null;
+  above_level_words: string[];
+  self_corrections: number | null;
+}
+
+export interface EngineStatusOut {
+  llm: string;
+  stt: string;
+  tts: string;
+}
+
+export interface DownloadStatusOut {
+  status: 'idle' | 'downloading' | 'ready' | 'error';
+  downloaded_bytes: number;
+  total_bytes: number;
+  error: string | null;
+}
+
+export interface LlmOptionOut {
+  key: string;
+  label: string;
+  note: string;
+  approx_size_mb: number;
+  downloaded: boolean;
+  selected: boolean;
+  download: DownloadStatusOut;
+}
+
+export interface SingleModelOut {
+  label: string;
+  downloaded: boolean;
+  download: DownloadStatusOut;
+}
+
+export type TtsEngine = 'kokoro' | 'pocket';
+
+export interface TtsOptionOut extends SingleModelOut {
+  key: TtsEngine;
+  note: string;
+  approx_size_mb: number;
+  selected: boolean;
+  /** Whether this engine's runtime is present. Pocket TTS is an optional
+   * extra, so it can be listed and downloadable without being runnable. */
+  installed: boolean;
+}
+
+export interface ModelsCatalogOut {
+  llm: LlmOptionOut[];
+  stt: SingleModelOut;
+  /** Mirrors whichever entry of `tts_options` is selected. */
+  tts: SingleModelOut;
+  tts_options: TtsOptionOut[];
+  models_dir: string;
+  disk_usage_bytes: number;
+}
+
+export interface ReadinessOut {
+  ready: boolean;
+  llm: boolean;
+  stt: boolean;
+  tts: boolean;
+  llm_model_label: string;
+}
+
+export type LlmProvider = 'local' | 'openrouter' | 'gemini';
+
+export interface LlmProviderOut {
+  provider: LlmProvider;
+  openrouter_model: string;
+  has_openrouter_key: boolean;
+  openrouter_key_preview: string | null;
+  gemini_model: string;
+  has_gemini_key: boolean;
+  gemini_key_preview: string | null;
+}
+
+export interface VocabWordManualCreate {
+  user_id: string;
+  word: string;
+  pos: string;
+  definition: string;
+  example?: string | null;
+  synonyms?: string[];
+  ipa?: string | null;
+  audio_url?: string | null;
+  note?: string | null;
+}
+
+// --- Review / spaced repetition (spec §5.5, §6.3) ---------------------------
+
+export type ReviewCardType = 'recognition' | 'production' | 'cloze' | 'listening';
+export type ReviewRating = 1 | 2 | 3 | 4;
+
+export interface ReviewCardOut {
+  vocab_word_id: string;
+  card_type: ReviewCardType;
+  word: string;
+  ipa: string | null;
+  pos: string | null;
+  cefr: string | null;
+  definition: string | null;
+  simpler: string | null;
+  example: string | null;
+  mnemonic: string | null;
+  synonyms: string[];
+  audio_url: string | null;
+  context_snippet: string | null;
+  context_source: string | null;
+  /** The moment this word was met, when it was saved from a film. */
+  clip_id: string | null;
+  /** 'ready' | 'virtual' play; 'queued' | 'extracting' are still being cut;
+   * 'failed' could not be. */
+  clip_status: string | null;
+  /** Null when the film has since been removed from the library. */
+  media_item_id: string | null;
+  cloze_before: string | null;
+  cloze_after: string | null;
+  state: string;
+  stability_days: number;
+  difficulty: number;
+  reps: number;
+  lapses: number;
+  spontaneous_sessions: number;
+  mastery_level: number;
+  mastery_label: string;
+  mastery_reason: string;
+  is_leech: boolean;
+  /** What each button would schedule, already humanised ("10 m", "3.2 mo"). */
+  intervals: Record<string, string>;
+}
+
+export interface RateCardOut {
+  vocab_word_id: string;
+  state: string;
+  due: string | null;
+  stability_days: number;
+  difficulty: number;
+  reps: number;
+  lapses: number;
+  suspended: boolean;
+  is_leech: boolean;
+  mastery_level: number;
+  mastery_label: string;
+  mastery_reason: string;
+  interval_label: string;
+}
+
+export interface ReviewStatsOut {
+  due_now: number;
+  new_available: number;
+  total_cards: number;
+  suspended: number;
+  reviewed_today: number;
+  target_retention: number;
+  forecast: Array<{ date: string; count: number }>;
+  /** Cards at each mastery level 0-5. */
+  mastery_counts: number[];
+}
+
+export interface AiEnrichOut {
+  definition: string;
+  examples: string[];
+  mnemonic: string;
+  usage_note: string;
+  synonyms: string[];
+}
+
+// --- Learn by watching (spec §4.1, §4.2) --------------------------------
+
+export type MediaKind = 'local' | 'link';
+export type MediaIngestStatus = 'queued' | 'probing' | 'ready' | 'failed';
+export type TrackKind = 'subtitle' | 'audio';
+export type TrackOrigin = 'embedded' | 'sidecar' | 'generated';
+export type TrackRole = 'target' | 'native';
+export type TrackStatus = 'queued' | 'extracting' | 'transcribing' | 'ready' | 'failed';
+export type ClipStatus = 'queued' | 'extracting' | 'ready' | 'failed' | 'virtual';
+export type LibraryScope = 'all' | 'local' | 'link' | 'unfinished' | 'unwatched' | 'no-subs';
+
+export interface MediaItemOut {
+  id: string;
+  user_id: string;
+  title: string;
+  kind: MediaKind;
+  source_path: string | null;
+  url: string | null;
+  container: string | null;
+  duration_ms: number;
+  width: number | null;
+  height: number | null;
+  video_codec: string | null;
+  audio_codec: string | null;
+  file_bytes: number;
+  has_thumbnail: boolean;
+  ingest_status: MediaIngestStatus;
+  ingest_error: string | null;
+  source_missing: boolean;
+  /** The MP4 index sits after the media data, so seeking is slow in any
+   * player. Fixable losslessly — see optimizeForSeeking. */
+  index_at_end: boolean;
+  added_at: string;
+  /** null when never opened — distinct from 0, which means restarted. */
+  position_ms: number | null;
+  percent_complete: number | null;
+  total_watch_ms: number | null;
+  last_watched_at: string | null;
+  saves: number;
+  subtitle_tracks: number;
+}
+
+export interface MediaTrackOut {
+  id: string;
+  kind: TrackKind;
+  origin: TrackOrigin;
+  language: string | null;
+  label: string;
+  stream_index: number | null;
+  role: TrackRole;
+  cue_count: number;
+  status: TrackStatus;
+  progress: number;
+  error: string | null;
+}
+
+export interface CueOut {
+  id: string;
+  order_index: number;
+  start_ms: number;
+  end_ms: number;
+  text: string;
+}
+
+export interface MediaItemPrefsOut {
+  target_track_id: string | null;
+  native_track_id: string | null;
+  audio_track_index: number | null;
+  subtitle_delay_ms: number;
+  playback_rate: number;
+}
+
+export interface MediaDetailOut {
+  item: MediaItemOut;
+  tracks: MediaTrackOut[];
+  prefs: MediaItemPrefsOut;
+}
+
+export interface LibraryOut {
+  items: MediaItemOut[];
+  recent: MediaItemOut[];
+  counts: Record<string, number>;
+  ffmpeg_available: boolean;
+  stt_ready: boolean;
+  library_bytes: number;
+}
+
+export interface ProgressOut {
+  position_ms: number;
+  percent_complete: number;
+  total_watch_ms: number;
+  updated_at: string;
+}
+
+export interface ClipOut {
+  id: string;
+  media_item_id: string;
+  media_title: string;
+  vocab_word_id: string | null;
+  cue_text: string;
+  start_ms: number;
+  end_ms: number;
+  status: ClipStatus;
+  error: string | null;
+  clip_bytes: number;
+  has_thumbnail: boolean;
+  created_at: string;
+}
+
+export interface SaveFromVideoOut {
+  vocab_word_id: string;
+  word: string;
+  already_saved: boolean;
+  context_added: boolean;
+  clip: ClipOut | null;
+}
+
+export interface PlayerPrefsOut {
+  /** Whether subtitles are drawn over the picture at all. */
+  subs_on: boolean;
+  dual_subs: boolean;
+  blur_subs: boolean;
+  auto_pause: boolean;
+  loop_cue: boolean;
+  sub_size: number;
+  sub_opacity: number;
+  sub_offset: number;
+  clip_pad_before_ms: number;
+  clip_pad_after_ms: number;
+  clip_max_ms: number;
+  clip_height: number;
+  /** false keeps only the timecodes and rebuilds the clip on demand. */
+  clip_store_files: boolean;
+}
+
+export interface MediaStorageOut {
+  clips: number;
+  stored_clips: number;
+  clip_bytes: number;
+  total_bytes: number;
+  ffmpeg_available: boolean;
+  ffmpeg_version: string | null;
+  stt_ready: boolean;
+}
+
+// --- Scene Description Challenge (spec §6.4) ----------------------------
+
+export type ChallengeKind = 'describe' | 'predict' | 'roleplay' | 'interrogate' | 'reword';
+export type ChallengeSource = 'library' | 'vatex';
+export type ChallengeStatus = 'open' | 'scored' | 'abandoned';
+
+export interface SceneWordOut {
+  word: string;
+  cefr: string;
+  /** Already in the learner's vocabulary. Unknown words are an offer: the
+   * interface fetches a meaning on demand and can save it. */
+  known: boolean;
+}
+
+/** A word from the reference descriptions, with how many of the ten describers
+ * used it. The count is shown: "six people said this" tells the learner how
+ * central it is in a way a bare word does not. */
+export interface AgreedWordOut {
+  word: string;
+  describers: number;
+}
+
+export interface HintsOut {
+  /** Library rounds. */
+  target_words: string[];
+  scene_words: SceneWordOut[];
+  /** VATEX rounds: graded reveals from the ten reference descriptions. Every
+   * tier costs points, and `next_penalty` prices the NEXT one so the button
+   * can say what it will cost before it is pressed. */
+  level: number;
+  max_level: number;
+  penalty: number;
+  next_penalty: number | null;
+  consensus_words: AgreedWordOut[];
+  detail_words: AgreedWordOut[];
+  example_caption: string | null;
+  describer_count: number;
+}
+
+export interface ChallengeFeedbackOut {
+  note: string;
+  corrections: Array<{ said: string; better: string }>;
+  target_words_used: string[];
+  target_words_missed: string[];
+}
+
+export interface ChallengeRoundOut {
+  id: string;
+  kind: ChallengeKind;
+  source: ChallengeSource;
+  /** VATEX rounds only. Built server-side so the host and the parameters that
+   * keep playback inside the scene live in one place. */
+  video_id: string | null;
+  embed_url: string | null;
+  start_s: number | null;
+  end_s: number | null;
+  prompt: string;
+  media_item_id: string | null;
+  clip_id: string | null;
+  media_title: string;
+  start_ms: number;
+  end_ms: number;
+  status: ChallengeStatus;
+  target_word_count: number;
+  started_at: string;
+  transcript: string | null;
+  speech_seconds: number | null;
+  target_coverage: number | null;
+  duration_score: number | null;
+  grammar_score: number | null;
+  relevance_score: number | null;
+  detail_score: number | null;
+  /** The deterministic counterpart to detail_score: the share of the
+   * describers' collective observations the learner reached, weighted by how
+   * many of them made each one. Recorded alongside the judged figure so the
+   * two can be compared on real rounds. */
+  content_recall: number | null;
+  /** What the description scored before hints were deducted, and what they
+   * cost. Both are sent so the learner sees the two separately. */
+  raw_overall: number | null;
+  hint_level: number;
+  hint_penalty: number;
+  overall: number | null;
+  feedback: ChallengeFeedbackOut | null;
+  /** Both withheld until the attempt is scored — they are the answer. */
+  cue_text: string | null;
+  target_words: string[];
+  /** The ten human descriptions. Empty until the attempt is scored. */
+  reference_captions: string[];
+}
+
+/** One of the learner's own words that the enriched description actually used.
+ * Verified against the text server-side — a model asked which words it used
+ * will name ones it did not. */
+export interface EnrichedWordOut {
+  word: string;
+  vocab_word_id: string;
+  why: string;
+}
+
+export interface EnrichmentOut {
+  description: string;
+  used_words: EnrichedWordOut[];
+  /** Came back from the round rather than a fresh model call. */
+  cached: boolean;
+}
+
+export interface ChallengeStatsOut {
+  personal_bests: Record<string, number>;
+  rounds_played: number;
+  stt_ready: boolean;
+  scenes_available: number;
+  /** Playing a VATEX scene contacts youtube-nocookie.com. Off until asked for. */
+  embeds_enabled: boolean;
+  scene_pool: ScenePoolOut;
+}
+
+/** How much of the corpus is reachable right now. `available` is the honest
+ * number: total, minus videos withdrawn as unplayable, minus the ones resting
+ * inside this learner's own cooldown. */
+export interface ScenePoolOut {
+  total: number;
+  unavailable: number;
+  resting: number;
+  available: number;
+  cooldown_days: number;
+}
+
+// ---------------------------------------------------------------------------
+// Forest (spec §8)
+// ---------------------------------------------------------------------------
+
+/** One vocabulary word, drawn as a tree.
+ *
+ * Every field is derived from the scheduler — there is nothing here the client
+ * can send back to make a tree grow. See backend services/forest.py. */
+export interface TreeOut {
+  vocab_word_id: string;
+  word: string;
+  /** 0-5: Seed, Sprout, Seedling, Sapling, Young tree, Ancient tree. */
+  stage: number;
+  /** FSRS days-until-90%-recall, which is what the stage is a band of. */
+  stability: number;
+  health: number;
+  dormant: boolean;
+  lapses: number;
+  spontaneous_uses: number;
+  due: string | null;
+}
+
+export interface ForestOut {
+  trees: TreeOut[];
+  /** One count per growth stage, in stage order. */
+  stages: number[];
+  stage_names: string[];
+  dormant: number;
+}
+
+export interface FocusOut {
+  id: string;
+  minutes: number;
+  started_at: string;
+  completed_at: string | null;
+}
+
+// --- Settings (the page's own payload) ----------------------------------
+
+export type MicSensitivity = 'sensitive' | 'balanced' | 'robust';
+export type TurnPace = 'quick' | 'natural' | 'patient';
+
+export interface AppSettingsOut {
+  target_retention: number;
+  new_cards_per_day: number;
+  daily_page_goal: number;
+  notifications_enabled: boolean;
+  quiet_hours_start: string;
+  quiet_hours_end: string;
+  conversation_mic_sensitivity: MicSensitivity;
+  conversation_turn_pace: TurnPace;
+  scene_embeds_enabled: boolean;
+  /** Below here: owned by other screens, shown read-only so this page can
+   * report the truth without becoming a second place to change it. */
+  llm_mode: string;
+  llm_model_id: string | null;
+  api_provider: string | null;
+  openrouter_model: string | null;
+  gemini_model: string | null;
+  tts_engine: string;
+  stt_model_id: string | null;
+  /** Whether a key exists. Never the key itself. */
+  openrouter_key_set: boolean;
+  gemini_key_set: boolean;
+}
+
+export type AppSettingsPatch = Partial<
+  Pick<
+    AppSettingsOut,
+    | 'target_retention'
+    | 'new_cards_per_day'
+    | 'daily_page_goal'
+    | 'notifications_enabled'
+    | 'quiet_hours_start'
+    | 'quiet_hours_end'
+    | 'conversation_mic_sensitivity'
+    | 'conversation_turn_pace'
+    | 'scene_embeds_enabled'
+  >
+>;
+
+export interface DictionaryCacheOut {
+  entries: number;
+  last_cached_at: string | null;
+}
+
+// --- The selectable layer over a printed page ---------------------------
+
+export interface PageWordOut {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  t: string;
+  /** Which line of the page. Used to tell a line break from a space. */
+  ln: number;
+}
+
+export interface PageWordHeatOut {
+  /** Position in the page layer's own word list — the boxes are not resent. */
+  i: number;
+  /** The hard word inside the box, which is not always the whole box. */
+  word: string;
+  cefr: string;
+  simpler: string | null;
+}
+
+export interface PageHeatOut {
+  target_cefr: string;
+  /** False when the book's own heat overlay flag is off. */
+  enabled: boolean;
+  words: PageWordHeatOut[];
+  total_above_level: number;
+}
+
+export interface PageTextLayerOut {
+  /** The rendered image's own pixels — scale the layer to the drawn width. */
+  width: number;
+  height: number;
+  words: PageWordOut[];
+}
+
+export interface HighlightRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export type HighlightStyle = 'highlight' | 'underline';
+
+export interface PageHighlightOut {
+  id: string;
+  book_id: string;
+  user_id: string;
+  page: number;
+  rects: HighlightRect[];
+  colour: string;
+  style: HighlightStyle;
+  quoted_text: string;
+  note: string | null;
+  created_at: string;
+}
+
+export interface PageLabelOut {
+  id: string;
+  book_id: string;
+  page: number;
+  rects: HighlightRect[];
+  original_text: string;
+  simple_text: string;
+  mode: string;
+  created_at: string;
 }

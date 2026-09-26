@@ -1,0 +1,11 @@
+-- Whether a file's MP4 index sits after its media data (see probe.index_at_end).
+--
+-- Recorded rather than checked on demand because it decides what the player
+-- can offer: a file in this state seeks slowly in every player, and the fix
+-- is a lossless remux the learner has to agree to — it rewrites their file.
+--
+-- NULL would be the honest value for "not checked yet", but the column is NOT
+-- NULL with a 0 default so existing rows read as "fine" until re-scanned;
+-- offering to rewrite a file on the strength of a guess would be worse than
+-- staying quiet about it.
+ALTER TABLE media_items ADD COLUMN index_at_end INTEGER NOT NULL DEFAULT 0;

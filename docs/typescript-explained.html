@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TypeScript for This Project</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 16mm 16mm; }
+
+  :root {
+    --acc: #6f51a6;
+    --accSoft: #f1eef7;
+    --accLine: #cfc2e6;
+    --ink: #1a1d1b;
+    --ink2: #4a5350;
+    --ink3: #7b8481;
+    --line: #dfe3e1;
+    --panel: #f7f8f7;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: 'DejaVu Sans', 'Liberation Sans', system-ui, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.65;
+    color: var(--ink);
+  }
+
+  code, .mono { font-family: 'DejaVu Sans Mono', 'Liberation Mono', monospace; }
+
+  h1 {
+    font-size: 25pt; line-height: 1.15; letter-spacing: -0.02em;
+    margin: 0 0 6px; font-weight: 700;
+  }
+  h2 {
+    font-size: 15pt; margin: 26px 0 10px; padding-top: 10px;
+    border-top: 2px solid var(--acc); font-weight: 700; letter-spacing: -0.01em;
+    break-after: avoid; page-break-after: avoid;
+  }
+  h3 {
+    font-size: 11.5pt; margin: 16px 0 6px; font-weight: 700; color: var(--ink);
+    break-after: avoid; page-break-after: avoid;
+  }
+  p { margin: 0 0 9px; }
+  ul, ol { margin: 0 0 9px; padding-left: 20px; }
+  li { margin-bottom: 4px; }
+
+  code {
+    font-size: 9pt; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 3px; padding: 0.5px 4px; color: #4b2b6a;
+  }
+
+  .cover {
+    border-bottom: 3px solid var(--acc);
+    padding-bottom: 16px; margin-bottom: 4px;
+  }
+  .sub { font-size: 12pt; color: var(--ink2); margin: 0 0 10px; }
+  .meta { font-size: 8.5pt; color: var(--ink3); font-family: 'DejaVu Sans Mono', monospace; }
+
+  .lead {
+    background: var(--accSoft); border-left: 3px solid var(--acc);
+    padding: 11px 14px; margin: 14px 0; font-size: 10.5pt;
+  }
+  .note {
+    background: #fdfaf3; border-left: 3px solid #c8a44a;
+    padding: 10px 13px; margin: 12px 0; font-size: 9.5pt; color: #4a4335;
+  }
+  .gotcha {
+    background: #fdf2f0; border-left: 3px solid #c0563f;
+    padding: 10px 13px; margin: 12px 0; font-size: 9.5pt; color: #5a2c20;
+  }
+  .honest {
+    background: #f4faf6; border-left: 3px solid #3E7C5A;
+    padding: 10px 13px; margin: 12px 0; font-size: 9.5pt; color: #22392c;
+  }
+
+  table { width: 100%; border-collapse: collapse; margin: 10px 0 14px; font-size: 9.5pt; }
+  th {
+    text-align: left; background: var(--panel); border: 1px solid var(--line);
+    padding: 6px 9px; font-weight: 700; font-size: 8.5pt;
+    text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink2);
+  }
+  td { border: 1px solid var(--line); padding: 6px 9px; vertical-align: top; }
+  td.mono, th.mono { font-family: 'DejaVu Sans Mono', monospace; font-size: 8.5pt; }
+
+  pre {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 5px;
+    padding: 11px 13px; font-size: 8.5pt; line-height: 1.5; overflow: hidden;
+    font-family: 'DejaVu Sans Mono', monospace; margin: 10px 0 14px;
+    white-space: pre-wrap; color: #2f3733;
+  }
+  pre .c { color: #7b8481; }
+
+  .vs { display: flex; gap: 10px; margin: 10px 0 14px; align-items: stretch; }
+  .vs > div { flex: 1; border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; break-inside: avoid; }
+  .vs .old { background: #fbf7f3; }
+  .vs .new { background: #f4faf6; }
+  .vs .tag { font-size: 8pt; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; margin-bottom: 6px; }
+  .vs .old .tag { color: #9a5a2a; }
+  .vs .new .tag { color: #3E7C5A; }
+
+  .cards { display: flex; gap: 10px; margin: 12px 0 16px; }
+  .card {
+    flex: 1; border: 1px solid var(--line); border-radius: 6px;
+    padding: 11px 12px; background: #fff; break-inside: avoid;
+  }
+  .card .k {
+    font-size: 8pt; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--acc); font-weight: 700; margin-bottom: 5px;
+    font-family: 'DejaVu Sans Mono', monospace;
+  }
+  .card .v { font-size: 9.5pt; color: var(--ink2); line-height: 1.55; }
+
+  .flow { margin: 12px 0 16px; }
+  .flow .step { display: flex; gap: 11px; margin-bottom: 9px; break-inside: avoid; }
+  .flow .n {
+    flex: none; width: 21px; height: 21px; border-radius: 50%;
+    background: var(--acc); color: #fff; font-size: 8.5pt; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'DejaVu Sans Mono', monospace;
+  }
+  .flow .body { flex: 1; font-size: 10pt; }
+  .flow .body b { font-weight: 700; }
+
+  section { break-inside: auto; }
+  h2, h3 { break-inside: avoid; }
+  table, pre, .lead, .note, .gotcha, .honest, .vs, .cards, .flow { break-inside: avoid; }
+
+  .footer-note {
+    margin-top: 22px; padding-top: 10px; border-top: 1px solid var(--line);
+    font-size: 8.5pt; color: var(--ink3);
+  }
+
+  .toc { margin: 16px 0 10px; }
+  .toc ol { padding-left: 22px; }
+  .toc li { margin-bottom: 6px; font-size: 10.5pt; }
+  .toc .pg { color: var(--ink3); font-family: 'DejaVu Sans Mono', monospace; font-size: 9pt; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="meta">FLUENCYOS · INTERNAL WALKTHROUGH · TYPESCRIPT PRIMER</div>
+  <h1>TypeScript for This Project</h1>
+  <div class="sub">An introduction to TypeScript from first principles, followed by every syntax pattern this
+  codebase actually uses — with real examples pulled directly from the source, not generic textbook samples.</div>
+</div>
+
+<div class="lead">
+  <b>You already know JavaScript.</b> TypeScript adds exactly one new idea on top of it — types — and this
+  document only covers the subset of that idea this project actually reaches for. A search across
+  <code class="mono">renderer/src</code> found 82 <code class="mono">interface</code> declarations, 24
+  <code class="mono">type</code> aliases, zero <code class="mono">enum</code>s, and exactly one generic
+  function — that shape (lots of object/union types, almost no advanced generics) is typical of a UI
+  codebase, and it's exactly what this guide focuses on.
+</div>
+
+<div class="toc">
+  <h3>Contents</h3>
+  <ol>
+    <li>What TypeScript is, and isn't <span class="pg">— compiles away, checks only</span></li>
+    <li>Basic type annotations <span class="pg">— variables, function params/returns</span></li>
+    <li><code>interface</code> vs <code>type</code> <span class="pg">— which this project uses, and when</span></li>
+    <li>Union types — the workhorse of this codebase <span class="pg">— string literal unions instead of enums</span></li>
+    <li>Optional properties vs. nullable fields <span class="pg">— <code>?:</code> vs <code>| null</code></span></li>
+    <li>Arrays, tuples, and <code>Record&lt;K, V&gt;</code> <span class="pg">— typed lookup tables</span></li>
+    <li>The one generic function in this project <span class="pg">— <code>apiClient.ts</code>'s <code>request&lt;T&gt;</code></span></li>
+    <li><code>as const</code> — locking down literal types <span class="pg">— why the wizard's step lookup needs it</span></li>
+    <li>Typing React components and props <span class="pg">— a real component, annotated</span></li>
+    <li>Typing a Zustand store, start to finish <span class="pg">— <code>shellStore.ts</code>, fully walked through</span></li>
+    <li><code>import type</code> and strictness settings <span class="pg">— what <code>tsconfig.base.json</code> turns on</span></li>
+    <li>Glossary <span class="pg">— quick reference</span></li>
+  </ol>
+</div>
+
+<h2>1. What TypeScript is, and isn't</h2>
+
+<p>TypeScript is JavaScript with one thing added: before your code runs, a separate checking step reads every
+file and verifies that values are used consistently with the "shape" you declared for them. If a function says
+it wants a <code class="mono">number</code> and you hand it a string, the checker flags it immediately — in
+your editor, red squiggly line and all — instead of the mistake surfacing later as a crash or, worse, a silent
+wrong answer while the app is running.</p>
+
+<p>Two things TypeScript is <b>not</b>:</p>
+<div class="cards">
+  <div class="card">
+    <div class="k">Not a new runtime</div>
+    <div class="v">Every <code class="mono">.ts</code>/<code class="mono">.tsx</code> file is compiled down to
+    plain JavaScript before it ever runs. The type annotations are <b>deleted entirely</b> in that step — a
+    browser or Node.js never sees the word <code class="mono">string</code> anywhere. Nothing about
+    <i>runtime behavior</i> changes; only what gets checked <i>before</i> runtime does.</div>
+  </div>
+  <div class="card">
+    <div class="k">Not a validation library</div>
+    <div class="v">TypeScript can't check data that arrives while the app is running — like a JSON response
+    from the Python backend. If the backend sent the wrong shape, TypeScript would not catch it; it only
+    checks that <i>your own code</i> is internally consistent with the shapes you declared.</div>
+  </div>
+</div>
+
+<h2>2. Basic type annotations</h2>
+<p>The annotation always comes after a colon, on variables, function parameters, and function return values:</p>
+
+<pre>let count: number = 0;
+let label: string = 'reticent';
+let done: boolean = false;
+
+function fmtClock(totalSeconds: number): string {   <span class="c">// param type, then return type</span>
+  const m = Math.floor(totalSeconds / 60);
+  return `${m}`;
+}</pre>
+
+<p>Most of the time in this codebase, you won't see a variable's type written out like <code class="mono">let count: number</code>
+at all — TypeScript <b>infers</b> it automatically from the value on the right (<code class="mono">let count = 0</code>
+is already known to be a <code class="mono">number</code>). Explicit annotations show up mainly on <i>function
+parameters</i> (which have no initial value to infer from) and on empty containers.</p>
+
+<h2>3. <code>interface</code> vs <code>type</code></h2>
+<p>Both describe the shape of an object. This project's convention, visible across every file, is:
+<b><code class="mono">interface</code> for the shape of an object</b> (especially anything mirroring a backend
+API payload), and <b><code class="mono">type</code> for everything else</b> — unions, function signatures, and
+simple aliases.</p>
+
+<pre>// renderer/src/types/api.ts — interface: the shape of a backend response
+export interface UserOut {
+  id: string;
+  display_name: string;
+  native_language: string;
+  target_language: string;
+  cefr_level: string | null;         <span class="c">// see Section 5 — nullable, not optional</span>
+  created_at: string;
+  onboarding_completed_at: string | null;
+}
+
+// same file — type: a fixed set of allowed string values, not an object shape
+export type LlmMode = 'local' | 'api';</pre>
+
+<p>Field names in these interfaces (<code class="mono">display_name</code>, not <code class="mono">displayName</code>)
+deliberately match the Python backend's JSON exactly — this interface exists specifically to describe
+"whatever shape a fetch response from <code class="mono">/users/:id</code> has," so it uses the backend's own
+naming, not this project's usual camelCase JS convention.</p>
+
+<h2>4. Union types — the workhorse of this codebase</h2>
+<p>A union type, written with <code class="mono">|</code>, means "exactly one of these specific values, and
+nothing else." This is by far the most common custom type in the project — <code class="mono">ScreenKey</code>
+(which screen is currently showing) is a representative example, from
+<code class="mono">renderer/src/features/shell/navConfig.ts</code>:</p>
+
+<pre>export type ScreenKey =
+  | 'dashboard' | 'library' | 'player' | 'bookshelf' | 'reader'
+  | 'vocab' | 'word' | 'review' | 'conv' | 'convlive'
+  | 'report' | 'challenge' | 'forest' | 'settings';</pre>
+
+<p>Anywhere a value is typed <code class="mono">ScreenKey</code>, TypeScript rejects anything that isn't one of
+those exact strings — <code class="mono">goScreen('dashbord')</code> (typo) is a compile error, not a runtime
+bug discovered by clicking around. This is also the entire reason the sidebar-navigation switch statement in
+<code class="mono">App.tsx</code> is safe to write as a plain <code class="mono">switch</code>: TypeScript
+knows the full, closed list of possible values <code class="mono">screen</code> can ever hold.</p>
+
+<div class="note">
+  <b>Why not a JavaScript/TypeScript <code>enum</code> instead?</b> An <code class="mono">enum</code> would
+  work too, but it compiles to a small real JavaScript object that exists at runtime — a union of string
+  literals compiles to <i>nothing at all</i> (fully erased, per Section 1), and it already matches plain JSON
+  strings coming back from the Python backend without any conversion step. This project uses zero
+  <code class="mono">enum</code>s anywhere — string literal unions cover every case that came up.
+</div>
+
+<h2>5. Optional properties vs. nullable fields</h2>
+<p>These look similar but answer different questions, and this project is deliberate about which one it uses
+where:</p>
+
+<div class="vs">
+  <div class="old">
+    <div class="tag">optional — sub?: string</div>
+    <div class="v">"The caller <i>may choose not to pass</i> this property at all." Used for component props
+    that have a sensible default when omitted.</div>
+    <div class="v mono" style="margin-top:8px">interface NavItem {<br>&nbsp;&nbsp;key: ScreenKey;<br>&nbsp;&nbsp;label: string;<br>&nbsp;&nbsp;badge?: string;&nbsp;&nbsp;<span class="c">// Review has one, most don't</span><br>}</div>
+  </div>
+  <div class="new">
+    <div class="tag">nullable — cefr_level: string | null</div>
+    <div class="v">"This property is <i>always present</i>, but its value might genuinely be the absence of
+    data." Used for backend fields the database can hold as SQL <code class="mono">NULL</code>.</div>
+    <div class="v mono" style="margin-top:8px">interface UserOut {<br>&nbsp;&nbsp;<span class="c">// always there, but null until</span><br>&nbsp;&nbsp;<span class="c">// placement is completed</span><br>&nbsp;&nbsp;cefr_level: string | null;<br>}</div>
+  </div>
+</div>
+
+<p>Mixing these up would be a real, meaningful bug: writing <code class="mono">badge?: string</code> for a
+field the backend always sends as either a string or <code class="mono">null</code> would let
+<code class="mono">undefined</code> slip through unnoticed; writing <code class="mono">cefr_level: string | null</code>
+for an optional UI prop would force every caller to explicitly pass <code class="mono">null</code> even when
+they have nothing to say about it.</p>
+
+<h2>6. Arrays, tuples, and <code>Record&lt;K, V&gt;</code></h2>
+<p>Plain arrays are written <code class="mono">string[]</code> or, equivalently,
+<code class="mono">Array&lt;string&gt;</code> — both appear in this codebase. Two more specific shapes come up
+often enough to call out:</p>
+
+<h3>6.1 Tuples — a fixed-length array where each slot has its own type</h3>
+<pre>// renderer/src/features/shell/navConfig.ts
+export const SCREEN_TITLES: Record&lt;ScreenKey, [string, string]&gt; = {
+  dashboard: ['Dashboard', 'What is due, how you are trending, what to do next'],
+  review:    ['Review', 'FSRS v4 · target retention 0.90 · interleaved queue'],
+  <span class="c">// ...</span>
+};</pre>
+<p><code class="mono">[string, string]</code> is a <b>tuple</b>: exactly two elements, both strings — not "an array
+of strings of any length." <code class="mono">ScreenHeader.tsx</code> destructures it as
+<code class="mono">const [title, staticSub] = SCREEN_TITLES[screen]</code>, and TypeScript knows
+<code class="mono">title</code> and <code class="mono">staticSub</code> are both definitely strings, not
+"maybe undefined if the array happened to be shorter."</p>
+
+<h3>6.2 <code>Record&lt;K, V&gt;</code> — a typed lookup table</h3>
+<p>The same line above is also a <code class="mono">Record</code> — TypeScript's built-in type for "an object
+used as a dictionary, where every key is of type <code class="mono">K</code> and every value is of type
+<code class="mono">V</code>." <code class="mono">Record&lt;ScreenKey, [string, string]&gt;</code> means: this
+object <b>must</b> have exactly one entry for every single value in the <code class="mono">ScreenKey</code>
+union, no more, no fewer.</p>
+
+<div class="honest">
+  <b>Why this matters in practice:</b> this is the exact mechanism that caught the current project honest —
+  when a new screen (say, <code class="mono">'forest'</code>) is added to <code class="mono">ScreenKey</code>
+  but its title/subtitle entry is forgotten in <code class="mono">SCREEN_TITLES</code>, TypeScript refuses to
+  compile until every key is filled in. This project's <code class="mono">Settings.tsx</code> uses the same
+  pattern for <code class="mono">SETTINGS_GROUPS: Record&lt;SettingsGroupName, SettingGroup&gt;</code>.
+</div>
+
+<h2>7. The one generic function in this project</h2>
+<p>A <b>generic</b> lets a function or type work with "whatever type you tell it to, this one time" instead of
+one hardcoded type. This codebase has exactly one, and it's worth understanding well because every single API
+call in the app funnels through it — <code class="mono">renderer/src/lib/apiClient.ts</code>:</p>
+
+<pre>async function request&lt;T&gt;(path: string, init?: RequestInit): Promise&lt;T&gt; {
+  const res = await fetch(`${baseUrl}${path}`, { <span class="c">/* ... */</span> });
+  return (await res.json()) as T;
+}
+
+export const api = {
+  get: &lt;T&gt;(path: string) =&gt; request&lt;T&gt;(path, { method: 'GET' }),
+  <span class="c">// ...</span>
+};</pre>
+
+<p><code class="mono">&lt;T&gt;</code> is a placeholder type, filled in at the call site. Calling
+<code class="mono">api.get&lt;UserOut&gt;('/users/123')</code> tells TypeScript "trust me, whatever JSON comes
+back has the shape of <code class="mono">UserOut</code>" — and from that point on, everywhere that result is
+used, autocomplete and type-checking treat it as a real <code class="mono">UserOut</code>, not a vague
+<code class="mono">any</code>. This is also, honestly, a small leap of faith: TypeScript cannot verify the
+server actually sent that shape (Section 1's second point) — the generic only documents and enforces the
+<i>assumption</i>, which is why the interfaces in <code class="mono">types/api.ts</code> need to be kept
+accurate by hand as the backend changes.</p>
+
+<h2>8. <code>as const</code> — locking down literal types</h2>
+<p>By default, TypeScript "widens" a literal value to its general type — the number <code class="mono">1</code>
+inside a plain array becomes typed as <code class="mono">number</code>, not "specifically 1." Usually that's
+fine, but this project has one spot where it isn't:</p>
+
+<pre>// renderer/src/features/onboarding/onboardingConfig.ts
+export const ONBOARDING_STEPS = [
+  { n: 1, name: 'Profile', title: 'Who is learning', body: '...' },
+  { n: 2, name: 'Placement', <span class="c">/* ... */</span> },
+  <span class="c">// ... n: 3, 4, 5</span>
+] as const;   <span class="c">← without this, `n` would just be typed `number`</span></pre>
+
+<pre>// renderer/src/features/onboarding/OnboardingWizard.tsx
+const STEP_COMPONENTS = { 1: StepProfile, 2: StepPlacement, 3: StepEngine, 4: StepHabit, 5: StepCompanion };
+const StepComponent = STEP_COMPONENTS[step];   <span class="c">// step must be exactly 1|2|3|4|5, not "some number"</span></pre>
+
+<p><code class="mono">as const</code> tells TypeScript "treat every value in here as its exact literal, and make
+the whole structure read-only." Without it, <code class="mono">ONBOARDING_STEPS[0].n</code> would be a generic
+<code class="mono">number</code>, and the <code class="mono">OnboardingStep</code> type
+(<code class="mono">1 | 2 | 3 | 4 | 5</code>, used all over <code class="mono">onboardingStore.ts</code>) couldn't
+be derived from it — the lookup in <code class="mono">STEP_COMPONENTS[step]</code> would no longer be provably
+safe, since <i>some number</i> might not be a valid key.</p>
+
+<h2>9. Typing React components and props</h2>
+<p>A component's props are typed with an object type, usually written inline right where the function is
+defined. From <code class="mono">renderer/src/features/onboarding/steps/StepProfile.tsx</code>:</p>
+
+<pre>function TextField({
+  label, sub, value, onChange, placeholder,
+}: {
+  label: string;
+  sub: string;
+  value: string;
+  onChange: (v: string) =&gt; void;      <span class="c">// a function type: takes a string, returns nothing</span>
+  placeholder?: string;               <span class="c">// optional — Section 5</span>
+}) {
+  <span class="c">/* ... */</span>
+}</pre>
+
+<p><code class="mono">(v: string) =&gt; void</code> is a <b>function type</b> — it describes the shape of a
+callback, not a specific function. Anyone using <code class="mono">&lt;TextField onChange={...}&gt;</code>
+must pass a function that accepts one string and doesn't need to return anything; passing a function that
+returns a number is still fine (the return value is simply unused), but passing one that expects two arguments
+would be a compile error.</p>
+
+<h2>10. Typing a Zustand store, start to finish</h2>
+<p>Since you have <code class="mono">shellStore.ts</code> open, here is exactly how it's typed, piece by
+piece — this same shape repeats in <code class="mono">appStore.ts</code> and
+<code class="mono">onboardingStore.ts</code>.</p>
+
+<pre>interface ShellState {
+  screen: ScreenKey;              <span class="c">// ── data fields ──</span>
+  collapsed: boolean;
+  theme: 'dark' | 'light';        <span class="c">// an inline union — didn't need its own named type</span>
+  convScenario: string;
+
+  goScreen: (key: ScreenKey) =&gt; void;   <span class="c">// ── actions ── (functions that change the data)</span>
+  goConvLive: (scenario: string) =&gt; void;
+  toggleTheme: () =&gt; void;
+}
+
+export const useShellStore = create&lt;ShellState&gt;((set, get) =&gt; ({
+  screen: 'dashboard',
+  collapsed: false,
+  theme: 'dark',
+  convScenario: 'Free talk',
+
+  goScreen: (key) =&gt; set({ screen: key }),   <span class="c">// `key` is inferred as ScreenKey — no re-annotation needed</span>
+  goConvLive: (scenario) =&gt; set({ screen: 'convlive', collapsed: true, convScenario: scenario }),
+  toggleTheme: () =&gt; {
+    const next = get().theme === 'dark' ? 'light' : 'dark';
+    set({ theme: next });
+  },
+}));</pre>
+
+<div class="flow">
+  <div class="step"><div class="n">1</div><div class="body"><code class="mono">interface ShellState</code>
+  declares the <b>entire</b> shape of the store up front — every field and every action, with no
+  implementation yet, just their types.</div></div>
+  <div class="step"><div class="n">2</div><div class="body"><code class="mono">create&lt;ShellState&gt;(...)</code>
+  is Zustand's own generic function (same idea as Section 7's <code class="mono">request&lt;T&gt;</code>) — it
+  tells TypeScript "whatever object I return from this initializer function must match
+  <code class="mono">ShellState</code> exactly."</div></div>
+  <div class="step"><div class="n">3</div><div class="body">Inside, every field/action is checked against that
+  interface. Forget to implement <code class="mono">toggleTheme</code>, or implement it with the wrong
+  parameter types, and the whole file fails to compile — before you ever click the theme toggle button and
+  find out the hard way.</div></div>
+  <div class="step"><div class="n">4</div><div class="body">Everywhere else in the app,
+  <code class="mono">useShellStore((s) =&gt; s.theme)</code> infers <code class="mono">s</code> as
+  <code class="mono">ShellState</code> automatically, so <code class="mono">s.theme</code> is known to be
+  <code class="mono">'dark' | 'light'</code> — and <code class="mono">s.thme</code> (typo) is a compile
+  error, not a silent <code class="mono">undefined</code>.</div></div>
+</div>
+
+<h2>11. <code>import type</code> and this project's strictness settings</h2>
+
+<h3>11.1 <code>import type</code></h3>
+<pre>import type { ModelTier } from '@/types/api';   <span class="c">// used 12 times across renderer/src</span></pre>
+<p>A plain <code class="mono">import</code> can pull in both runtime values (functions, components) and types.
+Writing <code class="mono">import type</code> tells the compiler "everything imported on this line exists only
+for type-checking — delete it completely from the compiled JavaScript." This matters because
+<code class="mono">tsconfig.base.json</code> sets <code class="mono">isolatedModules: true</code>, which
+requires each file to be compilable on its own without seeing other files first; an ordinary import of a
+type-only name can be ambiguous under that constraint, while <code class="mono">import type</code> removes any
+doubt for the build tool (Vite, from the frontend document) about what needs to survive into real JS.</p>
+
+<h3>11.2 The strictness flags this project turned on</h3>
+<p>From <code class="mono">tsconfig.base.json</code>, shared by both <code class="mono">renderer/</code> and
+<code class="mono">electron/</code>:</p>
+<table>
+  <tr><th style="width:28%">Setting</th><th>What it catches</th></tr>
+  <tr><td class="mono">strict: true</td><td>Turns on the full bundle of strict checks — no variable is
+  silently <code class="mono">any</code>, <code class="mono">null</code>/<code class="mono">undefined</code>
+  must be handled explicitly, and more. This single flag is why patterns like Section 5's
+  <code class="mono">string | null</code> have to be written honestly instead of ignored.</td></tr>
+  <tr><td class="mono">noUnusedLocals /<br>noUnusedParameters</td><td>A variable or function parameter that's
+  declared but never used is a compile error, not just an editor warning — keeps dead leftovers from previous
+  edits from quietly accumulating.</td></tr>
+  <tr><td class="mono">noFallthroughCasesInSwitch</td><td>In a <code class="mono">switch</code> statement (like
+  <code class="mono">App.tsx</code>'s screen router from the frontend document), forgetting a
+  <code class="mono">return</code>/<code class="mono">break</code> and accidentally "falling through" into the
+  next case is a compile error.</td></tr>
+</table>
+
+<h2>12. Glossary — quick reference</h2>
+<table>
+  <tr><th style="width:24%">Term</th><th>One-line definition</th></tr>
+  <tr><td class="mono">type annotation</td><td>The <code>: Type</code> written after a variable/parameter name.</td></tr>
+  <tr><td class="mono">type inference</td><td>TypeScript figuring out a type on its own from context, without an explicit annotation.</td></tr>
+  <tr><td class="mono">interface</td><td>Describes the shape of an object — this project's convention for anything mirroring backend data.</td></tr>
+  <tr><td class="mono">type alias</td><td>A name for any type — this project's convention for unions and function-shape types.</td></tr>
+  <tr><td class="mono">union type (<code>|</code>)</td><td>"Exactly one of these listed possibilities" — this codebase's replacement for <code>enum</code>.</td></tr>
+  <tr><td class="mono">optional property (<code>?:</code>)</td><td>The caller may omit this field entirely.</td></tr>
+  <tr><td class="mono">nullable (<code>| null</code>)</td><td>The field is always present, but its value may be null.</td></tr>
+  <tr><td class="mono">tuple</td><td>A fixed-length array where each position has its own specific type, e.g. <code>[string, string]</code>.</td></tr>
+  <tr><td class="mono">Record&lt;K, V&gt;</td><td>An object type used as a dictionary — every key of type K maps to a value of type V.</td></tr>
+  <tr><td class="mono">generic (<code>&lt;T&gt;</code>)</td><td>A placeholder type filled in by whoever calls the function, so one function body works for many types.</td></tr>
+  <tr><td class="mono">as const</td><td>Locks a literal value/array/object to its exact type instead of letting TypeScript widen it (e.g. keeps <code>1</code> as <code>1</code>, not <code>number</code>).</td></tr>
+  <tr><td class="mono">import type</td><td>An import that exists only for type-checking and is fully erased from the compiled JavaScript.</td></tr>
+  <tr><td class="mono">strict mode</td><td>The bundle of stricter checks this project enables in <code>tsconfig.base.json</code>, including mandatory null-handling.</td></tr>
+</table>
+
+<div class="footer-note">
+  Companion reading: <i>FluencyOS — Frontend, Electron &amp; Onboarding Explained</i> and
+  <i>Tailwind CSS for This Project</i> cover the rest of the frontend stack the same way this document covers
+  TypeScript. Every example above is taken directly from the current <code class="mono">renderer/src</code>
+  source, with file paths given so each one can be opened and shown live.
+</div>
+
+</body>
+</html>

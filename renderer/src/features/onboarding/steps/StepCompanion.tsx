@@ -1,4 +1,4 @@
-import { BIOMES, COMPANIONS } from '@/features/onboarding/onboardingConfig';
+import { COMPANIONS } from '@/features/onboarding/onboardingConfig';
 import { useOnboardingStore } from '@/store/onboardingStore';
 
 export function StepCompanion() {
@@ -28,29 +28,6 @@ export function StepCompanion() {
         })}
       </div>
 
-      <div className="mt-4 flex flex-col gap-[11px]">
-        <div className="font-mono text-[9px] uppercase tracking-[0.12em] text-tx3">Starting biome</div>
-        <div className="flex flex-wrap gap-2">
-          {BIOMES.map((b) => {
-            const on = companion.startingBiome === b.key;
-            return (
-              <button
-                key={b.key}
-                onClick={() => updateCompanion({ startingBiome: b.key })}
-                className="rounded-full border px-3 py-[6px] font-sans text-[11px]"
-                style={{
-                  borderColor: on ? 'var(--acc)' : 'var(--line2)',
-                  background: on ? 'var(--accSoft)' : 'transparent',
-                  color: on ? 'var(--acc)' : 'var(--tx2)',
-                }}
-                title={b.desc}
-              >
-                {b.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
     </div>
   );
 }

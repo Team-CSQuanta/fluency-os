@@ -103,3 +103,90 @@ def test_txt_book_still_uses_word_count_pagination(client, auth_headers, tmp_pat
 
     assert page1["total_pages"] == 1
     assert len(page1["blocks"]) == 3
+
+
+def test_original_page_renders_as_an_image(client, auth_headers, tmp_path):
+    """The text pipeline drops everything that is not prose, so the rendered
+    page is the only way to see a figure, a plate or a table as it was set."""
+    user_id = _create_user(client, auth_headers)
+    source = tmp_path / "Illustrated.pdf"
+    _write_pdf(source, ["Alpha content here.", "Beta content here."])
+    book_id = _import(client, auth_headers, user_id, source)
+
+    assert client.get(f"/books/{book_id}", headers=auth_headers).json()["has_page_images"] is True
+
+    res = client.get(f"/books/{book_id}/page/2/image", headers=auth_headers)
+
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "image/png"
+    assert res.content[:4] == b"\x89PNG"
+
+
+def test_page_image_is_cached_after_the_first_render(client, auth_headers, tmp_path):
+    user_id = _create_user(client, auth_headers)
+    source = tmp_path / "Cached.pdf"
+    _write_pdf(source, ["Only page here."])
+    book_id = _import(client, auth_headers, user_id, source)
+
+    first = client.get(f"/books/{book_id}/page/1/image", headers=auth_headers)
+    second = client.get(f"/books/{book_id}/page/1/image", headers=auth_headers)
+
+    assert first.status_code == second.status_code == 200
+    assert first.content == second.content
+
+
+def test_page_image_rejects_a_page_that_does_not_exist(client, auth_headers, tmp_path):
+    user_id = _create_user(client, auth_headers)
+    source = tmp_path / "Two.pdf"
+    _write_pdf(source, ["One.", "Two."])
+    book_id = _import(client, auth_headers, user_id, source)
+
+    assert client.get(f"/books/{book_id}/page/9/image", headers=auth_headers).status_code == 404
+    assert client.get(f"/books/{book_id}/page/0/image", headers=auth_headers).status_code == 404
+
+
+def test_reflowable_books_have_no_original_page(client, auth_headers, tmp_path):
+    """A .txt never had a page, so asking for one is a 404 rather than a
+    rendered approximation of where the text happened to land."""
+    user_id = _create_user(client, auth_headers)
+    source = tmp_path / "Plain.txt"
+    source.write_text("Some plain text content for the book.\n\nA second paragraph.\n")
+    book_id = _import(client, auth_headers, user_id, source)
+
+    assert client.get(f"/books/{book_id}", headers=auth_headers).json()["has_page_images"] is False
+    assert client.get(f"/books/{book_id}/page/1/image", headers=auth_headers).status_code == 404
+
+
+def test_a_page_with_no_text_is_still_a_page(client, auth_headers, tmp_path):
+    """A plate, a full-page figure or a blank leaf yields no blocks at all.
+
+    Counting pages from the blocks — which is what this did — ends the book at
+    its last page of prose, so anything after it cannot be reached and the
+    original page can never be shown for it.
+    """
+    import pymupdf
+
+    user_id = _create_user(client, auth_headers)
+    source = tmp_path / "Plated.pdf"
+    doc = pymupdf.open()
+    doc.new_page().insert_text((72, 200), "The only page with words on it.", fontsize=11)
+    picture = doc.new_page()
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 200, 200))
+    pix.set_rect(pix.irect, (120, 160, 90))
+    picture.insert_image(pymupdf.Rect(100, 150, 400, 450), pixmap=pix)
+    doc.save(str(source))
+    doc.close()
+
+    book_id = _import(client, auth_headers, user_id, source)
+    book = client.get(f"/books/{book_id}", headers=auth_headers).json()
+
+    assert book["ingest_status"] == "ready", book.get("ingest_error")
+    assert book["page_estimate"] == 2
+
+    page2 = client.get(f"/books/{book_id}/page", headers=auth_headers, params={"page": 2}).json()
+    assert page2["page"] == 2
+    assert page2["total_pages"] == 2
+    assert page2["blocks"] == []
+    assert page2["has_next"] is False
+    # And the page itself is still there to look at, which is the whole point.
+    assert client.get(f"/books/{book_id}/page/2/image", headers=auth_headers).status_code == 200

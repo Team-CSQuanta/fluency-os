@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>React for This Project</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 16mm 16mm; }
+
+  :root {
+    --acc: #6f51a6;
+    --accSoft: #f1eef7;
+    --accLine: #cfc2e6;
+    --ink: #1a1d1b;
+    --ink2: #4a5350;
+    --ink3: #7b8481;
+    --line: #dfe3e1;
+    --panel: #f7f8f7;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: 'DejaVu Sans', 'Liberation Sans', system-ui, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.65;
+    color: var(--ink);
+  }
+
+  code, .mono { font-family: 'DejaVu Sans Mono', 'Liberation Mono', monospace; }
+
+  h1 {
+    font-size: 25pt; line-height: 1.15; letter-spacing: -0.02em;
+    margin: 0 0 6px; font-weight: 700;
+  }
+  h2 {
+    font-size: 15pt; margin: 26px 0 10px; padding-top: 10px;
+    border-top: 2px solid var(--acc); font-weight: 700; letter-spacing: -0.01em;
+    break-after: avoid; page-break-after: avoid;
+  }
+  h3 {
+    font-size: 11.5pt; margin: 16px 0 6px; font-weight: 700; color: var(--ink);
+    break-after: avoid; page-break-after: avoid;
+  }
+  p { margin: 0 0 9px; }
+  ul, ol { margin: 0 0 9px; padding-left: 20px; }
+  li { margin-bottom: 4px; }
+
+  code {
+    font-size: 9pt; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 3px; padding: 0.5px 4px; color: #4b2b6a;
+  }
+
+  .cover {
+    border-bottom: 3px solid var(--acc);
+    padding-bottom: 16px; margin-bottom: 4px;
+  }
+  .sub { font-size: 12pt; color: var(--ink2); margin: 0 0 10px; }
+  .meta { font-size: 8.5pt; color: var(--ink3); font-family: 'DejaVu Sans Mono', monospace; }
+
+  .lead {
+    background: var(--accSoft); border-left: 3px solid var(--acc);
+    padding: 11px 14px; margin: 14px 0; font-size: 10.5pt;
+  }
+  .note {
+    background: #fdfaf3; border-left: 3px solid #c8a44a;
+    padding: 10px 13px; margin: 12px 0; font-size: 9.5pt; color: #4a4335;
+  }
+  .gotcha {
+    background: #fdf2f0; border-left: 3px solid #c0563f;
+    padding: 10px 13px; margin: 12px 0; font-size: 9.5pt; color: #5a2c20;
+  }
+  .honest {
+    background: #f4faf6; border-left: 3px solid #3E7C5A;
+    padding: 10px 13px; margin: 12px 0; font-size: 9.5pt; color: #22392c;
+  }
+
+  table { width: 100%; border-collapse: collapse; margin: 10px 0 14px; font-size: 9.5pt; }
+  th {
+    text-align: left; background: var(--panel); border: 1px solid var(--line);
+    padding: 6px 9px; font-weight: 700; font-size: 8.5pt;
+    text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink2);
+  }
+  td { border: 1px solid var(--line); padding: 6px 9px; vertical-align: top; }
+  td.mono, th.mono { font-family: 'DejaVu Sans Mono', monospace; font-size: 8.5pt; }
+
+  pre {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 5px;
+    padding: 11px 13px; font-size: 8.5pt; line-height: 1.5; overflow: hidden;
+    font-family: 'DejaVu Sans Mono', monospace; margin: 10px 0 14px;
+    white-space: pre-wrap; color: #2f3733;
+  }
+  pre .c { color: #7b8481; }
+
+  .vs { display: flex; gap: 10px; margin: 10px 0 14px; align-items: stretch; }
+  .vs > div { flex: 1; border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; break-inside: avoid; }
+  .vs .old { background: #fbf7f3; }
+  .vs .new { background: #f4faf6; }
+  .vs .tag { font-size: 8pt; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; margin-bottom: 6px; }
+  .vs .old .tag { color: #9a5a2a; }
+  .vs .new .tag { color: #3E7C5A; }
+
+  .cards { display: flex; gap: 10px; margin: 12px 0 16px; }
+  .card {
+    flex: 1; border: 1px solid var(--line); border-radius: 6px;
+    padding: 11px 12px; background: #fff; break-inside: avoid;
+  }
+  .card .k {
+    font-size: 8pt; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--acc); font-weight: 700; margin-bottom: 5px;
+    font-family: 'DejaVu Sans Mono', monospace;
+  }
+  .card .v { font-size: 9.5pt; color: var(--ink2); line-height: 1.55; }
+
+  .flow { margin: 12px 0 16px; }
+  .flow .step { display: flex; gap: 11px; margin-bottom: 9px; break-inside: avoid; }
+  .flow .n {
+    flex: none; width: 21px; height: 21px; border-radius: 50%;
+    background: var(--acc); color: #fff; font-size: 8.5pt; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'DejaVu Sans Mono', monospace;
+  }
+  .flow .body { flex: 1; font-size: 10pt; }
+  .flow .body b { font-weight: 700; }
+
+  section { break-inside: auto; }
+  h2, h3 { break-inside: avoid; }
+  table, pre, .lead, .note, .gotcha, .honest, .vs, .cards, .flow { break-inside: avoid; }
+
+  .footer-note {
+    margin-top: 22px; padding-top: 10px; border-top: 1px solid var(--line);
+    font-size: 8.5pt; color: var(--ink3);
+  }
+
+  .toc { margin: 16px 0 10px; }
+  .toc ol { padding-left: 22px; }
+  .toc li { margin-bottom: 6px; font-size: 10.5pt; }
+  .toc .pg { color: var(--ink3); font-family: 'DejaVu Sans Mono', monospace; font-size: 9pt; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="meta">FLUENCYOS · INTERNAL WALKTHROUGH · REACT PRIMER</div>
+  <h1>React for This Project</h1>
+  <div class="sub">A from-scratch introduction to React — assuming no prior exposure to it at all, only
+  HTML/CSS/JavaScript — built entirely around how this codebase actually uses it.</div>
+</div>
+
+<div class="lead">
+  <b>The one-sentence version:</b> instead of writing code that says <i>"find this element and change it"</i>
+  (the way you'd write plain JavaScript/DOM code), you write a function that says <i>"here is what the screen
+  should look like right now, given the current data"</i> — and React takes care of comparing that to what's
+  currently on screen and updating only what actually changed. Everything else in this document is really just
+  detail on top of that one idea.
+</div>
+
+<div class="toc">
+  <h3>Contents</h3>
+  <ol>
+    <li>The problem React solves <span class="pg">— imperative vs. declarative</span></li>
+    <li>JSX <span class="pg">— HTML-looking syntax inside JavaScript</span></li>
+    <li>Components <span class="pg">— a function that returns UI</span></li>
+    <li>Props <span class="pg">— passing data in, including <code>children</code></span></li>
+    <li><code>useState</code> — giving a component memory <span class="pg">— the most-used hook here (55×)</span></li>
+    <li>What "re-render" actually means <span class="pg">— what happens after a state update</span></li>
+    <li>Handling events <span class="pg">— onClick, onChange</span></li>
+    <li>Conditional rendering <span class="pg">— the three patterns used in this codebase</span></li>
+    <li>Rendering lists with <code>.map()</code> and <code>key</code> <span class="pg">— 88 uses across the app</span></li>
+    <li><code>useEffect</code> — reaching outside React <span class="pg">— side effects, cleanup, dependencies</span></li>
+    <li><code>useMemo</code> and <code>useRef</code> <span class="pg">— the two less-common hooks used here</span></li>
+    <li>Custom hooks <span class="pg">— packaging reusable stateful logic</span></li>
+    <li>Where global state actually lives <span class="pg">— no Context, Zustand instead</span></li>
+    <li>Glossary <span class="pg">— quick reference</span></li>
+  </ol>
+</div>
+
+<h2>1. The problem React solves</h2>
+
+<p>In plain JavaScript, updating the page is something <i>you</i> do, one instruction at a time — find a node,
+change a property:</p>
+
+<pre>document.getElementById('streak').textContent = String(streak);
+document.getElementById('streak-dot').style.background = goalMet ? 'var(--acc)' : 'var(--line2)';</pre>
+
+<p>This works fine for a couple of elements. It gets painful once a screen has dozens of things that can each
+change for different reasons (a due-card badge, a theme, a progress bar, a hover tooltip) — you end up having
+to remember, by hand, every single place in your code that needs to run again whenever any one piece of data
+changes. Miss one, and the screen quietly shows stale information.</p>
+
+<p>React's answer: you write one function per piece of UI that <b>describes the whole thing from scratch every
+time</b>, based only on the current data — and React figures out, behind the scenes, exactly which real DOM
+nodes need to change to match. You never call <code class="mono">document.getElementById</code> yourself; you
+just say what the result should look like, and re-say it (mentally) every time something changes.</p>
+
+<h2>2. JSX — HTML-looking syntax inside JavaScript</h2>
+<p>A React component's "here's what it should look like" description is written in <b>JSX</b> — not a new
+language, just JavaScript with the ability to write tags directly:</p>
+
+<pre>function Greeting() {
+  const name = 'Rafsan';
+  return (
+    &lt;div className="greeting"&gt;
+      Hello, {name}!               <span class="c">{'←'} curly braces drop back into plain JavaScript</span>
+    &lt;/div&gt;
+  );
+}</pre>
+
+<p>Under the hood, that JSX is converted (by the build tools from the frontend document) into plain JavaScript
+function calls that build up a description of the UI — you never see that generated code, but it's why JSX
+can live inside a <code class="mono">.tsx</code> file and still just be "JavaScript" as far as the language is
+concerned. A few concrete differences from plain HTML you'll notice immediately in this codebase:</p>
+
+<table>
+  <tr><th style="width:24%">HTML</th><th style="width:24%">JSX</th><th>Why</th></tr>
+  <tr><td class="mono">class="..."</td><td class="mono">className="..."</td>
+  <td><code class="mono">class</code> is a reserved word in JavaScript (used for defining classes), so JSX renamed the attribute.</td></tr>
+  <tr><td class="mono">onclick="..."</td><td class="mono">onClick={'{'}fn{'}'}</td>
+  <td>Event handlers are camelCase and take an actual JavaScript function value, not a string of code.</td></tr>
+  <tr><td class="mono">&lt;img&gt;</td><td class="mono">&lt;img /&gt;</td>
+  <td>Every tag must be explicitly closed or self-closed — JSX has no HTML-style "void elements" exception.</td></tr>
+  <tr><td>—</td><td class="mono">{'{'}expression{'}'}</td>
+  <td>Anything inside single curly braces is evaluated as a normal JavaScript expression and inserted as text/UI.</td></tr>
+</table>
+
+<h2>3. Components — a function that returns UI</h2>
+<p>A <b>component</b> is just a JavaScript function whose return value is JSX. Once defined, it can be used
+like a custom HTML tag anywhere else in the app. This project has one top-level component per screen
+(<code class="mono">Dashboard()</code>, <code class="mono">Review()</code>, <code class="mono">Forest()</code>,
+…), each usually built from smaller components defined in the same file. A real, minimal example from
+<code class="mono">renderer/src/features/dashboard/Dashboard.tsx</code>:</p>
+
+<pre>function CardLabel({ children }) {
+  return (
+    &lt;div className="font-mono text-[9px] uppercase tracking-[0.12em] text-tx3"&gt;
+      {children}
+    &lt;/div&gt;
+  );
+}
+
+<span class="c">// used elsewhere in the same file, exactly like a built-in tag:</span>
+&lt;CardLabel&gt;Due now&lt;/CardLabel&gt;</pre>
+
+<p>Component names are always capitalized (<code class="mono">CardLabel</code>, not
+<code class="mono">cardLabel</code>) — this isn't just style, it's how JSX itself tells a custom component
+apart from a plain HTML tag like <code class="mono">&lt;div&gt;</code>.</p>
+
+<h2>4. Props — passing data in</h2>
+<p>Data flows into a component the same way arguments flow into a function — written as attributes on the
+tag, received as a single object parameter, usually destructured immediately:</p>
+
+<pre>function Card({ children, className = '' }) {
+  return &lt;div className={`rounded-panel border border-line2 bg-panel p-[18px] shadow-panel ${className}`}&gt;
+    {children}
+  &lt;/div&gt;;
+}
+
+<span class="c">// caller decides the content and an extra class:</span>
+&lt;Card className="flex flex-col gap-[14px]"&gt;
+  &lt;CardLabel&gt;Due now&lt;/CardLabel&gt;
+  <span class="c">{/* ...more JSX here... */}</span>
+&lt;/Card&gt;</pre>
+
+<p><code class="mono">children</code> is a special prop: it's whatever was written <i>between</i> a
+component's opening and closing tags, rather than passed as a named attribute. This is exactly how you'd wrap
+arbitrary HTML inside a reusable container in plain markup — <code class="mono">Card</code> doesn't need to
+know what's inside it, only where to put it.</p>
+
+<div class="note">
+  <b>Props flow one way: parent → child.</b> A component can never reach back up and change the props it was
+  given — if a child needs to change something the parent controls, the parent must pass down a
+  <i>function</i> as a prop (an event-handler prop) for the child to call. Section 7 shows this in practice.
+</div>
+
+<h2>5. <code>useState</code> — giving a component memory</h2>
+<p>A plain variable inside a function is forgotten the moment the function returns — exactly the problem a
+component has, since React calls it again and again over the component's lifetime.
+<code class="mono">useState</code> is the fix: it gives a component a value that <b>survives between
+calls</b>, plus a function to update it that also tells React <i>"re-run this component, something changed."</i>
+This is the single most-used hook in the project — 55 occurrences across the renderer. From
+<code class="mono">renderer/src/features/player/Player.tsx</code>:</p>
+
+<pre>const [toast, setToast] = useState('');   <span class="c">// current value: '', updater: setToast</span>
+
+<span class="c">// later, in response to a click:</span>
+const handleSave = () => {
+  setSaved(true);
+  setToast(`clip extraction queued · ${word} · 6.4 s`);   <span class="c">// triggers a re-render with the new text</span>
+};</pre>
+
+<p><code class="mono">useState('')</code> returns a pair: the <i>current</i> value (here, starting as an empty
+string) and a function that replaces it. Calling <code class="mono">setToast(...)</code> never mutates
+<code class="mono">toast</code> directly — it schedules a fresh call to the component function, and
+<i>that</i> call will see the new value. This is why you'll never see
+<code class="mono">toast = '...'</code> anywhere in this codebase — reassigning the variable directly wouldn't
+tell React anything changed.</p>
+
+<h2>6. What "re-render" actually means</h2>
+<div class="flow">
+  <div class="step"><div class="n">1</div><div class="body">Something calls a state setter — a click handler,
+  an effect, anything. React marks that component as needing to run again.</div></div>
+  <div class="step"><div class="n">2</div><div class="body">React calls the component function from the top,
+  as an ordinary function call. All the JSX in its <code class="mono">return</code> is recomputed using the
+  <i>new</i> state value.</div></div>
+  <div class="step"><div class="n">3</div><div class="body">React compares this new JSX description to what
+  was there before (a process usually called "reconciliation" / the "virtual DOM diff") and works out the
+  minimal set of real, actual DOM changes needed.</div></div>
+  <div class="step"><div class="n">4</div><div class="body">Only those specific DOM nodes are touched — the
+  rest of the page is left completely alone, even though the whole function "ran again" in step 2.</div></div>
+</div>
+<p>The practical upshot: it's normal and expected for a component function to run often. What's expensive is
+real DOM manipulation, and React's whole job is minimizing that — you get to write simple, re-run-everything
+logic while React handles the efficiency underneath.</p>
+
+<h2>7. Handling events</h2>
+<p>Event handler props (<code class="mono">onClick</code>, <code class="mono">onChange</code>, …) take a plain
+function. This project mixes two styles depending on complexity — a short inline arrow function for
+one-liners, and a separately-named function when there's real logic, both from
+<code class="mono">Review.tsx</code>:</p>
+
+<pre>&lt;button onClick={() =&gt; setRevealed(true)}&gt;Show answer&lt;/button&gt;   <span class="c">// inline — trivial, one call</span>
+
+<span class="c">// named — enough logic to deserve a name and be reused across two buttons:</span>
+const handleRate = () =&gt; {
+  if (index + 1 &gt;= total) setSessionDone(true);
+  else { setIndex((i) =&gt; i + 1); setRevealed(false); }
+};
+<span class="c">// ...</span>
+&lt;button onClick={handleRate}&gt;{r.label}&lt;/button&gt;</pre>
+
+<p>Note <code class="mono">onClick={handleRate}</code>, not <code class="mono">onClick={handleRate()}</code> —
+the prop needs the function itself (to be called later, on click), not the result of calling it immediately
+while rendering. This is a very common first mistake, and worth remembering explicitly.</p>
+
+<h2>8. Conditional rendering</h2>
+<p>JSX has no built-in <code class="mono">if</code> tag — you reach for plain JavaScript. Three patterns cover
+every case in this codebase:</p>
+
+<table>
+  <tr><th style="width:22%">Pattern</th><th style="width:30%">Real example</th><th>When it's used here</th></tr>
+  <tr><td>Early <code class="mono">return</code></td>
+  <td class="mono">if (sessionDone) return (&lt;DoneScreen /&gt;);<br>return (&lt;NormalScreen /&gt;);</td>
+  <td>Review.tsx — two entirely different screens depending on a boolean. Clearest option when the two
+  outcomes barely share any markup.</td></tr>
+  <tr><td><code class="mono">&amp;&amp;</code> short-circuit</td>
+  <td class="mono">{'{'}hintOn &amp;&amp; (&lt;div&gt;...&lt;/div&gt;){'}'}</td>
+  <td>ConversationLive.tsx — show this element, or nothing at all. If <code class="mono">hintOn</code> is
+  false, JSX simply renders nothing for that expression.</td></tr>
+  <tr><td>Ternary <code class="mono">? :</code></td>
+  <td class="mono">{'{'}micState === 'recording' ? 'Stop' : 'Start'{'}'}</td>
+  <td>Challenge.tsx — pick between exactly two small values/elements inline, inside otherwise-shared markup.</td></tr>
+</table>
+
+<h2>9. Rendering lists with <code>.map()</code> and <code>key</code></h2>
+<p>To turn an array of data into an array of elements, this project uses plain JavaScript's
+<code class="mono">.map()</code> — 88 times across the renderer. From
+<code class="mono">renderer/src/features/review/Review.tsx</code>:</p>
+
+<pre>{RATINGS.map((r, i) =&gt; (
+  &lt;button key={r.label} onClick={handleRate} style={{ borderColor: RATING_STYLE[i].bd }}&gt;
+    {r.label}
+  &lt;/button&gt;
+))}</pre>
+
+<div class="gotcha">
+  <b>Why <code>key</code> is not optional.</b> When an array of elements can change (items added, removed, or
+  reordered), React needs a stable way to tell "this is the same button as before, just moved" apart from "this
+  is a brand-new button." Without <code class="mono">key</code>, React falls back to matching by position,
+  which can silently mix up which internal state belongs to which item after a reorder. The value must be a
+  string/number that's stable and unique among siblings — here, <code class="mono">r.label</code> (e.g.
+  <code class="mono">"Again"</code>) works because rating labels never repeat or reorder within one list.
+</div>
+
+<h2>10. <code>useEffect</code> — reaching outside React</h2>
+<p>Everything so far describes UI as a function of data — but some things aren't UI at all: starting a timer,
+subscribing to a browser event, calling an API when a screen first opens. <code class="mono">useEffect</code>
+is the hook for exactly that category of code — it runs <i>after</i> React has updated the real DOM, separate
+from the render itself. Used 20 times in this codebase. The clearest example,
+<code class="mono">Player.tsx</code>'s toast auto-dismiss:</p>
+
+<pre>useEffect(() =&gt; {
+  if (!toast) return;
+  const t = setTimeout(() =&gt; setToast(''), 2800);   <span class="c">// the actual side effect: a browser timer</span>
+  return () =&gt; clearTimeout(t);                      <span class="c">// cleanup — cancels the old timer</span>
+}, [toast]);                                          <span class="c">// dependency array</span></pre>
+
+<div class="flow">
+  <div class="step"><div class="n">1</div><div class="body">The <b>dependency array</b>
+  (<code class="mono">[toast]</code>) tells React "only re-run this effect when <code class="mono">toast</code>
+  changes" — not on every unrelated re-render of the component.</div></div>
+  <div class="step"><div class="n">2</div><div class="body">Each time it does run, it starts a new 2.8-second
+  timer that will clear the toast text.</div></div>
+  <div class="step"><div class="n">3</div><div class="body">The function <i>returned from</i> the effect is a
+  <b>cleanup function</b> — React calls it right before running the effect again (or when the component
+  disappears entirely), which cancels the previous timer so two overlapping toasts can't both fire.</div></div>
+</div>
+
+<p>An empty dependency array, <code class="mono">[]</code>, means "run once, right after this component first
+appears, and never again" — the standard "on mount" pattern, used in <code class="mono">App.tsx</code> to kick
+off the whole app:</p>
+<pre>useEffect(() =&gt; { void initialize(); }, [initialize]);
+<span class="c">// `initialize` is a stable function reference, so in practice this runs once.</span></pre>
+
+<h2>11. <code>useMemo</code> and <code>useRef</code> — the two less-common hooks used here</h2>
+
+<h3>11.1 <code>useMemo</code> — skip recalculating when nothing relevant changed</h3>
+<pre>// renderer/src/features/forest/Forest.tsx
+const tiles = useMemo(() =&gt; buildTiles(biome), [biome]);</pre>
+<p><code class="mono">buildTiles</code> generates an 81-tile isometric grid using a seeded random-number
+sequence (a real function, not free). Without <code class="mono">useMemo</code>, that entire grid would be
+recomputed from scratch on <i>every</i> re-render of the Forest screen — including ones with nothing to do
+with the grid at all, like the mouse moving over a hover tooltip. <code class="mono">useMemo</code> caches the
+result and only recalculates it when <code class="mono">biome</code> itself changes.</p>
+
+<h3>11.2 <code>useRef</code> — a value that persists but doesn't trigger a re-render</h3>
+<pre>// renderer/src/features/reader/Reader.tsx
+const scrollRef = useRef&lt;HTMLDivElement&gt;(null);
+<span class="c">// ...</span>
+&lt;div ref={scrollRef} className="overflow-y-auto"&gt;...&lt;/div&gt;
+<span class="c">// ...later:</span>
+scrollRef.current?.scrollTo({ top: 0 });   <span class="c">// direct access to the real DOM element</span></pre>
+<p>A ref is like a small mutable box (<code class="mono">{'{'} current: ... {'}'}</code>) that keeps its value
+between renders — the key difference from <code class="mono">useState</code> is that <b>changing a ref never
+causes a re-render</b>. Two situations call for it: getting a handle to an actual DOM element (as above, to
+call <code class="mono">.scrollTo()</code> directly — something no amount of JSX describing the UI can do,
+since scrolling isn't part of "what does the screen look like"), and tracking a value across renders that
+should never itself cause the screen to redraw (a plain flag, a timestamp).</p>
+
+<h2>12. Custom hooks — packaging reusable stateful logic</h2>
+<p>A <b>custom hook</b> is just a regular function — by convention named starting with <code class="mono">use</code>
+— that itself calls other hooks. It's the tool for reusing "component-shaped" logic across screens, without
+copy-pasting the same <code class="mono">useEffect</code>/<code class="mono">useRef</code>/<code class="mono">useState</code>
+combination everywhere. This project's one custom hook,
+<code class="mono">renderer/src/features/reader/useReadingSession.ts</code> (simplified):</p>
+
+<pre>export function useReadingSession(bookId: string | null): void {
+  const heartbeat = useReaderStore((s) =&gt; s.heartbeat);   <span class="c">// a hook, called inside another hook</span>
+  const lastBeatRef = useRef(Date.now());
+
+  useEffect(() =&gt; {
+    if (!bookId) return;
+    const timer = setInterval(() =&gt; { <span class="c">/* send a heartbeat */</span> }, 30_000);
+    return () =&gt; clearInterval(timer);
+  }, [bookId]);
+}
+
+<span class="c">// used in Reader.tsx with a single line — the caller doesn't need to know</span>
+<span class="c">// any of the above exists:</span>
+useReadingSession(bookId);</pre>
+<p>All the timer/cleanup/activity-tracking complexity for "record how long the user has been reading" lives in
+exactly one place, and <code class="mono">Reader.tsx</code> itself stays focused on what it actually renders.</p>
+
+<h2>13. Where global state actually lives</h2>
+<p>Many React tutorials introduce <b>Context</b> (<code class="mono">createContext</code>/<code class="mono">useContext</code>)
+as the way to share data across distant components without passing props down through every layer in between.
+This codebase uses <b>zero</b> Context calls. Instead, anything that needs to be read or changed from many
+unrelated components — which screen is showing, the dark/light theme, the signed-in user, the entire
+onboarding wizard's data — lives in a <b>Zustand store</b> (covered fully in the companion frontend document),
+a small library built specifically for this job:</p>
+
+<pre>const theme = useShellStore((s) =&gt; s.theme);   <span class="c">// any component, anywhere, no Provider wrapper needed</span></pre>
+
+<div class="honest">
+  Practically speaking: if you're looking for "where does this piece of data come from" and it isn't a prop
+  passed from a parent and isn't local <code class="mono">useState</code>, it's almost certainly a field on
+  one of the three stores under <code class="mono">renderer/src/store/</code>
+  (<code class="mono">appStore</code>, <code class="mono">shellStore</code>, <code class="mono">onboardingStore</code>) —
+  not React Context.
+</div>
+
+<h2>14. Glossary — quick reference</h2>
+<table>
+  <tr><th style="width:24%">Term</th><th>One-line definition</th></tr>
+  <tr><td class="mono">component</td><td>A function that returns JSX — usable like a custom HTML tag.</td></tr>
+  <tr><td class="mono">JSX</td><td>HTML-looking syntax written directly inside JavaScript/TypeScript.</td></tr>
+  <tr><td class="mono">props</td><td>Data passed into a component from its parent, read-only, one-way.</td></tr>
+  <tr><td class="mono">children</td><td>The special prop holding whatever was written between a component's opening/closing tags.</td></tr>
+  <tr><td class="mono">state</td><td>A value that persists across a component's re-renders and triggers a re-render when changed via its setter.</td></tr>
+  <tr><td class="mono">useState</td><td>The hook that creates one piece of component state and its updater function.</td></tr>
+  <tr><td class="mono">re-render</td><td>React calling a component function again to get its latest JSX, then updating only the real DOM nodes that actually changed.</td></tr>
+  <tr><td class="mono">useEffect</td><td>Runs side-effect code (timers, subscriptions, API calls) after a render, optionally cleaned up before the next one.</td></tr>
+  <tr><td class="mono">dependency array</td><td>The list telling an effect (or <code>useMemo</code>) which values it should re-run for.</td></tr>
+  <tr><td class="mono">cleanup function</td><td>The function an effect can return, run before the effect re-runs or the component disappears.</td></tr>
+  <tr><td class="mono">useMemo</td><td>Caches an expensive calculation, recomputing only when its dependencies change.</td></tr>
+  <tr><td class="mono">useRef</td><td>A mutable value that survives across renders without ever causing one itself; also used to reference a real DOM element.</td></tr>
+  <tr><td class="mono">custom hook</td><td>A function starting with <code>use</code> that calls other hooks, packaging reusable stateful logic.</td></tr>
+  <tr><td class="mono">key</td><td>The stable, unique identifier React needs on each item of a rendered list to track it correctly across changes.</td></tr>
+  <tr><td class="mono">Context</td><td>React's built-in cross-component sharing mechanism — not used in this project; Zustand stores fill this role instead.</td></tr>
+</table>
+
+<div class="footer-note">
+  Companion reading: <i>FluencyOS — Frontend, Electron &amp; Onboarding Explained</i>, <i>Tailwind CSS for This
+  Project</i>, and <i>TypeScript for This Project</i> cover the rest of the frontend stack the same way this
+  document covers React. Every example above is taken directly from the current
+  <code class="mono">renderer/src</code> source, with file paths given so each one can be opened and shown
+  live during a demo.
+</div>
+
+</body>
+</html>

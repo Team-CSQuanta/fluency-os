@@ -207,3 +207,150 @@ def test_renders_a_cover_from_the_first_page(tmp_path):
     assert parsed.cover_ext == "png"
     assert parsed.cover_bytes is not None
     assert parsed.cover_bytes[:4] == b"\x89PNG"
+
+
+def test_two_column_page_is_read_one_column_at_a_time(tmp_path):
+    """The failure this exists for: PyMuPDF groups a left-hand line and the
+    right-hand line beside it into ONE block, so without column detection the
+    two columns arrive interleaved *inside* the extracted text and no later
+    sorting can separate them."""
+    path = tmp_path / "columns.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    for i, y in enumerate([150, 200, 250, 300], 1):
+        page.insert_text((60, y), f"Left column paragraph {i} here.", fontsize=10)
+        page.insert_text((320, y), f"Right column paragraph {i} here.", fontsize=10)
+    doc.save(str(path))
+    doc.close()
+
+    parsed = pdf_parser.parse(path, fallback_title="columns")
+    texts = [b.text for b in parsed.blocks]
+
+    assert texts == [
+        *[f"Left column paragraph {i} here." for i in range(1, 5)],
+        *[f"Right column paragraph {i} here." for i in range(1, 5)],
+    ]
+
+
+def test_full_width_heading_ends_one_pair_of_columns(tmp_path):
+    """A heading spanning the gutter starts a fresh pair of columns below it,
+    so the left column does not run past it to the foot of the page."""
+    path = tmp_path / "banded.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    for i, y in enumerate([150, 200, 250], 1):
+        page.insert_text((60, y), f"Left column paragraph {i} here.", fontsize=10)
+        page.insert_text((320, y), f"Right column paragraph {i} here.", fontsize=10)
+    page.insert_text((60, 380), "A Full Width Heading Spanning Both Of The Columns", fontsize=10)
+    for i, y in enumerate([440, 490, 540], 4):
+        page.insert_text((60, y), f"Left column paragraph {i} here.", fontsize=10)
+        page.insert_text((320, y), f"Right column paragraph {i} here.", fontsize=10)
+    doc.save(str(path))
+    doc.close()
+
+    texts = [b.text for b in pdf_parser.parse(path, fallback_title="banded").blocks]
+    heading = texts.index("A Full Width Heading Spanning Both Of The Columns")
+
+    assert texts[:heading] == [
+        *[f"Left column paragraph {i} here." for i in range(1, 4)],
+        *[f"Right column paragraph {i} here." for i in range(1, 4)],
+    ]
+    assert texts[heading + 1 :] == [
+        *[f"Left column paragraph {i} here." for i in range(4, 7)],
+        *[f"Right column paragraph {i} here." for i in range(4, 7)],
+    ]
+
+
+def test_ordinary_prose_is_not_split_into_columns(tmp_path):
+    """The guard that matters most: a single-column page whose lines happen to
+    end at varying widths must not be mistaken for two columns."""
+    path = tmp_path / "prose.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    widths = [56, 48, 60, 52, 44, 58, 50, 46, 54, 42]
+    for i, chars in enumerate(widths):
+        page.insert_text((60, 150 + i * 30), "word " * (chars // 5), fontsize=10)
+    doc.save(str(path))
+    doc.close()
+
+    parsed = pdf_parser.parse(path, fallback_title="prose")
+
+    assert all(b.text.startswith("word") for b in parsed.blocks)
+    assert len(parsed.blocks) >= 1
+
+
+def test_footnotes_are_marked_rather_than_left_in_the_prose(tmp_path):
+    """Small type at the foot of a page is a footnote, and inline it cuts the
+    body in half. Marked as a caption, the reader can set it apart instead."""
+    path = tmp_path / "notes.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    for i, y in enumerate([150, 250, 350, 450], 1):
+        page.insert_text((72, y), f"Body paragraph number {i} of the chapter.", fontsize=11)
+    page.insert_text((72, 700), "1. See the author's earlier work on this.", fontsize=8)
+    doc.save(str(path))
+    doc.close()
+
+    parsed = pdf_parser.parse(path, fallback_title="notes")
+    by_kind = {b.kind for b in parsed.blocks}
+    note = [b for b in parsed.blocks if b.kind == "caption"]
+
+    assert "p" in by_kind
+    assert len(note) == 1
+    assert "earlier work" in note[0].text
+    # Kept, not dropped — a footnote is still content and still searchable.
+    assert parsed.blocks[-1].kind == "caption"
+
+
+def test_full_size_text_low_on_the_page_is_not_a_footnote(tmp_path):
+    """Position alone is not enough: the last paragraph of a page sits just as
+    low as a footnote does."""
+    path = tmp_path / "lastpara.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 150), "The opening paragraph of this page.", fontsize=11)
+    page.insert_text((72, 700), "The closing paragraph of this page.", fontsize=11)
+    doc.save(str(path))
+    doc.close()
+
+    parsed = pdf_parser.parse(path, fallback_title="lastpara")
+
+    assert all(b.kind == "p" for b in parsed.blocks)
+
+
+def test_ruled_table_is_rebuilt_row_by_row(tmp_path):
+    """A table's cells arrive from the text pass as loose fragments in
+    whatever order they were drawn. Rebuilt, each row is one readable line."""
+    path = tmp_path / "table.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((60, 120), "Body text introducing the table below.", fontsize=11)
+    cols, rows = [100, 250, 400], [200, 230, 260, 290]
+    for x in cols:
+        page.draw_line((x, rows[0]), (x, rows[-1]))
+    for y in rows:
+        page.draw_line((cols[0], y), (cols[-1], y))
+    for r, row in enumerate([["Term", "Count"], ["Alpha", "1"], ["Beta", "2"]]):
+        for c, value in enumerate(row):
+            page.insert_text((cols[c] + 6, rows[r] + 20), value, fontsize=10)
+    doc.save(str(path))
+    doc.close()
+
+    parsed = pdf_parser.parse(path, fallback_title="table")
+    table_rows = [b.text for b in parsed.blocks if b.kind == "list"]
+
+    assert table_rows == ["Term — Count", "Alpha — 1", "Beta — 2"]
+    # And it stays where it was printed, after the paragraph introducing it.
+    assert parsed.blocks[0].kind == "p"
+
+
+def test_pages_without_rules_skip_the_table_finder(tmp_path):
+    """The pre-filter that keeps ingest from costing minutes on a novel."""
+    path = tmp_path / "plain.pdf"
+    _build_pdf(path, [[("Just ordinary prose with no table on the page.", 11)]])
+
+    doc = fitz.open(str(path))
+    try:
+        assert pdf_parser._has_table_rules(doc.load_page(0)) is False
+    finally:
+        doc.close()
