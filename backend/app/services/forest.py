@@ -1,15 +1,13 @@
 """Spec §8 — the Forest.
 
 Every tree is one vocabulary word, and **nothing about a tree is stored**. Its
-size is the word's FSRS stability, its health is how badly it has been
-forgotten, and the ground it stands on is where the learner first met it. All
-three are read from tables the rest of the app already maintains.
+size is the word's FSRS stability and its health is how badly it has been
+forgotten, both read from tables the rest of the app already maintains.
 
-That is the whole design. A `trees` table would be a second record of facts the
-scheduler already owns, and two records of the same fact drift: the forest
-would show a thriving oak for a word `review` knows was lapsed last week. The
-only thing here that is written down is what the learner has *spent*, because a
-decision is not derivable from anything.
+A `trees` table would be a second record of facts the scheduler already owns,
+and two records of the same fact drift: the forest would show a thriving oak
+for a word `review` knows was lapsed last week. Only focus sessions are
+written here, because sitting one out is a decision, not a derivation.
 
 The effect worth having is that the forest cannot be gamed or faked. It grows
 only when the learner's memory does, because it is a drawing of their memory.
@@ -81,10 +79,6 @@ def trees(conn: sqlite3.Connection, user_id: str) -> list[Tree]:
         """
         SELECT w.id, w.word,
                r.stability, r.state, r.lapses, r.due, r.suspended,
-               (SELECT c.kind FROM vocab_contexts c
-                 WHERE c.vocab_word_id = w.id ORDER BY c.created_at LIMIT 1) AS first_kind,
-               (SELECT l.source FROM review_logs l
-                 WHERE l.vocab_word_id = w.id ORDER BY l.created_at LIMIT 1) AS first_source,
                (SELECT COUNT(*) FROM review_logs l
                  WHERE l.vocab_word_id = w.id AND l.outcome = 'spontaneous') AS spontaneous
           FROM vocab_words w
@@ -127,7 +121,7 @@ def _days_between(earlier_iso: str, later_iso: str) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Sunlight
+# Focus sessions
 # ---------------------------------------------------------------------------
 
 
