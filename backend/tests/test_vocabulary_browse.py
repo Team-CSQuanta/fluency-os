@@ -301,7 +301,7 @@ def test_pronunciation_is_synthesized_once_and_cached(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     wid = _add(conn, "excerpt")
     calls: list[str] = []
-    monkeypatch.setattr(tts_engine, "synthesize", lambda text: calls.append(text) or b"RIFFaudio")
+    monkeypatch.setattr(tts_engine, "synthesize", lambda text, voice=None: calls.append(text) or b"RIFFaudio")
 
     first = vocabulary.pronunciation_path(wid, "excerpt", "word", "kokoro")
     second = vocabulary.pronunciation_path(wid, "excerpt", "word", "kokoro")
@@ -318,8 +318,8 @@ def test_each_engine_and_part_gets_its_own_clip(tmp_path, monkeypatch):
 
     conn = _conn(tmp_path)
     wid = _add(conn, "excerpt")
-    monkeypatch.setattr(tts_engine, "synthesize", lambda t: b"kokoro")
-    monkeypatch.setattr(pocket_tts_engine, "synthesize", lambda t: b"pocket")
+    monkeypatch.setattr(tts_engine, "synthesize", lambda t, voice=None: b"kokoro")
+    monkeypatch.setattr(pocket_tts_engine, "synthesize", lambda t, voice=None: b"pocket")
 
     paths = {
         vocabulary.pronunciation_path(wid, "excerpt", "word", "kokoro"),
@@ -336,7 +336,7 @@ def test_deleting_a_word_removes_its_pronunciation(tmp_path, monkeypatch):
 
     conn = _conn(tmp_path)
     wid = _add(conn, "excerpt")
-    monkeypatch.setattr(tts_engine, "synthesize", lambda t: b"RIFFaudio")
+    monkeypatch.setattr(tts_engine, "synthesize", lambda t, voice=None: b"RIFFaudio")
     path = vocabulary.pronunciation_path(wid, "excerpt", "word", "kokoro")
     assert path.exists()
 
@@ -499,7 +499,7 @@ def test_speech_is_cached_by_content(tmp_path, monkeypatch):
 
     _conn(tmp_path)
     calls: list[str] = []
-    monkeypatch.setattr(tts_engine, "synthesize", lambda t: calls.append(t) or b"RIFF")
+    monkeypatch.setattr(tts_engine, "synthesize", lambda t, voice=None: calls.append(t) or b"RIFF")
 
     a = vocabulary.speech_path("hello there", "kokoro")
     b = vocabulary.speech_path("hello there", "kokoro")

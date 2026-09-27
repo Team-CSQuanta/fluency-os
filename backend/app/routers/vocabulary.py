@@ -406,8 +406,9 @@ async def pronounce(
         )
 
     engine = tts.selected_name(conn, user_id)
+    voice = tts.selected_voice(conn, user_id, engine)
     try:
-        path = await run_in_threadpool(vocabulary.pronunciation_path, row["id"], text, part, engine)
+        path = await run_in_threadpool(vocabulary.pronunciation_path, row["id"], text, part, engine, voice)
     except EngineUnavailable as err:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(err)) from err
     return FileResponse(str(path), media_type="audio/wav")
@@ -469,8 +470,9 @@ async def speak(text: str, user_id: str, conn: sqlite3.Connection = Depends(get_
     if len(clean) > 200:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="text is too long to speak")
     engine = tts.selected_name(conn, user_id)
+    voice = tts.selected_voice(conn, user_id, engine)
     try:
-        path = await run_in_threadpool(vocabulary.speech_path, clean, engine)
+        path = await run_in_threadpool(vocabulary.speech_path, clean, engine, voice)
     except EngineUnavailable as err:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(err)) from err
     return FileResponse(str(path), media_type="audio/wav")

@@ -94,16 +94,39 @@ curl -H "X-FluencyOS-Token: dev-token" http://127.0.0.1:8000/health
 
 ## Tests and checks
 
-```bash
-npm run test:backend                        # 855 tests, about 9 minutes
-cd backend && uv run pytest tests/test_forest.py -q   # one file, seconds
+[![Tests](https://github.com/Team-CSQuanta/fluency-os/actions/workflows/tests.yml/badge.svg)](https://github.com/Team-CSQuanta/fluency-os/actions/workflows/tests.yml)
 
-npx tsc -p renderer/tsconfig.json --noEmit  # typecheck the UI
-npm run build:renderer                      # typecheck and bundle it
+One command runs every check and writes a report:
+
+```bash
+npm test                     # everything, about 3 minutes on 4 cores
+npm test -- --verbose        # print each test's name as it runs
+npm test -- --open           # open the report in the browser afterwards
 ```
 
-There is no renderer test runner in the repo; the UI is covered by typechecking
-and by the backend tests behind it.
+It runs three checks, and the report at `test-reports/index.html` lists every
+test by name under the feature it covers, with backend line coverage
+(`test-reports/coverage/index.html` has it line by line):
+
+| Check | Tool | What it covers |
+| --- | --- | --- |
+| Type-check | `tsc --noEmit` | the whole renderer: every screen, store and test |
+| Frontend unit tests | Vitest | renderer logic kept free of React: hands-free turn detection, word highlighting, subtitle selection, PDF sentences, contents, error messages |
+| Backend tests | pytest, parallel | the real API, migrations, file parsers and scheduling against temporary data; AI models are stubbed, so no downloads are needed |
+
+The media tests run real video through ffmpeg and are skipped if it is not
+installed. GitHub Actions runs `npm test` on every push and pull request
+(`.github/workflows/tests.yml`); each run's summary is on its Actions page, with
+the full report attached as the `test-report` artifact.
+
+Smaller runs while working:
+
+```bash
+npm run test:frontend                                  # Vitest only, ~2 seconds
+npm run test:backend                                   # pytest only, parallel
+cd backend && uv run pytest tests/test_forest.py -q    # one file
+cd renderer && npx vitest                              # re-run on every save
+```
 
 ## Building
 
@@ -112,8 +135,50 @@ npm run build     # bundles the renderer and the Electron main process
 npx electron .    # runs what was built
 ```
 
-`electron-builder` is installed but not yet wired to a script, so there is no
-packaged installer target at the moment.
+### Installers for Windows and Linux
+
+```bash
+npm run dist      # installers for the OS you run it on, into release/
+```
+
+| Platform | Files | Install |
+| --- | --- | --- |
+| Windows 10/11 (x64) | `FluencyOS-<version>-win-x64.exe` | run it; a setup wizard installs it with Start-menu and desktop shortcuts |
+| Linux (x64) | `FluencyOS-<version>-linux-amd64.deb` | `sudo apt install ./FluencyOS-*.deb` (Ubuntu, Debian, Mint…) |
+| Linux (x64) | `FluencyOS-<version>-linux-x86_64.AppImage` | `chmod +x` it and run it; no install, any distribution |
+
+An installed FluencyOS needs nothing else on the computer — no Python, no uv,
+no ffmpeg. `npm run dist` first builds `build/backend-runtime/`
+(`scripts/build-backend-runtime.mjs`): a portable Python 3.11 with every
+backend dependency installed from `backend/uv.lock`, the backend's code
+precompiled, and an LGPL build of ffmpeg. Electron starts that bundled Python
+when packaged, and still uses `uv run` in development.
+
+Each installer has to be built on its own OS, because the backend contains
+compiled code (PyTorch, llama.cpp, ctranslate2). To get both without a
+Windows machine, use GitHub Actions: **Actions → Build installers → Run
+workflow** builds both and attaches them to the run, and pushing a tag such as
+`v0.1.0` also publishes them as a GitHub Release
+(`.github/workflows/release.yml`).
+
+Worth knowing:
+
+- The installers are about 0.6–0.8 GB, most of it PyTorch. AI models are not
+  included; they are downloaded from Settings → AI as before.
+- They are not code-signed. Windows SmartScreen will say "Windows protected
+  your PC" — choose **More info → Run anyway**. Signing needs a paid
+  certificate.
+- On Ubuntu 24.04 and later, prefer the `.deb`. The AppImage works there too,
+  but has to run without Chromium's sandbox, because the OS restricts what an
+  AppImage may use for it; a small launcher (`scripts/after-pack.cjs`) adds
+  `--no-sandbox` in exactly that case. The `.deb` keeps the sandbox by
+  installing Chromium's helper setuid (`build/linux/after-install.sh`).
+- If the app opens but says it cannot reach its backend, the reason is in
+  `logs/fluencyos.log` inside the data folder below.
+- Uninstalling keeps your library, vocabulary and downloaded models; they are
+  in the app-data folder listed below.
+- `npm run dist:reuse-runtime` repackages without rebuilding the backend
+  runtime, when only the interface or Electron code changed.
 
 ## Where your data lives
 

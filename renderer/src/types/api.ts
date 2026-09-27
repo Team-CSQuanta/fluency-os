@@ -781,6 +781,30 @@ export interface TtsOptionOut extends SingleModelOut {
   installed: boolean;
 }
 
+export interface VoiceOut {
+  key: string;
+  name: string;
+  gender: 'female' | 'male';
+  accent: string | null;
+  note: string | null;
+  /** Kokoro's voices come with the engine; each Pocket voice is its own
+   * small download. */
+  downloaded: boolean;
+  approx_size_mb: number;
+  download: DownloadStatusOut;
+}
+
+export interface VoicesOut {
+  engine: TtsEngine;
+  engine_label: string;
+  engine_downloaded: boolean;
+  /** What the learner picked, and what replies are spoken in right now —
+   * different only while a newly picked voice is still downloading. */
+  chosen: string;
+  speaking: string;
+  voices: VoiceOut[];
+}
+
 export interface ModelsCatalogOut {
   llm: LlmOptionOut[];
   stt: SingleModelOut;

@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { app } from 'electron';
@@ -29,10 +30,7 @@ function getFreePort(): Promise<number> {
   });
 }
 
-// 30s, not 10s: `uv run` syncs new/updated deps on first launch after a
-// pull that changes pyproject.toml/uv.lock (e.g. pymupdf+lxml, ~30MB), and
-// that download+build can outlast a short health-check window.
-async function waitForHealth(baseUrl: string, token: string, timeoutMs = 30_000): Promise<void> {
+async function waitForHealth(baseUrl: string, token: string, timeoutMs: number): Promise<void> {
   const start = Date.now();
   let lastError: unknown = null;
   while (Date.now() - start < timeoutMs) {
@@ -47,29 +45,76 @@ async function waitForHealth(baseUrl: string, token: string, timeoutMs = 30_000)
   throw new Error(`Backend did not become healthy in time: ${String(lastError)}`);
 }
 
-function resolveBackendDir(): string {
-  // Dev: project root is the Electron app path. Packaged builds will need
-  // an extraResources-based path here — deliberately out of scope for this increment.
-  return path.join(app.getAppPath(), 'backend');
+interface LaunchPlan {
+  command: string;
+  args: string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  /** How long the first health check may take. */
+  timeoutMs: number;
+}
+
+/** Development: the backend runs from the source tree through `uv run`,
+ * exactly as before. */
+function devLaunch(): LaunchPlan {
+  const backendDir = path.join(app.getAppPath(), 'backend');
+  return {
+    command: 'uv',
+    args: ['run', '--project', backendDir, 'python', '-m', 'app.main'],
+    cwd: backendDir,
+    env: process.env,
+    // 30s, not 10s: `uv run` syncs new/updated deps on first launch after a
+    // pull that changes pyproject.toml/uv.lock (e.g. pymupdf+lxml, ~30MB), and
+    // that download+build can outlast a short health-check window.
+    timeoutMs: 30_000,
+  };
+}
+
+/** An installed app: the portable Python that scripts/build-backend-runtime.mjs
+ * put in resources/backend-runtime, with every dependency already inside it.
+ * Nothing on the user's machine is needed — no Python, no uv, no network. */
+function packagedLaunch(): LaunchPlan {
+  const runtime = path.join(process.resourcesPath, 'backend-runtime');
+  const python =
+    process.platform === 'win32'
+      ? path.join(runtime, 'python', 'python.exe')
+      : path.join(runtime, 'python', 'bin', 'python3');
+  if (!existsSync(python)) {
+    throw new Error(`The bundled backend is missing (${python}). Reinstall FluencyOS.`);
+  }
+  const backendDir = path.join(runtime, 'backend');
+  return {
+    command: python,
+    args: ['-m', 'app.main'],
+    cwd: backendDir,
+    env: {
+      ...process.env,
+      PYTHONPATH: backendDir,
+      // Only what shipped: a user's own Python packages must not leak in.
+      PYTHONNOUSERSITE: '1',
+      // The install folder is read-only; the bytecode was compiled at build time.
+      PYTHONDONTWRITEBYTECODE: '1',
+      PYTHONUNBUFFERED: '1',
+      PYTHONIOENCODING: 'utf-8',
+      FLUENCYOS_FFMPEG_DIR: path.join(runtime, 'ffmpeg', 'bin'),
+    },
+    // A cold start on a slow disk loads a lot of compiled libraries.
+    timeoutMs: 90_000,
+  };
 }
 
 export async function startBackend(): Promise<BackendHandle> {
   const port = await getFreePort();
   const token = generateHandshakeToken();
   const dbPath = path.join(app.getPath('userData'), 'fluencyos.db');
-  const backendDir = resolveBackendDir();
+  const plan = app.isPackaged ? packagedLaunch() : devLaunch();
 
-  logger.info(`starting backend on port ${port}, db at ${dbPath}`);
+  logger.info(`starting backend on port ${port}, db at ${dbPath} (${app.isPackaged ? 'bundled' : 'uv run'})`);
 
   const child = spawn(
-    'uv',
+    plan.command,
     [
-      'run',
-      '--project',
-      backendDir,
-      'python',
-      '-m',
-      'app.main',
+      ...plan.args,
       '--host',
       '127.0.0.1',
       '--port',
@@ -79,7 +124,7 @@ export async function startBackend(): Promise<BackendHandle> {
       '--db-path',
       dbPath,
     ],
-    { cwd: backendDir, stdio: ['ignore', 'pipe', 'pipe'] },
+    { cwd: plan.cwd, env: plan.env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true },
   );
 
   child.stdout?.on('data', (chunk: Buffer) => logger.info('[backend]', chunk.toString().trim()));
@@ -88,7 +133,7 @@ export async function startBackend(): Promise<BackendHandle> {
   child.on('error', (err) => logger.error('failed to spawn backend process', err));
 
   const baseUrl = `http://127.0.0.1:${port}`;
-  await waitForHealth(baseUrl, token);
+  await waitForHealth(baseUrl, token, plan.timeoutMs);
   logger.info('backend is healthy');
 
   return { baseUrl, token, process: child };
@@ -96,6 +141,14 @@ export async function startBackend(): Promise<BackendHandle> {
 
 export function stopBackend(handle: BackendHandle | null): void {
   if (!handle) return;
+  const { pid } = handle.process;
+  // Windows has no SIGTERM: kill() is an immediate TerminateProcess of the
+  // backend alone, which would leave its own children (the GPU model server)
+  // running after the app has closed. taskkill /T takes the whole tree.
+  if (process.platform === 'win32' && pid !== undefined) {
+    spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true });
+    return;
+  }
   handle.process.kill('SIGTERM');
   setTimeout(() => {
     if (!handle.process.killed) {

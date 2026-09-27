@@ -26,6 +26,7 @@ from app.services.voice import (
     model_manager,
     stt_engine,
     tts,
+    voices,
 )
 from app.services.voice.errors import EngineUnavailable
 from app.utils.ids import uuid7
@@ -635,27 +636,31 @@ def _insert_turn(
     return conn.execute("SELECT * FROM conversation_turns WHERE id = ?", (turn_id,)).fetchone()
 
 
-def audio_chunk_path(turn_id: str, index: int, engine: str = tts.DEFAULT_ENGINE) -> Path:
-    """The engine is part of the filename because the audio is that engine's
-    voice. Without it, switching engines would keep serving whatever the
-    previous one had already cached for a turn, so the change would appear to
-    do nothing on every reply already on screen. It also leaves the two free
-    to split replies differently without one's chunk 0 being served as the
-    other's."""
-    return _audio_dir() / f"{turn_id}.{engine}.{index}.wav"
+def audio_chunk_path(turn_id: str, index: int, engine: str = tts.DEFAULT_ENGINE, voice: str | None = None) -> Path:
+    """The engine and voice are part of the filename because the audio is
+    that voice. Without them, switching would keep serving whatever the
+    previous voice had already cached for a turn, so the change would appear
+    to do nothing on every reply already on screen. It also leaves the two
+    engines free to split replies differently without one's chunk 0 being
+    served as the other's."""
+    name = tts.normalise(engine)
+    return _audio_dir() / f"{turn_id}.{name}.{voices.normalise(name, voice)}.{index}.wav"
 
 
-def ensure_audio_chunk(turn_id: str, text: str, index: int, engine: str = tts.DEFAULT_ENGINE) -> Path:
+def ensure_audio_chunk(
+    turn_id: str, text: str, index: int, engine: str = tts.DEFAULT_ENGINE, voice: str | None = None
+) -> Path:
     """Synthesizes one sentence of a reply, cached on disk after the first
     request. Called when that sentence is about to be played rather than while
     the learner is still waiting to read the reply."""
     name = tts.normalise(engine)
+    speaker = voices.normalise(name, voice)
     chunks = tts.engine_for(name).split_for_streaming(text)
     if index < 0 or index >= len(chunks):
         raise IndexError(f"chunk {index} out of range for {len(chunks)} chunks")
-    path = audio_chunk_path(turn_id, index, name)
+    path = audio_chunk_path(turn_id, index, name, speaker)
     if not path.exists():
-        audio = tts.engine_for(name).synthesize(chunks[index])
+        audio = tts.engine_for(name).synthesize(chunks[index], voice=speaker)
         # Written to a private temp file and moved into place, never straight
         # to `path`. The player fetches chunk N+1 while N is still audible, so
         # two requests for the same chunk really can overlap (a replay, a

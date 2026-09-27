@@ -6,6 +6,14 @@ import { isDownloadActive } from './download-state';
 import { registerIpcHandlers } from './ipc-handlers';
 import { logger } from './logger';
 
+// The data folder is <app data>/fluencyos in every build. Electron would
+// otherwise name it after the product in an installed build ("FluencyOS"),
+// which on Linux is a different folder from the one development uses and the
+// README documents — an installed copy would start with none of the
+// learner's library. Set before anything reads it, the single-instance lock
+// and the log file included.
+app.setPath('userData', path.join(app.getPath('appData'), 'fluencyos'));
+
 let backendHandle: BackendHandle | null = null;
 let mainWindow: BrowserWindow | null = null;
 // Set true only once the user has confirmed "close anyway" in the renderer's
@@ -124,7 +132,23 @@ app.commandLine.appendSwitch(
   'VaapiVideoDecoder,VaapiVideoDecodeLinuxGL,PlatformHEVCDecoderSupport',
 );
 
+// One FluencyOS at a time. A second launch (a double-click, a second
+// shortcut) would start a second backend on the same database; it focuses the
+// window that is already open instead.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  });
+}
+
 app.whenReady().then(async () => {
+  // A second instance is quitting; it must not start a backend of its own.
+  if (!app.hasSingleInstanceLock()) return;
+
   // Must be registered before any window loads a scene embed.
   registerSceneEmbedReferrer();
 
@@ -148,6 +172,12 @@ app.on('window-all-closed', () => {
     app.quit();
   }
 });
+
+// Logging out, shutting down, or Ctrl+C in a terminal: quit the normal way,
+// so the backend is stopped rather than left running without its app.
+for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
+  process.on(signal, () => app.quit());
+}
 
 app.on('before-quit', () => {
   stopBackend(backendHandle);

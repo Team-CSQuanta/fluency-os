@@ -304,9 +304,10 @@ async def get_turn_audio(
     if conversation.audio_chunk_count(row, row["channel"], engine) == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No audio for this turn")
 
+    voice = tts.selected_voice(conn, user_id, engine)
     try:
         path = await run_in_threadpool(
-            conversation.ensure_audio_chunk, turn_id, row["text"], chunk, engine
+            conversation.ensure_audio_chunk, turn_id, row["text"], chunk, engine, voice
         )
     except IndexError as err:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such audio chunk") from err

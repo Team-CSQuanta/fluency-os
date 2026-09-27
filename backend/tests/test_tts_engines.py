@@ -103,8 +103,8 @@ def test_chunk_cache_is_per_engine(tmp_path, monkeypatch):
     the name also means the split rule can diverge later without silently
     serving one engine's chunk 0 as the other's."""
     monkeypatch.setattr(settings, "db_path", str(tmp_path / "x.db"))
-    monkeypatch.setattr(tts_engine, "synthesize", lambda text: b"kokoro:" + text.encode())
-    monkeypatch.setattr(pocket_tts_engine, "synthesize", lambda text: b"pocket:" + text.encode())
+    monkeypatch.setattr(tts_engine, "synthesize", lambda text, voice=None: b"kokoro:" + text.encode())
+    monkeypatch.setattr(pocket_tts_engine, "synthesize", lambda text, voice=None: b"pocket:" + text.encode())
 
     kokoro_path = conversation.ensure_audio_chunk("turn-1", TWO_SENTENCES, 0, "kokoro")
     pocket_path = conversation.ensure_audio_chunk("turn-1", TWO_SENTENCES, 0, "pocket")
@@ -411,7 +411,7 @@ def test_a_chunk_is_never_served_while_it_is_still_being_written(tmp_path, monke
     monkeypatch.setattr(settings, "db_path", str(tmp_path / "atomic.db"))
     seen: list[bool] = []
 
-    def _slow_synthesize(text: str) -> bytes:
+    def _slow_synthesize(text: str, voice: str | None = None) -> bytes:
         # Whatever a concurrent reader would see mid-synthesis.
         target = conversation.audio_chunk_path("turn-x", 0, "kokoro")
         seen.append(target.exists())
@@ -429,7 +429,7 @@ def test_a_chunk_is_never_served_while_it_is_still_being_written(tmp_path, monke
 def test_a_failed_synthesis_leaves_no_partial_file(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "db_path", str(tmp_path / "atomic2.db"))
 
-    def _boom(text: str) -> bytes:
+    def _boom(text: str, voice: str | None = None) -> bytes:
         raise RuntimeError("engine died")
 
     monkeypatch.setattr(tts_engine, "synthesize", _boom)

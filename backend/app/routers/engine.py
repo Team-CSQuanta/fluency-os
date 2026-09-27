@@ -2,6 +2,7 @@ import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse
 
 from app.db import get_db
 from app.models.conversation import EngineStatusOut
@@ -18,8 +19,11 @@ from app.models.engine import (
     ReadinessOut,
     SelectLlmModelIn,
     SelectTtsEngineIn,
+    SelectVoiceIn,
     SingleModelOut,
     TtsOptionOut,
+    VoiceOut,
+    VoicesOut,
 )
 from app.security import require_token
 from app.services import conversation
@@ -37,8 +41,10 @@ from app.services.voice import (
     stt_engine,
     tts,
     tts_engine,
+    voices,
 )
 from app.services.voice.errors import EngineUnavailable
+from app.utils.ids import uuid7
 
 router = APIRouter(prefix="/engine", dependencies=[Depends(require_token)])
 
@@ -252,6 +258,116 @@ def select_tts_engine(payload: SelectTtsEngineIn, conn: sqlite3.Connection = Dep
         (payload.user_id, payload.engine),
     )
     tts.unload_all()
+
+
+# A Pocket voice embedding is ~6.2-6.5MB; Kokoro's are inside the engine file.
+_POCKET_VOICE_MB = 6.4
+
+
+def _voices_out(conn: sqlite3.Connection, user_id: str, engine: str | None) -> VoicesOut:
+    name = tts.normalise(engine) if engine else tts.selected_name(conn, user_id)
+    engine_downloaded = tts.is_downloaded(name)
+    return VoicesOut(
+        engine=name,
+        engine_label=tts.ENGINE_LABELS[name],
+        engine_downloaded=engine_downloaded,
+        chosen=tts.chosen_voice(conn, user_id, name),
+        speaking=tts.selected_voice(conn, user_id, name),
+        voices=[
+            VoiceOut(
+                key=v.key,
+                name=v.name,
+                gender=v.gender,
+                accent=v.accent,
+                note=v.note,
+                downloaded=voices.is_downloaded(name, v.key),
+                approx_size_mb=0 if name == "kokoro" else _POCKET_VOICE_MB,
+                download=(
+                    _download_status_out("pocket_voice", v.key)
+                    if name == "pocket"
+                    else _download_status_out("tts")
+                ),
+            )
+            for v in voices.CATALOG[name]
+        ],
+    )
+
+
+@router.get("/voices", response_model=VoicesOut)
+def list_voices(
+    user_id: str, engine: str | None = None, conn: sqlite3.Connection = Depends(get_db)
+) -> VoicesOut:
+    """The voices an engine (the learner's selected one by default) can speak
+    in, which one they picked, and which are on disk."""
+    return _voices_out(conn, user_id, engine)
+
+
+@router.put("/voices", response_model=VoicesOut)
+def select_voice(payload: SelectVoiceIn, conn: sqlite3.Connection = Depends(get_db)) -> VoicesOut:
+    """Picks the voice replies are spoken in. A Pocket voice that is not on
+    disk yet starts downloading here; replies keep the default voice until it
+    lands (see tts.selected_voice), so choosing one never leaves the app
+    silent."""
+    try:
+        tts.set_voice(conn, payload.user_id, payload.engine, payload.voice)
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err)) from err
+    if payload.engine == "pocket" and not voices.is_downloaded("pocket", payload.voice):
+        download_manager.start_download("pocket_voice", payload.voice)
+    return _voices_out(conn, payload.user_id, payload.engine)
+
+
+_PREVIEW_TEXT = "Hi, I'm {name}. Shall we practise some English together?"
+
+
+def _preview_path(engine: str, voice: str):
+    d = model_manager.models_dir() / "voice-previews"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{engine}.{voice}.wav"
+
+
+def _render_preview(engine: str, voice: voices.Voice):
+    """Synthesized once per voice and kept: a learner comparing voices plays
+    the same few samples over and over."""
+    path = _preview_path(engine, voice.key)
+    if path.exists():
+        return path
+    if engine == "pocket" and not voices.is_downloaded("pocket", voice.key):
+        download_manager.download_pocket_voice_now(voice.key)
+    audio = tts.engine_for(engine).synthesize(_PREVIEW_TEXT.format(name=voice.name), voice=voice.key)
+    # Own temp name per request: two previews of one voice can overlap.
+    tmp = path.with_suffix(f".{uuid7()}.part")
+    try:
+        tmp.write_bytes(audio)
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return path
+
+
+@router.get("/voices/preview")
+async def preview_voice(engine: str, voice: str) -> FileResponse:
+    """A short sample of one voice. Previewing a Pocket voice that is not on
+    disk fetches it first (~6MB), so a learner can hear any voice before
+    choosing it."""
+    name = tts.normalise(engine)
+    entry = voices.find(name, voice)
+    if entry is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such voice")
+    if not tts.is_downloaded(name):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Download {tts.ENGINE_LABELS[name]} on the AI settings page to hear its voices.",
+        )
+    try:
+        path = await run_in_threadpool(_render_preview, name, entry)
+    except EngineUnavailable as err:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(err)) from err
+    except OSError as err:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Couldn't download that voice: {err}"
+        ) from err
+    return FileResponse(str(path), media_type="audio/wav")
 
 
 @router.post("/models/select", status_code=204)

@@ -60,10 +60,18 @@ _POCKET_LANG = "english_2026-04"
 POCKET_VOICE = "alba"
 POCKET_MODEL_URL = f"https://huggingface.co/{_POCKET_REPO}/resolve/main/languages/{_POCKET_LANG}/model.safetensors"
 POCKET_TOKENIZER_URL = f"https://huggingface.co/{_POCKET_REPO}/resolve/main/languages/{_POCKET_LANG}/tokenizer.model"
-POCKET_VOICE_URL = (
-    f"https://huggingface.co/{_POCKET_REPO}/resolve/main/languages/{_POCKET_LANG}"
-    f"/embeddings/{POCKET_VOICE}.safetensors"
-)
+
+
+def pocket_voice_url(voice: str) -> str:
+    """One voice's embedding. Only the default comes with the engine download;
+    every other voice in voices.POCKET_VOICES is fetched on its own."""
+    return (
+        f"https://huggingface.co/{_POCKET_REPO}/resolve/main/languages/{_POCKET_LANG}"
+        f"/embeddings/{voice}.safetensors"
+    )
+
+
+POCKET_VOICE_URL = pocket_voice_url(POCKET_VOICE)
 
 
 def models_dir() -> Path:
@@ -112,3 +120,9 @@ def pocket_tts_paths() -> tuple[Path, Path, Path]:
         d / "tokenizer.model",
         d / f"{POCKET_VOICE}.safetensors",
     )
+
+
+def pocket_voice_path(voice: str) -> Path:
+    """Where one Pocket TTS voice's embedding lives, downloaded or not. In the
+    same folder as the weights, so deleting the engine removes its voices."""
+    return models_dir() / "pocket-tts" / f"{voice}.safetensors"

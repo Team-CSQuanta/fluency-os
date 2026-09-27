@@ -218,6 +218,10 @@ def gpu_devices() -> list[str]:
             [str(exe), "--list-devices"],
             capture_output=True,
             text=True,
+            # GPU names can carry ™ and ®; decoded as the Windows code page
+            # they could raise instead of listing.
+            encoding="utf-8",
+            errors="replace",
             timeout=60,
             env=_env(exe),
             creationflags=_creationflags(),

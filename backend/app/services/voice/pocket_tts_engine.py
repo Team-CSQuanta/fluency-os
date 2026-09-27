@@ -94,7 +94,12 @@ mimi:
 
 _lock = threading.Lock()
 _model = None
-_voice_state = None
+# Voice key -> its precomputed KV state. Loading one is a ~6MB file read, not
+# inference, but every generation needs it, so the recent few are kept rather
+# than re-read per sentence. Bounded because a learner auditioning voices in
+# Settings would otherwise pin every one of them in memory.
+_voice_states: dict[str, object] = {}
+_MAX_VOICE_STATES = 3
 _sample_rate = 24000
 
 
@@ -110,9 +115,9 @@ def _config_path(weights: Path, tokenizer: Path) -> Path:
 
 def _load_locked():
     """Must only be called while holding `_lock` — see tts_engine for why."""
-    global _model, _voice_state, _sample_rate
+    global _model, _sample_rate
     if _model is not None:
-        return _model, _voice_state
+        return _model
     # Files before imports: "not downloaded yet" is the state a learner
     # actually lands in and can act on, and checking it needs nothing loaded.
     # A missing package is a broken install, not a user error.
@@ -138,17 +143,29 @@ def _load_locked():
         # four: the upstream benchmarks are quoted at two, and leaving
         # headroom keeps the event loop responsive.
         torch.set_num_threads(min(2, torch.get_num_threads() or 2))
-        # The voice embedding is a precomputed KV state, so this is a file
-        # read rather than inference — but it is ~6MB of tensors and every
-        # generation needs it, so it is loaded once here with the model.
-        state = model.get_state_for_audio_prompt(str(voice))
-    except EngineUnavailable:
-        raise
     except Exception as err:  # noqa: BLE001
         raise EngineUnavailable(f"Couldn't load Pocket TTS: {err}") from err
 
-    _model, _voice_state, _sample_rate = model, state, model.sample_rate
-    return _model, _voice_state
+    _model, _sample_rate = model, model.sample_rate
+    return _model
+
+
+def _voice_state_locked(model, voice: str):
+    """The state for one voice, loaded on first use. Also under `_lock`."""
+    state = _voice_states.get(voice)
+    if state is not None:
+        return state
+    path = model_manager.pocket_voice_path(voice)
+    if not path.exists():
+        raise EngineUnavailable("That voice hasn't been downloaded yet — pick it again in Settings.")
+    try:
+        state = model.get_state_for_audio_prompt(str(path))
+    except Exception as err:  # noqa: BLE001
+        raise EngineUnavailable(f"Couldn't load the voice '{voice}': {err}") from err
+    while len(_voice_states) >= _MAX_VOICE_STATES:
+        _voice_states.pop(next(iter(_voice_states)))
+    _voice_states[voice] = state
+    return state
 
 
 def is_installed() -> bool:
@@ -179,16 +196,20 @@ def runtime_info() -> dict:
     }
 
 
-def warm_up() -> None:
+def warm_up(voice: str | None = None) -> None:
+    """Loads the model, and the voice too when told which one — otherwise
+    that is left to the first sentence, since it is only a file read."""
     with _lock:
-        _load_locked()
+        model = _load_locked()
+        if voice:
+            _voice_state_locked(model, voice)
 
 
 def unload() -> None:
-    global _model, _voice_state
+    global _model
     with _lock:
         _model = None
-        _voice_state = None
+        _voice_states.clear()
 
 
 def split_for_streaming(text: str) -> list[str]:
@@ -204,8 +225,9 @@ def split_for_streaming(text: str) -> list[str]:
     return reply_chunking.split_for_streaming(text)
 
 
-def synthesize(text: str) -> bytes:
-    """Returns WAV bytes for the given text."""
+def synthesize(text: str, voice: str | None = None) -> bytes:
+    """Returns WAV bytes for the given text, spoken in `voice` (a key from
+    voices.POCKET_VOICES; the default when None)."""
     clean = text.strip()
     if not clean:
         raise EngineUnavailable("Nothing to synthesize")
@@ -215,7 +237,8 @@ def synthesize(text: str) -> bytes:
     # model state and runs its own decoder thread), so two concurrent turns
     # would corrupt each other's audio rather than merely contend.
     with _lock:
-        model, state = _load_locked()
+        model = _load_locked()
+        state = _voice_state_locked(model, voice or VOICE)
         try:
             chunks = [c for c in model.generate_audio_stream(state, clean, copy_state=True)]
         except Exception as err:  # noqa: BLE001

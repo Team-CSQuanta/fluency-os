@@ -14,7 +14,7 @@ from pathlib import Path
 
 from app.config import settings
 from app.services import cefr_lexicon, dictionary, pagination, review
-from app.services.voice import tts
+from app.services.voice import tts, voices
 from app.utils.ids import uuid7
 from app.utils.time import iso8601_utc_now
 
@@ -724,19 +724,20 @@ def _pronunciation_dir() -> Path:
     return d
 
 
-def pronunciation_path(vocab_word_id: str, text: str, part: str, engine: str) -> Path:
+def pronunciation_path(vocab_word_id: str, text: str, part: str, engine: str, voice: str | None = None) -> Path:
     """Synthesized once, then served from disk.
 
-    Keyed by engine as well as word because the file *is* that engine's voice
-    — the same reason conversation audio chunks are (see
+    Keyed by engine and voice as well as word because the file *is* that
+    voice — the same reason conversation audio chunks are (see
     conversation.audio_chunk_path). Written to a temp file and moved into
     place so a second request for the same clip cannot read a half-written
     WAV."""
     name = tts.normalise(engine)
+    speaker = voices.normalise(name, voice)
     safe_part = "word" if part == "word" else "sentence"
-    path = _pronunciation_dir() / f"{vocab_word_id}.{name}.{safe_part}.wav"
+    path = _pronunciation_dir() / f"{vocab_word_id}.{name}.{speaker}.{safe_part}.wav"
     if not path.exists():
-        audio = tts.engine_for(name).synthesize(text)
+        audio = tts.engine_for(name).synthesize(text, voice=speaker)
         tmp = path.with_suffix(f".{uuid7()}.part")
         try:
             tmp.write_bytes(audio)
@@ -753,20 +754,21 @@ def delete_pronunciation(vocab_word_id: str) -> None:
         stale.unlink(missing_ok=True)
 
 
-def speech_path(text: str, engine: str) -> Path:
+def speech_path(text: str, engine: str, voice: str | None = None) -> Path:
     """Synthesized speech for arbitrary short text, cached by content.
 
     Keyed by a hash of the text rather than by a word id, because the point
     of this one is to speak something that has not been saved yet. Same
-    engine-in-the-name and atomic-rename rules as everything else that writes
+    voice-in-the-name and atomic-rename rules as everything else that writes
     audio here."""
     import hashlib
 
     name = tts.normalise(engine)
+    speaker = voices.normalise(name, voice)
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
-    path = _pronunciation_dir() / f"speak.{name}.{digest}.wav"
+    path = _pronunciation_dir() / f"speak.{name}.{speaker}.{digest}.wav"
     if not path.exists():
-        audio = tts.engine_for(name).synthesize(text)
+        audio = tts.engine_for(name).synthesize(text, voice=speaker)
         tmp = path.with_suffix(f".{uuid7()}.part")
         try:
             tmp.write_bytes(audio)

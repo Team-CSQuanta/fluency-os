@@ -3,6 +3,11 @@
   "private": true,
   "version": "0.1.0",
   "description": "FluencyOS desktop application",
+  "author": {
+    "name": "Team CSQuanta",
+    "email": "tcsquanta@gmail.com"
+  },
+  "homepage": "https://github.com/Team-CSQuanta/fluency-os",
   "main": "dist-electron/main.cjs",
   "workspaces": [
     "renderer"
@@ -12,7 +17,12 @@
     "build:renderer": "npm run build --workspace renderer",
     "build:electron": "node scripts/build-electron.mjs",
     "build": "npm run build:renderer && npm run build:electron",
-    "test:backend": "cd backend && uv run pytest -q"
+    "test:backend": "cd backend && uv run pytest -n auto -q",
+    "test": "node scripts/test-all.mjs",
+    "test:frontend": "npm run test --workspace renderer",
+    "build:backend-runtime": "node scripts/build-backend-runtime.mjs",
+    "dist": "npm run build && npm run build:backend-runtime && electron-builder --publish never",
+    "dist:reuse-runtime": "npm run build && electron-builder --publish never"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

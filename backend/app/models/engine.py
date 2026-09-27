@@ -59,6 +59,36 @@ class SelectTtsEngineIn(BaseModel):
     engine: Literal["kokoro", "pocket"]
 
 
+class VoiceOut(BaseModel):
+    key: str
+    name: str
+    gender: Literal["female", "male"]
+    accent: str | None
+    note: str | None
+    # Kokoro voices come with the engine; each Pocket voice is its own
+    # small download.
+    downloaded: bool
+    approx_size_mb: float
+    download: DownloadStatusOut
+
+
+class VoicesOut(BaseModel):
+    engine: Literal["kokoro", "pocket"]
+    engine_label: str
+    engine_downloaded: bool
+    # What the learner picked, and what replies are spoken in right now. They
+    # differ only while a newly picked voice is still downloading.
+    chosen: str
+    speaking: str
+    voices: list[VoiceOut]
+
+
+class SelectVoiceIn(BaseModel):
+    user_id: str
+    engine: Literal["kokoro", "pocket"]
+    voice: str
+
+
 class ReadinessOut(BaseModel):
     ready: bool
     llm: bool

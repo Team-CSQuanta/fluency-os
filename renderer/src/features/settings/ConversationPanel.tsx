@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Pill, Row, Section, Segmented, Toggle } from '@/features/settings/controls';
+import { VoicePicker } from '@/features/settings/VoicePicker';
 import { useEngineStore } from '@/store/engineStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useShellStore } from '@/store/shellStore';
@@ -160,7 +161,7 @@ export function ConversationPanel() {
 
       <Section title="Voice">
         <Row
-          label="Voice"
+          label="Voice engine"
           sub={
             selected
               ? selected.downloaded
@@ -183,6 +184,12 @@ export function ConversationPanel() {
               <Pill>…</Pill>
             )
           }
+        />
+        <Row
+          label="Speaker"
+          sub="Who speaks the replies and your saved words' pronunciations. Press ▶ to hear a voice before choosing it."
+          stacked
+          control={<VoicePicker engine={selected?.key} playbackRate={settings.conversation_voice_speed} />}
         />
         <Row
           label="Voice speed"

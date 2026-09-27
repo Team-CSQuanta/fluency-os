@@ -28,10 +28,14 @@ class FfmpegFailed(Exception):
 
 def _candidates(name: str) -> list[Path]:
     found: list[Path] = []
+    # On Windows the file is ffmpeg.exe; shutil.which knows that, a bare
+    # path join does not.
+    filename = f"{name}.exe" if os.name == "nt" else name
+    # The installed app points this at the ffmpeg it ships with.
     override = os.environ.get("FLUENCYOS_FFMPEG_DIR")
     if override:
-        found.append(Path(override) / name)
-    found.append(Path(book_storage._data_dir()) / "bin" / name)
+        found.append(Path(override) / filename)
+    found.append(Path(book_storage._data_dir()) / "bin" / filename)
     on_path = shutil.which(name)
     if on_path:
         found.append(Path(on_path))
@@ -81,6 +85,10 @@ def run(argv: list[str], *, timeout: float = 300.0) -> str:
             argv,
             capture_output=True,
             text=True,
+            # ffmpeg writes UTF-8; Windows would otherwise decode it with the
+            # console code page and mangle any non-English file name.
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             check=False,
         )

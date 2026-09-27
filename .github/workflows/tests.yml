@@ -1,0 +1,54 @@
+# Runs every automated check on each push and pull request — the same
+# `npm test` a developer runs locally — and keeps the HTML report as a
+# downloadable artifact of the run.
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # The media tests run real videos through ffmpeg, and skip without it.
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+        env:
+          # Tests never launch Electron; skip its ~100MB binary.
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.11'
+          # Caches built wheels too — llama-cpp-python compiles from source,
+          # and only has to the first time.
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install Python dependencies
+        working-directory: backend
+        run: uv sync --group dev
+
+      - name: Run all tests
+        run: npm test
+
+      - name: Keep the test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: test-reports/
+          retention-days: 30

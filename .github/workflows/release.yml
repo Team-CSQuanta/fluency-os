@@ -1,0 +1,78 @@
+# Builds the FluencyOS installers: a Windows setup .exe, and a Linux .deb and
+# AppImage. Each is built on its own OS, because the bundled backend contains
+# compiled code (PyTorch, llama.cpp, ctranslate2…) that only builds natively.
+#
+#   Run it by hand:   Actions → Build installers → Run workflow
+#                     (the installers are attached to the run as artifacts)
+#   Publish a release: push a tag such as v0.1.0
+#                     (they are also attached to a GitHub Release)
+name: Build installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # attaching files to a GitHub Release
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+          # The oldest supported Ubuntu, not the newest: an AppImage runs on
+          # distributions at least as new as the one it was built on.
+          - os: ubuntu-22.04
+            name: linux
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          # Caches built wheels: llama-cpp-python compiles from source, and
+          # only has to the first time.
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      # The version in package.json becomes the installer's version; a tag
+      # like v0.2.0 overrides it so the file names match the release.
+      - name: Set version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: npm version --no-git-tag-version --allow-same-version "${GITHUB_REF_NAME#v}"
+
+      - name: Build installers
+        run: npm run dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FluencyOS-${{ matrix.name }}
+          path: |
+            release/*.exe
+            release/*.deb
+            release/*.AppImage
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.exe
+            release/*.deb
+            release/*.AppImage

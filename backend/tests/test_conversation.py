@@ -233,8 +233,8 @@ def test_submit_user_turn_on_a_legacy_session_uses_current_preference_not_fixed_
 
 def test_submit_user_turn_voice_channel_transcribes_and_synthesizes(tmp_path, fake_llm, monkeypatch):
     monkeypatch.setattr(conversation.stt_engine, "transcribe", lambda audio_bytes: ("transcribed text", 0.87, 3.5))
-    monkeypatch.setattr(tts_engine, "synthesize", lambda text: b"RIFF-fake-wav-bytes")
-    monkeypatch.setattr(pocket_tts_engine, "synthesize", lambda text: b"RIFF-fake-wav-bytes")
+    monkeypatch.setattr(tts_engine, "synthesize", lambda text, voice=None: b"RIFF-fake-wav-bytes")
+    monkeypatch.setattr(pocket_tts_engine, "synthesize", lambda text, voice=None: b"RIFF-fake-wav-bytes")
 
     conn = _fresh_conn(tmp_path)
     user_id = _make_user(conn)
@@ -289,8 +289,8 @@ def test_submit_user_turn_raises_clear_error_when_transcript_is_empty(tmp_path, 
     outright with a confusing unrelated-looking error. Fail honestly here
     instead of ever calling the LLM with an empty turn."""
     monkeypatch.setattr(conversation.stt_engine, "transcribe", lambda audio_bytes: ("   ", 0.2, 1.0))
-    monkeypatch.setattr(tts_engine, "synthesize", lambda text: b"RIFF-fake-wav-bytes")
-    monkeypatch.setattr(pocket_tts_engine, "synthesize", lambda text: b"RIFF-fake-wav-bytes")
+    monkeypatch.setattr(tts_engine, "synthesize", lambda text, voice=None: b"RIFF-fake-wav-bytes")
+    monkeypatch.setattr(pocket_tts_engine, "synthesize", lambda text, voice=None: b"RIFF-fake-wav-bytes")
 
     conn = _fresh_conn(tmp_path)
     user_id = _make_user(conn)
@@ -374,8 +374,8 @@ def test_can_continue_a_session_after_it_was_ended(tmp_path, fake_llm):
 
 
 def test_delete_session_removes_row_turns_and_audio_files(tmp_path, fake_llm, monkeypatch):
-    monkeypatch.setattr(tts_engine, "synthesize", lambda text: b"RIFF-fake-wav-bytes")
-    monkeypatch.setattr(pocket_tts_engine, "synthesize", lambda text: b"RIFF-fake-wav-bytes")
+    monkeypatch.setattr(tts_engine, "synthesize", lambda text, voice=None: b"RIFF-fake-wav-bytes")
+    monkeypatch.setattr(pocket_tts_engine, "synthesize", lambda text, voice=None: b"RIFF-fake-wav-bytes")
     conn = _fresh_conn(tmp_path)
     user_id = _make_user(conn)
     session_id = conversation.start_session(conn, user_id=user_id, scenario="free", channel="voice")
@@ -519,8 +519,8 @@ def test_submit_turn_route_returns_400_when_transcript_is_empty(client, auth_hea
         lambda system_prompt, history, *, repo_id, filename, max_tokens=220: "Hi!",
     )
     monkeypatch.setattr(conversation_router.conversation.stt_engine, "transcribe", lambda audio_bytes: ("  ", 0.1, 1.0))
-    monkeypatch.setattr(tts_engine, "synthesize", lambda text: b"RIFF-fake-wav-bytes")
-    monkeypatch.setattr(pocket_tts_engine, "synthesize", lambda text: b"RIFF-fake-wav-bytes")
+    monkeypatch.setattr(tts_engine, "synthesize", lambda text, voice=None: b"RIFF-fake-wav-bytes")
+    monkeypatch.setattr(pocket_tts_engine, "synthesize", lambda text, voice=None: b"RIFF-fake-wav-bytes")
 
     user_id = _create_user(client, auth_headers)
     start = client.post(

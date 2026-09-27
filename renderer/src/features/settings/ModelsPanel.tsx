@@ -375,7 +375,7 @@ export function ModelsPanel() {
 
       <div>
         <div className="mb-2 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
-          Speech-to-text and text-to-speech — needed for voice conversations · pick one voice
+          Speech-to-text and text-to-speech — needed for voice conversations · pick one voice engine; who speaks is chosen in Conversation settings
         </div>
         <div className="flex flex-col gap-[1px] overflow-hidden rounded-panel border border-line2 bg-panel">
           <div className="flex items-center justify-between gap-4 border-b border-line2 px-4 py-[13px]">
@@ -401,7 +401,7 @@ export function ModelsPanel() {
                     !o.installed
                       ? 'this voice needs the optional "pocket" extra installed'
                       : o.downloaded
-                        ? 'use this voice'
+                        ? 'use this voice engine'
                         : 'download it first to select it'
                   }
                 />

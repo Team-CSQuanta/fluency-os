@@ -70,7 +70,9 @@ export async function fetchBlobUrl(path: string): Promise<string> {
   const { baseUrl, token } = requireBackendInfo();
   const res = await fetch(`${baseUrl}${path}`, { headers: { 'X-FluencyOS-Token': token } });
   if (!res.ok) {
-    throw new ApiError('GET', path, res.status, '');
+    // Kept so the server's `detail` (why there is no audio, say) reaches the UI.
+    const body = await res.text().catch(() => '');
+    throw new ApiError('GET', path, res.status, body);
   }
   const blob = await res.blob();
   return URL.createObjectURL(blob);

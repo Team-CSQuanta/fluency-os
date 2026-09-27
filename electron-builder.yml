@@ -1,0 +1,89 @@
+# Installers for FluencyOS: `npm run dist` (see scripts/build-backend-runtime.mjs
+# for the backend half, and .github/workflows/release.yml for building both
+# platforms).
+appId: org.csquanta.fluencyos
+productName: FluencyOS
+copyright: Copyright © 2026 Team CSQuanta
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+
+directories:
+  output: release
+  buildResources: build
+
+# The Electron that `npm ci` already installed (same version, from the
+# lockfile), instead of downloading a second copy from GitHub at build time.
+electronDist: node_modules/electron/dist
+
+# Only what the installed app runs. Without this list electron-builder would
+# take the whole repository — including backend/.venv at ~1.6GB.
+files:
+  - package.json
+  - dist-electron/**
+  - "!dist-electron/**/*.map"
+  - renderer/dist/**
+  - build/icon.png
+
+# The self-contained backend: portable Python, its packages, the backend's
+# code and ffmpeg. Outside the asar archive, because Python has to read it as
+# ordinary files.
+extraResources:
+  - from: build/backend-runtime
+    to: backend-runtime
+
+# Linux: a launcher script in front of the Electron binary, so an AppImage
+# can start where the OS blocks Chromium's usual sandbox (see the file).
+afterPack: scripts/after-pack.cjs
+
+# The runtime is mostly already-compressed native libraries; maximum
+# compression costs minutes of build time for a few percent.
+compression: normal
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.png
+
+nsis:
+  # A normal "Next, Next, Install" wizard rather than a silent one-click.
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: FluencyOS
+  # Uninstalling keeps the learner's library, vocabulary and downloaded
+  # models; they are in the user's app-data folder, not the install folder.
+  deleteAppDataOnUninstall: false
+
+linux:
+  target:
+    - target: deb
+      arch: [x64]
+    - target: AppImage
+      arch: [x64]
+  icon: build/icon.png
+  category: Education
+  synopsis: Offline-first English learning from real books, films and conversation
+  description: >-
+    Meet a word in real media, understand it in that exact context, keep it
+    with the page or clip it came from, review it, and use it in conversation.
+    The AI runs on your own computer.
+  maintainer: Team CSQuanta <tcsquanta@gmail.com>
+
+deb:
+  # Installs Chromium's sandbox helper setuid on every system — the default
+  # script skips that on Ubuntu 24.04+, where the app then cannot start.
+  afterInstall: build/linux/after-install.sh
+  # Chromium's own runtime needs; everything the backend needs is bundled.
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0
+    - libasound2 | libasound2t64

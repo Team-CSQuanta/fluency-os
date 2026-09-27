@@ -19,6 +19,12 @@ from app.services.voice.errors import EngineUnavailable
 VOICE = model_manager.TTS_VOICE
 LANG = "en-us"
 
+
+def _lang_for(voice: str) -> str:
+    """Kokoro's b-prefixed voices are British; reading them with American
+    phonemes gives a British voice saying American vowels."""
+    return "en-gb" if voice.startswith("b") else LANG
+
 _lock = threading.Lock()
 _kokoro = None
 # The ONNX Runtime provider the voice actually runs on, for Settings.
@@ -111,8 +117,10 @@ def split_for_streaming(text: str) -> list[str]:
     return reply_chunking.split_for_streaming(text)
 
 
-def synthesize(text: str) -> bytes:
-    """Returns WAV bytes for the given text."""
+def synthesize(text: str, voice: str | None = None) -> bytes:
+    """Returns WAV bytes for the given text, spoken in `voice` (a key from
+    voices.KOKORO_VOICES; the default when None). Every voice lives in the one
+    voices file, so switching costs nothing."""
     clean = text.strip()
     if not clean:
         raise EngineUnavailable("Nothing to synthesize")
@@ -125,7 +133,8 @@ def synthesize(text: str) -> bytes:
     with _lock:
         kokoro = _load_kokoro_locked()
     try:
-        samples, sample_rate = kokoro.create(clean, voice=VOICE, speed=1.0, lang=LANG)
+        name = voice or VOICE
+        samples, sample_rate = kokoro.create(clean, voice=name, speed=1.0, lang=_lang_for(name))
     except Exception as err:  # noqa: BLE001
         raise EngineUnavailable(f"Local speech synthesis failed: {err}") from err
 

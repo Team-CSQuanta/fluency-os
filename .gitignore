@@ -29,3 +29,12 @@ claude-ui-mockup-files/
 fluencyos_spec.md
 renderer/tsconfig.tsbuildinfo
 low-poly-models/
+# test runs (npm test)
+test-reports/
+backend/.coverage
+backend/.coverage.*
+
+# installer builds (npm run dist)
+build/backend-runtime/
+build/.runtime-work/
+build/.cache/

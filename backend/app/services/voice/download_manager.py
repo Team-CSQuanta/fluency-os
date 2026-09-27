@@ -167,6 +167,45 @@ def _run_pocket_tts_download(key: str) -> None:
             state.status, state.error = "error", str(err)
 
 
+def _run_pocket_voice_download(key: str, voice: str) -> None:
+    """One extra Pocket TTS voice — a single ~6MB embedding next to the
+    engine's own files."""
+    state = _state_for(key)
+    with state.lock:
+        state.status, state.error, state.downloaded_bytes, state.total_bytes = "downloading", None, 0, 0
+    try:
+        url = model_manager.pocket_voice_url(voice)
+        with state.lock:
+            state.total_bytes = _content_length(url)
+        _stream_to_file(url, model_manager.pocket_voice_path(voice), state)
+        with state.lock:
+            state.status = "ready"
+    except (urllib.error.URLError, OSError) as err:
+        with state.lock:
+            state.status, state.error = "error", str(err)
+
+
+def download_pocket_voice_now(voice: str) -> None:
+    """The same download on the calling thread, for a preview: the learner
+    pressed play and is waiting to hear exactly this voice. Joins a download
+    of the same voice already in flight instead of starting a second writer
+    on the same file."""
+    key = download_key("pocket_voice", voice)
+    state = _state_for(key)
+    with state.lock:
+        busy = state.status == "downloading"
+        if not busy:
+            state.status, state.error = "downloading", None
+    if busy:
+        while status(key)["status"] == "downloading":
+            threading.Event().wait(0.3)
+    else:
+        _run_pocket_voice_download(key, voice)
+    result = status(key)
+    if result["status"] != "ready":
+        raise OSError(result["error"] or "that voice could not be downloaded")
+
+
 def _run_stt_download(key: str) -> None:
     # faster-whisper manages its own HF cache/download internally with no
     # byte-progress hook exposed publicly — this just brackets the (blocking,
@@ -233,7 +272,8 @@ def download_gpu_runtime_now() -> None:
 
 
 def start_download(kind: str, key: str) -> None:
-    """kind: 'llm' | 'stt' | 'tts' | 'pocket_tts' | 'gpu_runtime'. key: catalog key for 'llm', ignored otherwise."""
+    """kind: 'llm' | 'stt' | 'tts' | 'pocket_tts' | 'pocket_voice' | 'gpu_runtime'.
+    key: catalog key for 'llm', voice key for 'pocket_voice', ignored otherwise."""
     state = _state_for(download_key(kind, key))
     with state.lock:
         if state.status == "downloading":
@@ -249,6 +289,10 @@ def start_download(kind: str, key: str) -> None:
         thread = threading.Thread(target=_run_tts_download, args=(download_key(kind, key),), daemon=True)
     elif kind == "pocket_tts":
         thread = threading.Thread(target=_run_pocket_tts_download, args=(download_key(kind, key),), daemon=True)
+    elif kind == "pocket_voice":
+        thread = threading.Thread(
+            target=_run_pocket_voice_download, args=(download_key(kind, key), key), daemon=True
+        )
     elif kind == "stt":
         thread = threading.Thread(target=_run_stt_download, args=(download_key(kind, key),), daemon=True)
     elif kind == "gpu_runtime":
@@ -259,4 +303,4 @@ def start_download(kind: str, key: str) -> None:
 
 
 def download_key(kind: str, key: str) -> str:
-    return f"{kind}:{key}" if kind == "llm" else kind
+    return f"{kind}:{key}" if kind in ("llm", "pocket_voice") else kind
