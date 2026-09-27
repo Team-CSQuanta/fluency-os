@@ -19,6 +19,7 @@
     "build": "npm run build:renderer && npm run build:electron",
     "test:backend": "cd backend && uv run pytest -n auto -q",
     "test": "node scripts/test-all.mjs",
+    "test:beginner": "node scripts/test-beginner.mjs",
     "test:frontend": "npm run test --workspace renderer",
     "build:backend-runtime": "node scripts/build-backend-runtime.mjs",
     "dist": "npm run build && npm run build:backend-runtime && electron-builder --publish never",

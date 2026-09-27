@@ -181,6 +181,7 @@ const coverage = readCoverage();
 // organised the way the product is, not the way the folder is.
 // First match wins, so the narrower rules come first.
 const AREAS = [
+  ['Beginner examples', /^test_[12]_/],
   ['Progress & forest', /^test_(forest|reading_goal|activity)/],
   ['Learn by reading', /^test_(book|books|epub|pdf|mobi|txt|ingest|pagination|native_pages|page_|reader|reading|highlights|search|jump|difficulty|cefr_lexicon)/],
   ['Learn by watching', /^test_media/],
@@ -197,6 +198,7 @@ const AREAS = [
 const areaOf = (file) => AREAS.find(([, re]) => re.test(file))[0];
 // Shown in the order the app presents its features.
 const AREA_ORDER = [
+  'Beginner examples',
   'Learn by reading',
   'Learn by watching',
   'Speech to text',
