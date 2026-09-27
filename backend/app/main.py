@@ -18,7 +18,6 @@ from app.routers import (
     hardware,
     health,
     media,
-    placement,
     reading,
     review,
     users,
@@ -65,7 +64,6 @@ app.include_router(forest.router)
 app.include_router(health.router)
 app.include_router(users.router)
 app.include_router(users.file_router)
-app.include_router(placement.router)
 app.include_router(level_test.router)
 app.include_router(hardware.router)
 app.include_router(books.router)

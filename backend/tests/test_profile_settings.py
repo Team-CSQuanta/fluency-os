@@ -60,7 +60,11 @@ def test_an_empty_display_name_is_refused(client, auth_headers):
 
 
 def test_the_level_can_be_changed_here_too(client, auth_headers):
+    """Down freely; up only by the level test (see test_level_test)."""
+    from tests.levels import give_level
+
     user_id = _user(client, auth_headers)
+    give_level(user_id, "C1")
     res = client.patch(f"/users/{user_id}", headers=auth_headers, json={"cefr_level": "B2"})
     assert res.json()["cefr_level"] == "B2"
 

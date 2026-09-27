@@ -168,20 +168,18 @@ def clear_avatar(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> Us
 
 
 def _check_level_change(conn: sqlite3.Connection, user_id: str, level: str) -> None:
-    """A level can only go UP by passing the level test (routers/level_test).
-    The first placement — no level yet — and moving down are free."""
+    """A level above A1 is only reached by passing the level test
+    (routers/level_test) — during onboarding as much as after it. Starting at
+    A1 and moving down are free; see level_test.free_to_set."""
     from app.services import level_test
 
     if level not in level_test.LEVELS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{level} is not a CEFR level.")
     current = level_test.current_level(conn, user_id)
-    row = conn.execute("SELECT onboarding_completed_at FROM users WHERE id = ?", (user_id,)).fetchone()
-    # Onboarding's placement step can be redone before onboarding finishes.
-    onboarding = row is not None and row["onboarding_completed_at"] is None
-    if not onboarding and current is not None and level_test.rank(level) > level_test.rank(current):
+    if not level_test.free_to_set(current, level):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Moving up to {level} needs the level test — take it from Settings → Account.",
+            detail=f"Reaching {level} needs the level test — take it for that level to move up.",
         )
 
 

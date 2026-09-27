@@ -1,19 +1,34 @@
 from pydantic import BaseModel
 
 
-class HardwareAssessRequest(BaseModel):
+class RecommendIn(BaseModel):
     cpu_cores: int
     total_ram_bytes: int
+    #: The GPU's vendor as the desktop shell saw it ("amd", "nvidia", "intel",
+    #: "apple"), or None when there is only a software renderer.
+    gpu_vendor: str | None = None
 
 
-class TierCapabilityOut(BaseModel):
-    tier: str
-    capable: bool
-    min_ram_gb: float
-    min_cores: int
+class ModelFitOut(BaseModel):
+    key: str
+    label: str
+    size_mb: int
+    needs_gb: float
+    #: "good" | "tight" | "too_big"
+    fit: str
+    #: "quick" | "steady" | "slow"
+    speed: str
+    note: str
+    recommended: bool
 
 
-class HardwareAssessmentOut(BaseModel):
-    recommended_tier: str | None
-    any_local_capable: bool
-    tiers: list[TierCapabilityOut]
+class RecommendationOut(BaseModel):
+    ram_gb: float
+    cores: int
+    gpu: str | None
+    gpu_used: bool
+    available_gb: float
+    recommended: str
+    reason: str
+    cloud_suggested: bool
+    models: list[ModelFitOut]

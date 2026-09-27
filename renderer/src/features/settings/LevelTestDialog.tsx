@@ -21,6 +21,8 @@ export const LEVEL_INFO: Record<CefrLevel, { name: string; can: string }> = {
 };
 
 const LETTERS = ['A', 'B', 'C', 'D'];
+const ORDER: CefrLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+const rank = (level: CefrLevel | null) => (level ? ORDER.indexOf(level) : -1);
 
 function clockTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -31,7 +33,11 @@ function remaining(expiresAt: string, now: number): number {
 }
 
 /** The level test, from choosing a level to the result. A dialog over the
- * whole window: it is timed, and nothing else should compete with it. */
+ * whole window: it is timed, and nothing else should compete with it.
+ *
+ * Also onboarding's placement: a learner with no level yet takes the test at
+ * the level they think they are at, then climbs (or steps down) from the
+ * result. A1 is the floor and needs no test. */
 export function LevelTestDialog({
   overview,
   onClose,
@@ -58,11 +64,28 @@ export function LevelTestDialog({
     setError(null);
     try {
       const made = await api.post<LevelAttemptOut>('/level-test/attempts', { user_id: userId, level });
+      setResult(null);
       setAttempt(made);
       setAnswers(made.questions.map(() => null));
       setIndex(0);
     } catch (err) {
       setError(friendlyMessage(err, 'Starting the level test'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** A1 is the floor: starting there is a choice, not a claim to prove. */
+  const startAtA1 = async () => {
+    if (!userId || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.patch(`/users/${userId}/placement`, { cefr_level: 'A1' });
+      onChanged();
+      onClose();
+    } catch (err) {
+      setError(friendlyMessage(err, 'Starting at A1'));
     } finally {
       setBusy(false);
     }
@@ -124,6 +147,19 @@ export function LevelTestDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [testing, leaving, attempt, index]);
 
+  // Where to go from a result: up after a pass, down after a failure — as
+  // long as that is a level the learner has not already got.
+  const unplaced = !overview.current;
+  const levelNow: CefrLevel | null = result?.new_level ?? overview.current;
+  const tried = result ? rank(result.level) : -1;
+  const followOn: CefrLevel | null = !result
+    ? null
+    : result.passed
+      ? (ORDER[tried + 1] ?? null)
+      : tried > 0 && rank(ORDER[tried - 1]) > rank(levelNow)
+        ? ORDER[tried - 1]
+        : null;
+
   const answered = answers.filter((a) => a !== null).length;
   const question = attempt?.questions[index];
   const minutes = Math.floor(secondsLeft / 60);
@@ -147,7 +183,11 @@ export function LevelTestDialog({
         {/* header */}
         <div className="flex items-center justify-between gap-3 border-b border-line2 px-5 py-[13px]">
           <div className="font-sans text-[14px] font-semibold text-tx">
-            {attempt ? `Level test · ${attempt.level} ${LEVEL_INFO[attempt.level].name}` : 'Take a level test'}
+            {attempt
+              ? `Level test · ${attempt.level} ${LEVEL_INFO[attempt.level].name}`
+              : unplaced
+                ? 'Find your level'
+                : 'Take a level test'}
           </div>
           <div className="flex items-center gap-3">
             {testing && (
@@ -170,7 +210,10 @@ export function LevelTestDialog({
           {!attempt && (
             <>
               <p className="font-sans text-[12.5px] leading-[1.65] text-tx2">
-                Moving up a level takes a test at that level: {overview.questions} questions, {overview.minutes}{' '}
+                {unplaced
+                  ? 'Choose the level you think you are at. Pass its test and that is your level — then you can try the next one up straight away. '
+                  : 'Moving up a level takes a test at that level. '}
+                {overview.questions} questions, {overview.minutes}{' '}
                 minutes, pass with {Math.ceil(overview.questions * overview.pass_share)} right. Most questions are at
                 the level you choose and a few come from the one below. They are drawn at random and the choices
                 shuffled, so every test is different. After a failed attempt, that level can be tried again in{' '}
@@ -181,11 +224,13 @@ export function LevelTestDialog({
                   const info = LEVEL_INFO[l.level];
                   const waiting = l.retry_after && new Date(l.retry_after).getTime() > now;
                   const canTake = l.relation === 'above' && !waiting;
+                  // With no level yet, A1 is a starting point rather than a test.
+                  const floor = l.level === 'A1' && l.relation === 'above';
                   return (
                     <button
                       key={l.level}
                       disabled={!canTake || busy}
-                      onClick={() => void begin(l.level)}
+                      onClick={() => void (floor ? startAtA1() : begin(l.level))}
                       className="flex flex-col rounded-field border px-[13px] py-[11px] text-left disabled:cursor-default"
                       style={{
                         borderColor: l.relation === 'current' ? 'var(--accLine)' : 'var(--line2)',
@@ -206,7 +251,9 @@ export function LevelTestDialog({
                                 ? `again after ${clockTime(l.retry_after!)}`
                                 : busy
                                   ? 'preparing…'
-                                  : 'take the test →'}
+                                  : floor
+                                    ? 'start here — no test'
+                                    : 'take the test →'}
                         </span>
                       </span>
                       <span className="mt-[4px] font-sans text-[11px] leading-[1.5] text-tx3">{info.can}</span>
@@ -215,8 +262,9 @@ export function LevelTestDialog({
                 })}
               </div>
               <p className="mt-3 font-mono text-[9.5px] leading-[1.6] text-tx3">
-                a practical check, not an official CEFR exam · moving down needs no test — use Move down on the
-                Account page
+                {unplaced
+                  ? 'a practical check, not an official CEFR exam · the same test moves you up later, from Settings → Account'
+                  : 'a practical check, not an official CEFR exam · moving down needs no test — use Move down on the Account page'}
               </p>
             </>
           )}
@@ -320,7 +368,7 @@ export function LevelTestDialog({
               <p className="mx-auto mt-5 max-w-[440px] font-sans text-[12px] leading-[1.65] text-tx3">
                 {result.passed
                   ? 'Reading tints, target words and your conversation partner now work at this level.'
-                  : `Your level stays as it was. You can try ${result.level} again after ${clockTime(result.retry_after!)} — the questions will be different.`}
+                  : `${levelNow ? 'Your level stays as it was.' : 'No level is set yet.'} You can try ${result.level} again after ${clockTime(result.retry_after!)} — the questions will be different.`}
               </p>
             </div>
           )}
@@ -386,12 +434,29 @@ export function LevelTestDialog({
           ) : (
             <>
               <span />
-              <button
-                onClick={onClose}
-                className="rounded-field bg-accSolid px-4 py-[7px] font-sans text-[11.5px] font-semibold text-white"
-              >
-                {result ? 'Done' : 'Close'}
-              </button>
+              <span className="flex gap-2">
+                {followOn && (
+                  <button
+                    onClick={() => void (followOn === 'A1' ? startAtA1() : begin(followOn))}
+                    disabled={busy}
+                    className="rounded-field border border-accLine bg-accSoft px-3 py-[7px] font-sans text-[11.5px] font-semibold text-acc disabled:opacity-60"
+                  >
+                    {busy
+                      ? 'preparing…'
+                      : followOn === 'A1'
+                        ? 'Start at A1'
+                        : result?.passed
+                          ? `Try ${followOn} too →`
+                          : `Try ${followOn} instead →`}
+                  </button>
+                )}
+                <button
+                  onClick={onClose}
+                  className="rounded-field bg-accSolid px-4 py-[7px] font-sans text-[11.5px] font-semibold text-white"
+                >
+                  {result ? 'Done' : 'Close'}
+                </button>
+              </span>
             </>
           )}
         </div>

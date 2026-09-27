@@ -23,6 +23,7 @@ import { Forest } from '@/features/forest/Forest';
 import { Settings } from '@/features/settings/Settings';
 import { useAppStore } from '@/store/appStore';
 import { useShellStore } from '@/store/shellStore';
+import { useReviewReminder } from '@/features/review/useReviewReminder';
 
 function ScreenContent() {
   const screen = useShellStore((s) => s.screen);
@@ -62,6 +63,7 @@ function ScreenContent() {
 
 function MainApp() {
   const screen = useShellStore((s) => s.screen);
+  useReviewReminder();
   // Player/Reader want the full content area with no scroll container of their own.
   const immersive = screen === 'player' || screen === 'reader' || screen === 'convlive';
   const contentClass = immersive ? 'flex min-h-0 flex-1' : 'min-h-0 flex-1 overflow-auto';

@@ -14,6 +14,11 @@ import { logger } from './logger';
 // and the log file included.
 app.setPath('userData', path.join(app.getPath('appData'), 'fluencyos'));
 
+// Windows shows notifications only for an app with an AppUserModelID. The
+// installer registers electron-builder.yml's appId, so the same one is used
+// here and a development run is the same app to Windows.
+if (process.platform === 'win32') app.setAppUserModelId('org.csquanta.fluencyos');
+
 let backendHandle: BackendHandle | null = null;
 let mainWindow: BrowserWindow | null = null;
 // Set true only once the user has confirmed "close anyway" in the renderer's

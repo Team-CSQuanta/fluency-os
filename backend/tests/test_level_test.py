@@ -131,16 +131,20 @@ def test_generated_vocabulary_never_gives_the_answer_away():
 
 
 def test_the_profile_refuses_a_level_jump_without_the_test(client, auth_headers):
+    from tests.levels import give_level
     from tests.test_conversation import _create_user
 
     user_id = _create_user(client, auth_headers)
+    # Onboarding is no exception: a new learner cannot simply pick B1 either.
     first = client.patch(f"/users/{user_id}/placement", headers=auth_headers, json={"cefr_level": "B1"})
-    assert first.status_code == 200
-    # Redone during onboarding, placement may still go up...
-    assert client.patch(f"/users/{user_id}/placement", headers=auth_headers, json={"cefr_level": "B2"}).status_code == 200
-    assert client.patch(f"/users/{user_id}/placement", headers=auth_headers, json={"cefr_level": "B1"}).status_code == 200
-    # ...but once onboarding is over, only the test moves it up.
+    assert first.status_code == 403 and "level test" in first.json()["detail"]
+    # Starting at A1 needs no test.
+    a1 = client.patch(f"/users/{user_id}/placement", headers=auth_headers, json={"cefr_level": "A1"})
+    assert a1.status_code == 200 and a1.json()["cefr_level"] == "A1"
+    # A level earned by passing its test (set here as the test would)...
+    give_level(user_id, "B1")
     client.post(f"/users/{user_id}/onboarding/complete", headers=auth_headers)
+    # ...is still only a way up through the test.
     assert client.patch(f"/users/{user_id}/placement", headers=auth_headers, json={"cefr_level": "C2"}).status_code == 403
     up = client.patch(f"/users/{user_id}", headers=auth_headers, json={"cefr_level": "C1"})
     assert up.status_code == 403 and "level test" in up.json()["detail"]
@@ -167,3 +171,59 @@ def test_a_test_left_to_run_out_counts_as_a_failed_attempt(tmp_path):
     after = NOW + level_test.TIME_LIMIT + timedelta(minutes=5)
     with pytest.raises(level_test.LevelTestError, match="again after"):
         level_test.start(conn, "u1", "B2", now=after)
+
+
+# --- placement: onboarding uses the same test ------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("current", "level", "free"),
+    [
+        (None, "A1", True),  # starting as a beginner needs no proof
+        (None, "A2", False),  # but nothing above A1 does
+        (None, "C2", False),
+        ("B1", "A2", True),  # down is free
+        ("B1", "B1", True),
+        ("B1", "B2", False),  # up is earned
+        ("C1", "A1", True),
+    ],
+)
+def test_which_levels_can_be_set_without_a_test(current, level, free):
+    assert level_test.free_to_set(current, level) is free
+
+
+def test_a_new_learner_is_placed_by_passing_the_test_for_their_level(tmp_path):
+    """Onboarding's placement is the level test: a learner with no level yet
+    takes the test for the level they believe they are at, and passing it is
+    what sets it — the same rule as every later move up."""
+    conn = _conn(tmp_path, None)
+    attempt = level_test.start(conn, "u1", "B1", now=NOW)
+    assert len(attempt["questions"]) == level_test.AT_LEVEL + level_test.BELOW_LEVEL
+    right = level_test.pass_mark(len(attempt["questions"]))
+    result = level_test.submit(conn, "u1", attempt["id"], _answers(conn, attempt["id"], right=right), now=NOW)
+    assert result.passed and result.new_level == "B1"
+    assert level_test.current_level(conn, "u1") == "B1"
+    # Straight on to the next level up, as onboarding offers.
+    assert level_test.start(conn, "u1", "B2", now=NOW)["level"] == "B2"
+
+
+def test_failing_the_first_test_leaves_the_learner_unplaced(tmp_path):
+    """No level is handed out for a failed test — onboarding then offers the
+    test one level down, or starting at A1."""
+    conn = _conn(tmp_path, None)
+    attempt = level_test.start(conn, "u1", "B2", now=NOW)
+    result = level_test.submit(conn, "u1", attempt["id"], _answers(conn, attempt["id"], right=3), now=NOW)
+    assert not result.passed and result.new_level is None
+    assert level_test.current_level(conn, "u1") is None
+    # The level below can be tried at once; the failed one has to wait.
+    assert level_test.start(conn, "u1", "B1", now=NOW)["level"] == "B1"
+    with pytest.raises(level_test.LevelTestError):
+        level_test.start(conn, "u1", "B2", now=NOW + timedelta(minutes=5))
+
+
+def test_a_learner_without_a_level_can_start_at_a1_but_not_move_to_b1(tmp_path):
+    conn = _conn(tmp_path, None)
+    with pytest.raises(level_test.LevelTestError):
+        level_test.move_down(conn, "u1", "B1")
+    level_test.move_down(conn, "u1", "A1")
+    assert level_test.current_level(conn, "u1") == "A1"

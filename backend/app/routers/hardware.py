@@ -1,20 +1,24 @@
+from dataclasses import asdict
+
 from fastapi import APIRouter, Depends
 
-from app.models.hardware import HardwareAssessmentOut, HardwareAssessRequest, TierCapabilityOut
+from app.models.hardware import RecommendationOut, RecommendIn
 from app.security import require_token
-from app.services.hardware_capability import assess_hardware
+from app.services.hardware_capability import recommend
+from app.services.voice import compute, llama_runtime
 
 router = APIRouter(prefix="/engine", dependencies=[Depends(require_token)])
 
 
-@router.post("/assess-hardware", response_model=HardwareAssessmentOut)
-def assess(payload: HardwareAssessRequest) -> HardwareAssessmentOut:
-    result = assess_hardware(payload.cpu_cores, payload.total_ram_bytes)
-    return HardwareAssessmentOut(
-        recommended_tier=result.recommended_tier,
-        any_local_capable=result.any_local_capable,
-        tiers=[
-            TierCapabilityOut(tier=t.tier, capable=t.capable, min_ram_gb=t.min_ram_gb, min_cores=t.min_cores)
-            for t in result.tiers
-        ],
+@router.post("/recommend", response_model=RecommendationOut)
+def recommend_model(payload: RecommendIn) -> RecommendationOut:
+    """Which of the app's local models suits this computer, and why."""
+    result = recommend(
+        payload.cpu_cores,
+        payload.total_ram_bytes,
+        payload.gpu_vendor,
+        # A GPU only helps where llama.cpp publishes a GPU build for this
+        # platform, and while the learner has not pinned the AI to the CPU.
+        gpu_build_available=llama_runtime.gpu_asset() is not None and compute.wants_gpu(),
     )
+    return RecommendationOut(**asdict(result))

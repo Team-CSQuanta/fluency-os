@@ -1,5 +1,7 @@
 """/reading route tests (spec Phase 6): heat and offline word lookup."""
 
+from tests.levels import give_level
+
 
 def _create_user(client, auth_headers, cefr_level=None):
     res = client.post(
@@ -15,10 +17,7 @@ def _create_user(client, auth_headers, cefr_level=None):
     assert res.status_code == 201
     user_id = res.json()["id"]
     if cefr_level:
-        patched = client.patch(
-            f"/users/{user_id}/placement", headers=auth_headers, json={"cefr_level": cefr_level}
-        )
-        assert patched.status_code == 200
+        give_level(user_id, cefr_level)
     return user_id
 
 

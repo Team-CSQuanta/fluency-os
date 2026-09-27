@@ -78,7 +78,7 @@ function LevelSection() {
         <div className="min-w-0 flex-1">
           <div className="font-sans text-[13.5px] font-semibold text-tx">{info ? info.name : 'Not placed yet'}</div>
           <div className="mt-[3px] font-sans text-[11px] leading-[1.55] text-tx3">
-            {info ? info.can : 'The placement test in onboarding sets this.'}
+            {info ? info.can : 'Set by the level test — the same one you take here to move up.'}
           </div>
         </div>
         {canGoUp && (

@@ -3,7 +3,6 @@ import { StepProfile } from '@/features/onboarding/steps/StepProfile';
 import { StepPlacement } from '@/features/onboarding/steps/StepPlacement';
 import { StepEngine } from '@/features/onboarding/steps/StepEngine';
 import { StepHabit } from '@/features/onboarding/steps/StepHabit';
-import { StepCompanion } from '@/features/onboarding/steps/StepCompanion';
 import { useOnboardingStore } from '@/store/onboardingStore';
 
 const STEP_COMPONENTS = {
@@ -11,7 +10,6 @@ const STEP_COMPONENTS = {
   2: StepPlacement,
   3: StepEngine,
   4: StepHabit,
-  5: StepCompanion,
 } as const;
 
 export function OnboardingWizard() {
@@ -26,8 +24,8 @@ export function OnboardingWizard() {
   const nextLabel =
     submission.status === 'submitting'
       ? 'Saving…'
-      : step === 5
-        ? 'Finish → import media'
+      : step === ONBOARDING_STEPS.length
+        ? 'Finish'
         : 'Continue';
 
   return (

@@ -1,6 +1,4 @@
 export type LlmMode = 'local' | 'api';
-export type ModelTier = 'light' | 'balanced' | 'heavy';
-export type CompanionSpecies = 'fox' | 'owl' | 'deer' | 'cat';
 
 export interface HealthResponse {
   status: 'ok';
@@ -61,48 +59,33 @@ export interface UserSettingsUpdate {
   quiet_hours_end: string;
 }
 
-export interface CompanionUpdate {
-  companion_species: CompanionSpecies;
+/** One of the app's local models, rated for this computer by
+ * POST /engine/recommend (services/hardware_capability.py). */
+export interface ModelFit {
+  key: string;
+  label: string;
+  size_mb: number;
+  /** Memory it needs while running, context included. */
+  needs_gb: number;
+  fit: 'good' | 'tight' | 'too_big';
+  speed: 'quick' | 'steady' | 'slow';
+  note: string;
+  recommended: boolean;
 }
 
-export interface PlacementQuestion {
-  id: string;
-  level: string;
-  category: 'grammar' | 'vocabulary';
-  prompt: string;
-  options: [string, string, string, string];
-}
-
-export interface PlacementAnswer {
-  question_id: string;
-  selected_index: number;
-}
-
-export interface LevelBreakdown {
-  level: string;
-  correct: number;
-  total: number;
-  accuracy: number;
-}
-
-export interface PlacementResult {
-  estimated_cefr: string;
-  raw_score: number;
-  total_questions: number;
-  breakdown: LevelBreakdown[];
-}
-
-export interface EngineTierCapability {
-  tier: ModelTier;
-  capable: boolean;
-  min_ram_gb: number;
-  min_cores: number;
-}
-
-export interface EngineAssessment {
-  recommended_tier: ModelTier | null;
-  any_local_capable: boolean;
-  tiers: EngineTierCapability[];
+export interface ModelRecommendation {
+  ram_gb: number;
+  cores: number;
+  /** "AMD", "NVIDIA", "Intel", "Apple" — or null. */
+  gpu: string | null;
+  /** Whether that GPU counts: a GPU build exists here and the AI is not pinned to the CPU. */
+  gpu_used: boolean;
+  /** Memory left for the model once the app and the voice models are loaded. */
+  available_gb: number;
+  recommended: string;
+  reason: string;
+  cloud_suggested: boolean;
+  models: ModelFit[];
 }
 
 export type BookFormat = 'epub' | 'pdf' | 'mobi' | 'azw3' | 'txt';

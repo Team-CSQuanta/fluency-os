@@ -3,6 +3,7 @@ makes for a block, in the coordinates a page has."""
 
 import fitz
 import pytest
+from tests.levels import give_level
 
 
 def _create_user(client, auth_headers, cefr=None):
@@ -19,9 +20,7 @@ def _create_user(client, auth_headers, cefr=None):
     assert res.status_code == 201
     user_id = res.json()["id"]
     if cefr:
-        assert client.patch(
-            f"/users/{user_id}/placement", headers=auth_headers, json={"cefr_level": cefr}
-        ).status_code == 200
+        give_level(user_id, cefr)
     return user_id
 
 

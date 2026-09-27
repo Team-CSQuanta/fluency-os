@@ -59,3 +59,10 @@ explicit = true
 
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }
+
+[tool.pytest.ini_options]
+# Each app test works on its own copy of a ~40MB database (tests/conftest.py).
+# pytest's default keeps every test's temp folder from the last three runs,
+# which grew past 20GB in /tmp; keep only what a failed test left behind.
+tmp_path_retention_policy = "failed"
+tmp_path_retention_count = 1

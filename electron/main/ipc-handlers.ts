@@ -81,6 +81,15 @@ export function registerIpcHandlers(
     else win.maximize();
   });
   ipcMain.on('window:close', () => getWindow()?.close());
+  // A notification was clicked: bring the window forward, from a tray,
+  // behind other windows, or minimised.
+  ipcMain.on('window:focus', () => {
+    const win = getWindow();
+    if (!win) return;
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+  });
 
   ipcMain.on('downloads:set-active', (_event, active: boolean) => setDownloadActive(active));
 

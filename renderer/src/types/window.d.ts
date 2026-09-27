@@ -9,6 +9,8 @@ export interface SystemInfo {
   platform: string;
   /** Where the database, clips, models and page images are kept. */
   dataFolder: string;
+  /** "amd" | "nvidia" | "intel" | "apple", or null for a software renderer. */
+  gpuVendor: string | null;
 }
 
 export interface FluencyOSBridge {
@@ -24,6 +26,8 @@ export interface FluencyOSBridge {
   minimizeWindow: () => void;
   maximizeWindow: () => void;
   closeWindow: () => void;
+  /** Bring the window to the front — used when a notification is clicked. */
+  focusWindow: () => void;
   setDownloadActive: (active: boolean) => void;
   /** Chromium zoom factor, 0.8–1.6. Scales the whole interface, which is the
    * only thing that moves several hundred absolute-px sizes together. */

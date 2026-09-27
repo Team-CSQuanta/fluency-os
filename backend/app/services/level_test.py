@@ -342,12 +342,25 @@ def submit(
     )
 
 
+def free_to_set(current: str | None, level: str) -> bool:
+    """Whether a level can be set without passing its test.
+
+    A1 is the floor, so starting there never needs one — "I'm a beginner" is
+    not a claim that has to be proved. Otherwise only a level at or below the
+    learner's own: going down is free, going up is earned. A learner with no
+    level yet is treated as being at the floor, so onboarding's placement
+    goes through the same test as every later move up — it used to accept
+    whatever level was picked, which made the test optional for anyone who
+    set their level before finishing onboarding."""
+    return level == LEVELS[0] or rank(level) <= rank(current)
+
+
 def move_down(conn: sqlite3.Connection, user_id: str, level: str) -> None:
-    """Going down never needs a test."""
+    """Going down never needs a test (and neither does starting at A1)."""
     if level not in LEVELS:
         raise LevelTestError(f"{level} is not a CEFR level.")
     current = current_level(conn, user_id)
-    if rank(level) >= rank(current) and current is not None:
+    if level == current or not free_to_set(current, level):
         raise LevelTestError("Moving up a level needs the level test.")
     conn.execute("UPDATE users SET cefr_level = ? WHERE id = ?", (level, user_id))
     conn.commit()

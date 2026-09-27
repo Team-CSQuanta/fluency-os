@@ -85,7 +85,7 @@ export function StudyPanel() {
       >
         <Row
           label="Notifications"
-          sub="a nudge when reviews are due"
+          sub="A desktop notification when words are due, while FluencyOS is open — minimised is fine. At most one every three hours."
           control={
             <Toggle
               label="Notifications"

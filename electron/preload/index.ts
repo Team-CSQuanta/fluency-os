@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('fluencyos', {
   minimizeWindow: () => ipcRenderer.send('window:minimize'),
   maximizeWindow: () => ipcRenderer.send('window:maximize'),
   closeWindow: () => ipcRenderer.send('window:close'),
+  focusWindow: () => ipcRenderer.send('window:focus'),
   setDownloadActive: (active: boolean) => ipcRenderer.send('downloads:set-active', active),
   // Text size. Chromium's own zoom rather than a CSS variable: the interface
   // sizes several hundred elements in absolute px, so nothing short of

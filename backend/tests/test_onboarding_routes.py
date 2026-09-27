@@ -18,11 +18,15 @@ def test_onboarding_round_trip(client, auth_headers):
     assert get_res.status_code == 200
     assert get_res.json()["display_name"] == "Rafsan"
 
+    # Placement is the level test: a level above A1 has to be passed, not
+    # picked. Starting at A1 is the one free choice.
+    picked = client.patch(f"/users/{user_id}/placement", headers=auth_headers, json={"cefr_level": "B2"})
+    assert picked.status_code == 403
     placement_res = client.patch(
-        f"/users/{user_id}/placement", headers=auth_headers, json={"cefr_level": "B2"}
+        f"/users/{user_id}/placement", headers=auth_headers, json={"cefr_level": "A1"}
     )
     assert placement_res.status_code == 200
-    assert placement_res.json()["cefr_level"] == "B2"
+    assert placement_res.json()["cefr_level"] == "A1"
 
     settings_res = client.put(
         f"/users/{user_id}/settings",

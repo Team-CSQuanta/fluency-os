@@ -1,11 +1,12 @@
 """Question bank for the level test — the check that stands between a learner
 and a higher CEFR level.
 
-Separate from the onboarding placement screener (placement_questions.py),
-which is twenty fixed questions spread across all six levels: fine for a
-first estimate, far too few to gate a level on, since anyone could learn
-them. Here each level has its own pool — grammar, vocabulary and short
-reading — and a test draws from it at random with the choices shuffled.
+It is also onboarding's placement: a new learner takes the test at the
+level they believe they are at, so the first level is earned the same way as
+every later one. (Onboarding used to have its own twenty fixed questions
+across all six levels — too few to gate a level on, since anyone could learn
+them.) Each level has its own pool — grammar, vocabulary and short reading —
+and a test draws from it at random with the choices shuffled.
 B2 and above also get vocabulary questions generated from the lexicon
 (services/level_test.py), so no two tests are the same.
 
