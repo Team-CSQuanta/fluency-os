@@ -1,7 +1,9 @@
-import { Pill, Row, Section, Segmented } from '@/features/settings/controls';
+import { useEffect } from 'react';
+import { Pill, Row, Section, Segmented, Toggle } from '@/features/settings/controls';
+import { useEngineStore } from '@/store/engineStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useShellStore } from '@/store/shellStore';
-import type { MicSensitivity, TurnPace } from '@/types/api';
+import type { Corrections, MicSensitivity, ReplyLength, TurnPace } from '@/types/api';
 
 /** How hands-free listening behaves.
  *
@@ -42,20 +44,54 @@ const PACE_NOTE: Record<TurnPace, string> = {
   patient: 'A second and a half, and longer still when you have barely started. Best if you are composing sentences as you go.',
 };
 
+const LENGTH: Array<{ value: ReplyLength; label: string; title: string }> = [
+  { value: 'short', label: 'short', title: 'One sentence — you do most of the talking' },
+  { value: 'normal', label: 'natural', title: 'One or two sentences, like real conversation' },
+  { value: 'long', label: 'detailed', title: 'Two to four sentences — more to listen to' },
+];
+
+const CORRECTIONS: Array<{ value: Corrections; label: string; title: string }> = [
+  { value: 'recast', label: 'gentle', title: 'The partner says it back correctly, without pointing it out' },
+  { value: 'explicit', label: 'point them out', title: 'Plus a short [Small fix: …] note after its reply' },
+];
+
+const SPEEDS = [0.75, 0.9, 1, 1.1, 1.25].map((v) => ({ value: v, label: `${v}×` }));
+
+/** Conversation: how listening works, how the partner talks back, and the
+ * voice it talks in. Every row here changes something; what cannot be
+ * changed is said in a note, not dressed up as a setting. */
 export function ConversationPanel() {
   const settings = useSettingsStore((s) => s.settings);
   const update = useSettingsStore((s) => s.update);
   const goSettings = useShellStore((s) => s.goSettings);
+  const catalog = useEngineStore((s) => s.catalog);
+  const fetchCatalog = useEngineStore((s) => s.fetchCatalog);
+  const selectTtsEngine = useEngineStore((s) => s.selectTtsEngine);
+  useEffect(() => {
+    if (!catalog) void fetchCatalog();
+  }, [catalog, fetchCatalog]);
   if (!settings) return null;
 
-  const local = settings.llm_mode === 'local';
+  const voices = catalog?.tts_options ?? [];
+  const selected = voices.find((v) => v.selected);
 
   return (
     <>
       <Section
-        title="Hands-free listening"
-        note="In hands-free mode the microphone is always open and the app decides when you have started and stopped talking. These two settings are that decision."
+        title="Listening"
+        note="With hands-free on, the microphone stays open and the app decides when you start and stop talking. Talking over a reply stops it once you have spoken for about a third of a second."
       >
+        <Row
+          label="Start in hands-free"
+          sub="New conversations open with the microphone listening. Off, you tap to talk."
+          control={
+            <Toggle
+              label="Start in hands-free"
+              checked={settings.conversation_hands_free}
+              onChange={(v) => void update({ conversation_hands_free: v })}
+            />
+          }
+        />
         <Row
           label="Microphone sensitivity"
           sub={SENSITIVITY_NOTE[settings.conversation_mic_sensitivity]}
@@ -80,61 +116,93 @@ export function ConversationPanel() {
             />
           }
         />
+      </Section>
+
+      <Section title="How the partner talks">
         <Row
-          label="Interrupting the reply"
-          sub="Talking over the AI stops it — but only after a third of a second of unbroken sound. That is what separates a person from a cough, a keyboard or a door, and none of those interrupt at any sensitivity. The setting above changes how loud you have to be, not how long."
-          control={<Pill>needs 0.3 s of speech</Pill>}
+          label="Reply length"
+          sub="How much the partner says each turn. Shorter replies leave more of the talking to you."
+          control={
+            <Segmented
+              value={settings.conversation_reply_length}
+              options={LENGTH}
+              onChange={(v) => void update({ conversation_reply_length: v })}
+            />
+          }
+        />
+        <Row
+          label="Corrections"
+          sub={
+            settings.conversation_corrections === 'recast'
+              ? 'Your mistakes are said back correctly in the reply ("I goed" → "Oh, you went?"), without breaking the flow.'
+              : 'As well as saying it back correctly, the partner adds one short note for the most useful fix: [Small fix: "I went", not "I goed".]'
+          }
+          control={
+            <Segmented
+              value={settings.conversation_corrections}
+              options={CORRECTIONS}
+              onChange={(v) => void update({ conversation_corrections: v })}
+            />
+          }
+        />
+        <Row
+          label="Listening practice"
+          sub="In voice conversations, each reply's text stays hidden until you have heard it — so you listen rather than read. Click to reveal it early."
+          control={
+            <Toggle
+              label="Listening practice"
+              checked={settings.conversation_hide_text}
+              onChange={(v) => void update({ conversation_hide_text: v })}
+            />
+          }
         />
       </Section>
 
-      <Section
-        title="Voice"
-        note="What the replies are spoken with. Chosen and downloaded on the AI screen, where the sizes and licences are."
-      >
+      <Section title="Voice">
         <Row
-          label="Speech engine"
-          sub="turns the reply into audio, on this machine"
-          control={<Pill tone="ok">{settings.tts_engine}</Pill>}
-        />
-        <Row
-          label="Speech-to-text"
-          sub="turns what you say into text, on this machine"
+          label="Voice"
+          sub={
+            selected
+              ? selected.downloaded
+                ? `${selected.note}`
+                : 'Not downloaded yet — download it in AI settings.'
+              : 'Speaks the replies, on this machine.'
+          }
           control={
-            settings.stt_model_id ? (
-              <Pill tone="ok">{settings.stt_model_id}</Pill>
+            voices.length > 0 ? (
+              <Segmented
+                value={selected?.key ?? voices[0].key}
+                options={voices.map((v) => ({
+                  value: v.key,
+                  label: v.downloaded ? v.label : `${v.label} ↓`,
+                  title: v.downloaded ? v.note : 'Not downloaded — AI settings',
+                }))}
+                onChange={(key) => void selectTtsEngine(key)}
+              />
             ) : (
-              <Pill>not downloaded</Pill>
+              <Pill>…</Pill>
             )
           }
         />
         <Row
-          label="Change either"
-          sub="downloads, sizes and licences all live together"
+          label="Voice speed"
+          sub="Slower makes a reply easier to follow; faster is closer to how people really talk."
+          control={
+            <Segmented
+              value={settings.conversation_voice_speed}
+              options={SPEEDS}
+              onChange={(v) => void update({ conversation_voice_speed: v })}
+            />
+          }
+        />
+        <Row
+          label="Downloads"
+          sub="Voices and the speech-to-text model are downloaded, and removed, on the AI page."
           control={
             <button onClick={() => goSettings('AI')} className="font-mono text-[10.5px] text-acc hover:underline">
               open AI settings →
             </button>
           }
-        />
-      </Section>
-
-      <Section
-        title="What happens to what you say"
-        note="Two different answers, because the recording and the words in it take different paths."
-      >
-        <Row
-          label="The recording"
-          sub="Transcribed by a model on this machine, then dropped. It is never written to disk and never uploaded — there is no setting for it because there is no other behaviour."
-          control={<Pill tone="ok">never leaves</Pill>}
-        />
-        <Row
-          label="The transcript"
-          sub={
-            local
-              ? 'Answered by a model running on this machine, so the conversation stays here too.'
-              : `Sent to ${settings.api_provider ?? 'the API provider'} to be answered, like any message you type. Switch the AI to a local model if you would rather it did not.`
-          }
-          control={<Pill tone={local ? 'ok' : 'warn'}>{local ? 'stays local' : 'sent to the API'}</Pill>}
         />
       </Section>
     </>

@@ -1,19 +1,159 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   SUPPORTED_NATIVE_LANGUAGES,
   SUPPORTED_TARGET_LANGUAGES,
 } from '@/features/onboarding/onboardingConfig';
 import { avatarUrl } from '@/lib/avatar';
 import { Choice, EditableText, Pill, Row, Section } from '@/features/settings/controls';
+import { LEVEL_INFO, LevelTestDialog } from '@/features/settings/LevelTestDialog';
+import { api } from '@/lib/apiClient';
+import { friendlyMessage } from '@/lib/friendlyError';
 import { reportError } from '@/store/errorStore';
 import { useAppStore } from '@/store/appStore';
+import type { CefrLevel, LevelTestOverviewOut } from '@/types/api';
 import type { SystemInfo } from '@/types/window';
 
 /* Onboarding stores a language by name — "Bengali", not "bn" — and the
  * sidebar prints what is stored, so these have to match it. */
 const NATIVE_OPTIONS = SUPPORTED_NATIVE_LANGUAGES.map((l) => ({ value: l, label: l }));
 const TARGET_OPTIONS = SUPPORTED_TARGET_LANGUAGES.map((l) => ({ value: l, label: l }));
-const CEFR_OPTIONS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'].map((v) => ({ value: v, label: v }));
+
+/** Your level: what it is, the test that moves it up, moving it down, and
+ * how past tests went. A level chosen from a list used to be trusted by every
+ * difficulty measure in the app; now going up has to be passed. */
+function LevelSection() {
+  const userId = useAppStore((s) => s.currentUserId);
+  const refreshUser = useAppStore((s) => s.refreshUser);
+  const [overview, setOverview] = useState<LevelTestOverviewOut | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [downTo, setDownTo] = useState<CefrLevel | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!userId) return;
+    try {
+      setOverview(await api.get<LevelTestOverviewOut>(`/level-test?user_id=${encodeURIComponent(userId)}`));
+    } catch (err) {
+      setError(friendlyMessage(err, 'Loading your level'));
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const changed = useCallback(() => {
+    void load();
+    void refreshUser();
+  }, [load, refreshUser]);
+
+  const moveDown = async () => {
+    if (!userId || !downTo) return;
+    try {
+      setOverview(await api.post<LevelTestOverviewOut>('/level-test/move-down', { user_id: userId, level: downTo }));
+      setDownTo(null);
+      void refreshUser();
+    } catch (err) {
+      setError(friendlyMessage(err, 'Moving your level down'));
+    }
+  };
+
+  if (!overview) {
+    return error ? <div className="mt-[18px] font-mono text-[10.5px] text-[#c0563f]">{error}</div> : null;
+  }
+  const current = overview.current;
+  const info = current ? LEVEL_INFO[current] : null;
+  const below = overview.levels.filter((l) => l.relation === 'below').map((l) => l.level);
+  const canGoUp = overview.levels.some((l) => l.relation === 'above');
+
+  return (
+    <Section
+      title="Your level"
+      note="What reading tints, target words and your conversation partner are measured against. Moving up takes a short test at the new level; moving down does not."
+    >
+      <div className="flex items-center gap-4 border-b border-line2 px-4 py-[15px]">
+        <div className="grid h-[52px] w-[52px] flex-none place-items-center rounded-panel border border-accLine bg-accSoft font-sans text-[18px] font-semibold text-acc">
+          {current ?? '—'}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="font-sans text-[13.5px] font-semibold text-tx">{info ? info.name : 'Not placed yet'}</div>
+          <div className="mt-[3px] font-sans text-[11px] leading-[1.55] text-tx3">
+            {info ? info.can : 'The placement test in onboarding sets this.'}
+          </div>
+        </div>
+        {canGoUp && (
+          <button
+            onClick={() => setTesting(true)}
+            className="flex-none rounded-field bg-accSolid px-[13px] py-[8px] font-sans text-[11.5px] font-semibold text-white hover:brightness-110"
+          >
+            Take a level test
+          </button>
+        )}
+      </div>
+
+      {below.length > 0 && (
+        <Row
+          label="Move down"
+          sub={
+            downTo
+              ? `Move to ${downTo} · ${LEVEL_INFO[downTo].name}? Coming back up will take the ${current} test.`
+              : 'If the material feels too hard. No test needed.'
+          }
+          control={
+            downTo ? (
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setDownTo(null)}
+                  className="rounded-field border border-line px-[10px] py-[5px] font-sans text-[11px] text-tx2 hover:border-acc"
+                >
+                  cancel
+                </button>
+                <button
+                  onClick={() => void moveDown()}
+                  className="rounded-field border border-accLine bg-accSoft px-[10px] py-[5px] font-sans text-[11px] font-semibold text-acc"
+                >
+                  move to {downTo}
+                </button>
+              </div>
+            ) : (
+              <Choice
+                value={null}
+                options={below.map((l) => ({ value: l, label: `${l} · ${LEVEL_INFO[l].name}` }))}
+                onChange={(next) => setDownTo(next as CefrLevel)}
+                width={190}
+                placeholder="choose a level…"
+              />
+            )
+          }
+        />
+      )}
+
+      <Row
+        label="Recent tests"
+        sub={
+          overview.history.length === 0 ? (
+            'No level tests yet.'
+          ) : (
+            <span className="mt-[4px] flex flex-col gap-[3px]">
+              {overview.history.slice(0, 5).map((h) => (
+                <span key={h.id} className="font-mono text-[10.5px]">
+                  <span style={{ color: h.passed ? 'var(--acc)' : 'var(--tx3)' }}>
+                    {h.passed ? '✓ passed' : '✗ not passed'}
+                  </span>{' '}
+                  {h.level} · {h.correct ?? 0}/{h.total ?? 0}
+                  {h.submitted_at ? ` · ${new Date(h.submitted_at).toLocaleDateString()}` : ''}
+                </span>
+              ))}
+            </span>
+          )
+        }
+      />
+      {error && <div className="px-4 py-[9px] font-mono text-[10.5px] text-[#c0563f]">{error}</div>}
+
+      {testing && <LevelTestDialog overview={overview} onClose={() => setTesting(false)} onChanged={changed} />}
+    </Section>
+  );
+}
 
 export function AccountPanel() {
   const user = useAppStore((s) => s.currentUser);
@@ -93,6 +233,9 @@ export function AccountPanel() {
             />
           }
         />
+      </Section>
+
+      <Section title="Languages" note="What you speak, and what you are learning.">
         <Row
           label="Native language"
           sub="what glosses and the second subtitle track are written in"
@@ -115,19 +258,9 @@ export function AccountPanel() {
             />
           }
         />
-        <Row
-          label="Level"
-          sub="what difficulty is measured against — the placement test sets it, and you can change it here"
-          control={
-            <Choice
-              value={user?.cefr_level ?? null}
-              options={CEFR_OPTIONS}
-              onChange={(next) => save({ cefr_level: next }, 'Saving your level')}
-              width={110}
-            />
-          }
-        />
       </Section>
+
+      <LevelSection />
 
       <Section title="Where your data lives">
         <Row

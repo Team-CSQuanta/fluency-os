@@ -6,6 +6,7 @@ import { AiRequiredDialog } from '@/features/shell/AiRequiredDialog';
 import { useMicRecorder } from '@/features/conversation/useMicRecorder';
 import { SelectionLookup } from '@/features/vocabulary/SelectionLookup';
 import { useChallengeStore } from '@/store/challengeStore';
+import { useSettingsStore } from '@/store/settingsStore';
 import type { ChallengeRoundOut } from '@/types/api';
 
 const CAP_SECONDS = 90;
@@ -33,6 +34,13 @@ export function Challenge() {
   const [typed, setTyped] = useState('');
   const [typing, setTyping] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
+  // Settings → Challenge can turn hints off; read here so the panel goes too.
+  const settings = useSettingsStore((s) => s.settings);
+  const fetchSettings = useSettingsStore((s) => s.fetch);
+  useEffect(() => {
+    if (!settings) void fetchSettings();
+  }, [settings, fetchSettings]);
+  const hintsOn = settings?.challenge_hints_enabled ?? true;
 
   useEffect(() => {
     void fetchStats();
@@ -298,11 +306,11 @@ export function Challenge() {
                 {status === 'scoring' && <AiThinking label="the AI is marking your description" />}
 
                 <div className="mt-[14px] border-t border-line2 pt-[12px]">
-                  <HintPanel
-                  hints={hints}
-                  vatex={round.source === 'vatex'}
-                  onAsk={(level) => void askHints(level)}
-                />
+                  {hintsOn ? (
+                    <HintPanel hints={hints} vatex={round.source === 'vatex'} onAsk={(level) => void askHints(level)} />
+                  ) : (
+                    <p className="font-mono text-[10px] text-tx3">hints are off — Settings → Challenge</p>
+                  )}
                 </div>
               </div>
             )}

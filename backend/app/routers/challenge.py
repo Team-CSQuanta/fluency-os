@@ -195,7 +195,15 @@ def get_hints(
     """Ask for help. `level` is which tier of a VATEX round to unlock; omitted,
     it advances by one. Library rounds ignore it — their hints are the
     learner's own target words and there is nothing to grade."""
-    return HintsOut(**challenge.hints_for(conn, _require_round(conn, round_id), level=level))
+    row = _require_round(conn, round_id)
+    # Off in Settings: the round is played on the learner's own, and a hint
+    # asked for anyway (an old screen, a stray key) is refused, not charged.
+    if level != 0 and not challenge.hints_enabled(conn, row["user_id"]):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Hints are turned off in Settings → Challenge.",
+        )
+    return HintsOut(**challenge.hints_for(conn, row, level=level))
 
 
 @router.post("/rounds/{round_id}/abandon", response_model=ChallengeRoundOut)

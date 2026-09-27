@@ -1,6 +1,7 @@
-"""Local LLM chat generation via llama-cpp-python, in-process inside this
-backend (not a second spawned server) — matching hardware_capability.py's
-own memory-budget framing, which only makes sense as a single process.
+"""Local LLM chat generation — on the GPU through llama.cpp's prebuilt
+server (llama_runtime.py) when the compute setting allows and this machine
+has a usable GPU, otherwise via llama-cpp-python in-process on the CPU.
+Exactly one of the two holds the model at a time.
 
 Lazy-imports llama_cpp so the rest of the backend keeps working even if it
 fails to import/build on a given machine; the model itself is loaded once
@@ -11,13 +12,48 @@ unusable), reloaded only if the pinned model path changes.
 import os
 import threading
 
-from app.services.voice import model_manager
+from app.services.voice import compute, llama_runtime, model_manager
 from app.services.voice.errors import EngineUnavailable
 from app.services.voice.json_utils import parse_json_object
 
 _lock = threading.Lock()
 _llm = None
 _loaded_path: str | None = None
+# The GPU path: a running llama.cpp server, when that is where the model is.
+_server: llama_runtime.Server | None = None
+# Why the model is on the CPU although the setting allows the GPU — shown in
+# Settings, so a fallback is never silent.
+_gpu_note: str | None = None
+
+
+def _release_locked() -> None:
+    global _llm, _loaded_path, _server
+    if _server is not None:
+        llama_runtime.stop(_server)
+        _server = None
+    _llm = None
+    _loaded_path = None
+
+
+def _try_gpu_locked(path: str) -> bool:
+    """Starts the model on the GPU. True when it is running there; False,
+    with _gpu_note saying why, when the CPU has to do instead."""
+    global _server, _loaded_path, _gpu_note
+    if llama_runtime.gpu_asset() is None:
+        _gpu_note = "llama.cpp has no GPU build for this kind of computer, so it runs on the CPU."
+        return False
+    try:
+        if not llama_runtime.is_installed():
+            from app.services.voice import download_manager
+
+            download_manager.download_gpu_runtime_now()
+        _server = llama_runtime.start(path)
+    except (EngineUnavailable, OSError) as err:
+        _gpu_note = f"Couldn't use the GPU, so it runs on the CPU: {err}"
+        return False
+    _loaded_path = path
+    _gpu_note = None
+    return True
 
 
 def _load_llm_locked(repo_id: str, filename: str):
@@ -29,15 +65,19 @@ def _load_llm_locked(repo_id: str, filename: str):
     and can hang both requests indefinitely rather than just being slow. So
     every caller holds `_lock` for the full load-and-generate operation,
     which serializes engine use instead of racing it."""
-    global _llm, _loaded_path
+    global _llm, _loaded_path, _gpu_note
     model_path = model_manager.llm_model_path(repo_id, filename)
     if not model_path.exists():
         raise EngineUnavailable(
             "Your AI model isn't downloaded yet — download it in Settings before starting a conversation."
         )
     path = str(model_path)
-    if _llm is not None and _loaded_path == path:
-        return _llm
+    if _loaded_path == path and (_llm is not None or (_server is not None and _server.alive())):
+        return _server or _llm
+    # Whatever held a model before goes first — see below for why.
+    _release_locked()
+    if compute.wants_gpu() and _try_gpu_locked(path):
+        return _server
     try:
         from llama_cpp import Llama
     except ImportError as err:
@@ -51,6 +91,8 @@ def _load_llm_locked(repo_id: str, filename: str):
     # light machine is precisely when switching models runs out of RAM.
     _llm = None
     _loaded_path = None
+    if not compute.wants_gpu():
+        _gpu_note = None
     try:
         _llm = Llama(
             model_path=path,
@@ -67,7 +109,7 @@ def _load_llm_locked(repo_id: str, filename: str):
 
 
 def is_ready() -> bool:
-    return _llm is not None
+    return _llm is not None or (_server is not None and _server.alive())
 
 
 def is_ready_for(model_path: str) -> bool:
@@ -76,7 +118,16 @@ def is_ready_for(model_path: str) -> bool:
     must not read as "AI is launched", or a turn would silently pay the
     reload cost mid-conversation instead of the learner choosing when via
     Launch AI. See loaded_path()/_loaded_path for what's actually resident."""
-    return _llm is not None and _loaded_path == model_path
+    return is_ready() and _loaded_path == model_path
+
+
+def runtime_info() -> dict:
+    """Where the model is running right now, for Settings."""
+    if _server is not None and _server.alive():
+        return {"device": "gpu", "backend": llama_runtime.gpu_backend_name(), "detail": _server.device, "note": None}
+    if _llm is not None:
+        return {"device": "cpu", "backend": "CPU", "detail": None, "note": _gpu_note}
+    return {"device": None, "backend": None, "detail": None, "note": _gpu_note}
 
 
 def loaded_path() -> str | None:
@@ -92,11 +143,9 @@ def unload(model_path: str | None = None) -> None:
     loaded (deleting a *different*, non-selected option shouldn't drop the
     one currently in use); omit it to unconditionally unload (STT/TTS have
     only one option each, so any delete means "unload it")."""
-    global _llm, _loaded_path
     with _lock:
         if model_path is None or _loaded_path == model_path:
-            _llm = None
-            _loaded_path = None
+            _release_locked()
 
 
 def warm_up(repo_id: str, filename: str) -> None:
@@ -117,6 +166,8 @@ def generate_reply(
 
     with _lock:
         llm = _load_llm_locked(repo_id, filename)
+        if isinstance(llm, llama_runtime.Server):
+            return llama_runtime.chat(llm, messages, max_tokens=max_tokens, temperature=0.7)
         try:
             result = llm.create_chat_completion(messages=messages, max_tokens=max_tokens, temperature=0.7)
         except Exception as err:  # noqa: BLE001
@@ -139,18 +190,18 @@ def generate_json(
     local model rather than free-form chat text — the post-chat report analysis
     and Vocabulary's AI explain/examples/mnemonic/practice features. The
     prompts themselves live in the services, never here."""
+    messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
     with _lock:
         llm = _load_llm_locked(repo_id, filename)
-        try:
-            result = llm.create_chat_completion(
-                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
-        except Exception as err:  # noqa: BLE001
-            raise EngineUnavailable(f"Local LLM generation failed: {err}") from err
+        if isinstance(llm, llama_runtime.Server):
+            raw = llama_runtime.chat(llm, messages, max_tokens=max_tokens, temperature=temperature, json_mode=True)
+        else:
+            try:
+                result = llm.create_chat_completion(messages=messages, max_tokens=max_tokens, temperature=temperature)
+            except Exception as err:  # noqa: BLE001
+                raise EngineUnavailable(f"Local LLM generation failed: {err}") from err
+            raw = result["choices"][0]["message"]["content"].strip()
 
-    raw = result["choices"][0]["message"]["content"].strip()
     parsed = parse_json_object(raw)
     if parsed is None:
         raise EngineUnavailable("The local LLM's response wasn't valid JSON")

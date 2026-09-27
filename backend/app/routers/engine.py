@@ -6,7 +6,11 @@ from fastapi.concurrency import run_in_threadpool
 from app.db import get_db
 from app.models.conversation import EngineStatusOut
 from app.models.engine import (
+    ComputeIn,
+    ComputeOut,
     DownloadStatusOut,
+    EngineRuntimeOut,
+    GpuRuntimeOut,
     LlmOptionOut,
     LlmProviderIn,
     LlmProviderOut,
@@ -21,7 +25,9 @@ from app.security import require_token
 from app.services import conversation
 from app.services.voice import (
     cloud_llm_engine,
+    compute,
     download_manager,
+    llama_runtime,
     engine_health,
     gemini_llm_engine,
     llm_chat_engine,
@@ -35,6 +41,59 @@ from app.services.voice import (
 from app.services.voice.errors import EngineUnavailable
 
 router = APIRouter(prefix="/engine", dependencies=[Depends(require_token)])
+
+
+def _compute_out(conn: sqlite3.Connection, user_id: str) -> ComputeOut:
+    voice = tts.engine_for(tts.selected_name(conn, user_id))
+    installed = llama_runtime.is_installed()
+    return ComputeOut(
+        mode=compute.current(),
+        chat_model=EngineRuntimeOut(**llm_chat_engine.runtime_info()),
+        speech_to_text=EngineRuntimeOut(**stt_engine.runtime_info()),
+        voice=EngineRuntimeOut(**voice.runtime_info()),
+        gpu_runtime=GpuRuntimeOut(
+            available=llama_runtime.gpu_asset() is not None,
+            installed=installed,
+            backend=llama_runtime.gpu_backend_name(),
+            devices=llama_runtime.gpu_devices() if installed else [],
+            download=_download_status_out("gpu_runtime"),
+        ),
+    )
+
+
+@router.get("/compute", response_model=ComputeOut)
+def get_compute(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> ComputeOut:
+    """Where local AI runs: the setting, and what each engine is doing."""
+    return _compute_out(conn, user_id)
+
+
+@router.put("/compute", response_model=ComputeOut)
+async def set_compute(user_id: str, payload: ComputeIn, conn: sqlite3.Connection = Depends(get_db)) -> ComputeOut:
+    """Changing where models run unloads them, so the next Launch AI (or the
+    next use) loads them where they now belong — each engine picks its device
+    only when it loads."""
+    try:
+        compute.save(conn, payload.mode)
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err)) from err
+
+    def unload_all() -> None:
+        llm_chat_engine.unload()
+        stt_engine.unload()
+        tts.unload_all()
+
+    # Unloading waits for any generation in flight, so off the event loop.
+    await run_in_threadpool(unload_all)
+    # Listing GPUs can start the runtime once; keep that off the event loop.
+    return await run_in_threadpool(_compute_out, conn, user_id)
+
+
+@router.post("/compute/gpu-runtime/download", response_model=DownloadStatusOut)
+def download_gpu_runtime() -> DownloadStatusOut:
+    """Fetches the GPU build ahead of time (it is otherwise fetched on the
+    first Launch AI that wants the GPU)."""
+    download_manager.start_download("gpu_runtime", "")
+    return _download_status_out("gpu_runtime")
 
 
 def _download_status_out(kind: str, key: str = "") -> DownloadStatusOut:

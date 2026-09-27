@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { api } from '@/lib/apiClient';
 import { useAppStore } from '@/store/appStore';
-import type { AppSettingsOut, AppSettingsPatch, DictionaryCacheOut } from '@/types/api';
+import type { AppSettingsOut, AppSettingsPatch } from '@/types/api';
 import { friendlyMessage } from '@/lib/friendlyError';
 
 /** The settings the page itself owns.
@@ -21,12 +21,9 @@ interface SettingsState {
   error: string | null;
   /** Which field is mid-flight, so one row can show it is saving. */
   saving: keyof AppSettingsPatch | null;
-  cache: DictionaryCacheOut | null;
 
   fetch: () => Promise<void>;
   update: (patch: AppSettingsPatch) => Promise<void>;
-  fetchCache: () => Promise<void>;
-  clearCache: () => Promise<void>;
 }
 
 function requireUserId(): string {
@@ -40,7 +37,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   status: 'idle',
   error: null,
   saving: null,
-  cache: null,
 
   fetch: async () => {
     set({ status: 'loading', error: null });
@@ -76,13 +72,5 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         error: friendlyMessage(err, 'Saving that setting'),
       });
     }
-  },
-
-  fetchCache: async () => {
-    set({ cache: await api.get<DictionaryCacheOut>('/vocabulary/dictionary-cache') });
-  },
-
-  clearCache: async () => {
-    set({ cache: await api.delete<DictionaryCacheOut>('/vocabulary/dictionary-cache') });
   },
 }));

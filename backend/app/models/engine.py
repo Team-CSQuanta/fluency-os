@@ -90,3 +90,40 @@ class LlmProviderOut(BaseModel):
     gemini_model: str
     has_gemini_key: bool
     gemini_key_preview: str | None
+
+
+class EngineRuntimeOut(BaseModel):
+    """Where one local engine is running right now."""
+
+    #: "gpu" | "cpu", or None when it is not loaded.
+    device: str | None
+    #: "Vulkan", "Metal", "CUDA", "DirectML", "Core ML", "CPU"…
+    backend: str | None
+    #: The GPU's name, when known.
+    detail: str | None
+    #: Why it is on the CPU although the setting allows the GPU, if it is.
+    note: str | None
+
+
+class GpuRuntimeOut(BaseModel):
+    #: Whether llama.cpp publishes a GPU build for this platform at all.
+    available: bool
+    installed: bool
+    #: "Vulkan" | "Metal"
+    backend: str
+    #: GPUs the installed build can see; empty until it is installed.
+    devices: list[str]
+    download: DownloadStatusOut
+
+
+class ComputeOut(BaseModel):
+    #: "auto" | "gpu" | "cpu"
+    mode: str
+    chat_model: EngineRuntimeOut
+    speech_to_text: EngineRuntimeOut
+    voice: EngineRuntimeOut
+    gpu_runtime: GpuRuntimeOut
+
+
+class ComputeIn(BaseModel):
+    mode: str

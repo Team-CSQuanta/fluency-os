@@ -166,6 +166,19 @@ def is_ready() -> bool:
     return _model is not None
 
 
+def runtime_info() -> dict:
+    """Always the CPU: Pocket TTS is built for it (parts of it are pinned to
+    the CPU inside the package), and is quick enough there."""
+    from app.services.voice import compute
+
+    return {
+        "device": "cpu" if _model is not None else None,
+        "backend": "CPU" if _model is not None else None,
+        "detail": None,
+        "note": "This voice is designed to run on the CPU." if compute.wants_gpu() else None,
+    }
+
+
 def warm_up() -> None:
     with _lock:
         _load_locked()

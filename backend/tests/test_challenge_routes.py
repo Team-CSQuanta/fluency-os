@@ -124,3 +124,35 @@ def test_enrich_reports_a_round_with_nothing_to_build_on(seeded, auth_headers):
 def test_enrich_needs_the_handshake_token(seeded):
     rid = _round()
     assert seeded.post(f"/challenge/rounds/{rid}/enrich?user_id=u1", json={}).status_code == 401
+
+
+def test_hints_can_be_turned_off(seeded, auth_headers):
+    client = seeded
+    rid = _round(status="open")
+    assert client.get(f"/challenge/rounds/{rid}/hints", headers=auth_headers).status_code == 200
+
+    off = client.patch("/users/u1/settings", headers=auth_headers, json={"challenge_hints_enabled": False})
+    assert off.status_code == 200 and off.json()["challenge_hints_enabled"] is False
+    refused = client.get(f"/challenge/rounds/{rid}/hints", headers=auth_headers)
+    assert refused.status_code == 409 and "turned off" in refused.json()["detail"]
+    # Reading where the round stands is not a hint, and costs nothing.
+    assert client.get(f"/challenge/rounds/{rid}/hints", headers=auth_headers, params={"level": 0}).status_code == 200
+
+
+def test_scene_difficulty_is_a_setting_with_a_range(seeded, auth_headers):
+    client = seeded
+    ok = client.patch("/users/u1/settings", headers=auth_headers, json={"challenge_difficulty": 1})
+    assert ok.status_code == 200 and ok.json()["challenge_difficulty"] == 1
+    assert client.patch("/users/u1/settings", headers=auth_headers, json={"challenge_difficulty": 3}).status_code == 422
+
+
+def test_harder_and_easier_move_the_scene_level_one_band():
+    from app.services import challenge
+
+    assert challenge.scene_level("B1", 1) == "B2"
+    assert challenge.scene_level("B1", -1) == "A2"
+    assert challenge.scene_level("B1", 0) == "B1"
+    # Never off the ends of the scale.
+    assert challenge.scene_level("C2", 1) == "C2"
+    assert challenge.scene_level("A1", -1) == "A1"
+    assert challenge.scene_level(None, 1) is None

@@ -715,12 +715,36 @@ _LEVEL_GUIDE = {
 }
 
 
+# How much the partner says per turn — Settings → Conversation.
+_LENGTH_RULE = {
+    "short": "Keep every turn to ONE short sentence — as brief as natural speech allows. The learner does most of the talking.",
+    "normal": "One or two short sentences per turn — real speech, not an essay. The reply is read aloud, so length is what the learner waits for.",
+    "long": "Two to four sentences per turn — enough to give the learner more to listen to and react to, but never a lecture.",
+}
+
+# How mistakes are handled — Settings → Conversation.
+_CORRECTION_RULE = {
+    "recast": 'Do not correct mistakes directly. Recast instead: use the correct form naturally in your reply ("I goed there" → "Oh, you went there? …"). Correct explicitly only if they ask.',
+    "explicit": (
+        'Reply naturally first. Then, if the learner made a clear mistake, add ONE short correction at the very end '
+        'in square brackets — only the most useful one, e.g. [Small fix: "I went", not "I goed".]. '
+        "No note when there is no real mistake; never correct style or accent."
+    ),
+}
+
+#: Tokens per reply for each length; a correction note needs a little more.
+REPLY_TOKENS = {"short": 70, "normal": 120, "long": 220}
+CORRECTION_TOKENS = 40
+
+
 def build_system_prompt(
     scenario: Scenario,
     *,
     level: str,
     target_words: list[tuple[str, str | None]],
     opening: list[str] | None = None,
+    reply_length: str = "normal",
+    corrections: str = "recast",
 ) -> str:
     """The instructions for one scene.
 
@@ -757,9 +781,9 @@ How it should unfold, one step at a time, following the learner's lead within it
 - If the learner writes something in [square brackets], or asks how to say something, step out for ONE short line of help (the phrase they need, or a simpler way to say it), then continue as {p.name}.""",
         f"""# Speaking to a {level} learner
 - {_LEVEL_GUIDE[level]}
-- One or two short sentences per turn — real speech, not an essay. The reply is read aloud, so length is what the learner waits for.
+- {_LENGTH_RULE.get(reply_length, _LENGTH_RULE["normal"])}
 - Usually end your turn with a question or a clear prompt, so the learner always knows it is their turn.
-- Do not correct mistakes directly. Recast instead: use the correct form naturally in your reply ("I goed there" → "Oh, you went there? …"). Correct explicitly only if they ask.
+- {_CORRECTION_RULE.get(corrections, _CORRECTION_RULE["recast"])}
 - If a reply is very short or confused, make it easier: simplify, offer two options, or give a hint inside the scene.""",
         f"""# Target words
 The learner is trying to use these words naturally:
@@ -770,7 +794,7 @@ The learner is trying to use these words naturally:
         f"""# Ending
 When the goal is reached, close the scene naturally in character in a sentence or two, then ask if they would like to keep talking.""",
         f"""# Output
-Reply only with what {p.name} says out loud: no stage directions, no actions in asterisks, no emoji, no lists, no name labels, no quotation marks around the reply.""",
+Reply only with what {p.name} says out loud: no stage directions, no actions in asterisks, no emoji, no lists, no name labels, no quotation marks around the reply.{" The one exception is the short correction note in square brackets described above." if corrections == "explicit" else ""}""",
     ]
     prompt = "\n\n".join(sections)
     if opening:

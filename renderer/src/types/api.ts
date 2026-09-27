@@ -718,6 +718,34 @@ export interface EngineStatusOut {
   llm_off?: boolean;
 }
 
+/** Where local models run — Settings → AI. */
+export type ComputeMode = 'auto' | 'gpu' | 'cpu';
+
+export interface EngineRuntimeOut {
+  /** 'gpu' | 'cpu', or null when not loaded. */
+  device: 'gpu' | 'cpu' | null;
+  /** "Vulkan", "Metal", "CUDA", "DirectML", "Core ML", "CPU"… */
+  backend: string | null;
+  /** The GPU's name, when known. */
+  detail: string | null;
+  /** Why it is on the CPU although the setting allows the GPU. */
+  note: string | null;
+}
+
+export interface ComputeOut {
+  mode: ComputeMode;
+  chat_model: EngineRuntimeOut;
+  speech_to_text: EngineRuntimeOut;
+  voice: EngineRuntimeOut;
+  gpu_runtime: {
+    available: boolean;
+    installed: boolean;
+    backend: string;
+    devices: string[];
+    download: DownloadStatusOut;
+  };
+}
+
 export interface DownloadStatusOut {
   status: 'idle' | 'downloading' | 'ready' | 'error';
   downloaded_bytes: number;
@@ -1199,6 +1227,8 @@ export interface FocusOut {
 
 export type MicSensitivity = 'sensitive' | 'balanced' | 'robust';
 export type TurnPace = 'quick' | 'natural' | 'patient';
+export type ReplyLength = 'short' | 'normal' | 'long';
+export type Corrections = 'recast' | 'explicit';
 
 export interface AppSettingsOut {
   target_retention: number;
@@ -1209,7 +1239,17 @@ export interface AppSettingsOut {
   quiet_hours_end: string;
   conversation_mic_sensitivity: MicSensitivity;
   conversation_turn_pace: TurnPace;
+  conversation_reply_length: ReplyLength;
+  conversation_corrections: Corrections;
+  /** Playback rate of the spoken reply, 0.75–1.25. */
+  conversation_voice_speed: number;
+  /** Listening practice: a reply's text stays hidden until it has been heard. */
+  conversation_hide_text: boolean;
+  conversation_hands_free: boolean;
   scene_embeds_enabled: boolean;
+  /** Scene Challenge: -1 easier scenes, 0 at your level, +1 harder. */
+  challenge_difficulty: -1 | 0 | 1;
+  challenge_hints_enabled: boolean;
   /** Below here: owned by other screens, shown read-only so this page can
    * report the truth without becoming a second place to change it. */
   llm_mode: string;
@@ -1235,7 +1275,14 @@ export type AppSettingsPatch = Partial<
     | 'quiet_hours_end'
     | 'conversation_mic_sensitivity'
     | 'conversation_turn_pace'
+    | 'conversation_reply_length'
+    | 'conversation_corrections'
+    | 'conversation_voice_speed'
+    | 'conversation_hide_text'
+    | 'conversation_hands_free'
     | 'scene_embeds_enabled'
+    | 'challenge_difficulty'
+    | 'challenge_hints_enabled'
   >
 >;
 
@@ -1311,4 +1358,63 @@ export interface PageLabelOut {
   simple_text: string;
   mode: string;
   created_at: string;
+}
+
+
+/* --- the level test (Settings → Account) --------------------------------- */
+
+export type CefrLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
+
+export interface LevelStandingOut {
+  level: CefrLevel;
+  relation: 'current' | 'above' | 'below';
+  /** When a recent failure lets this level be tried again. */
+  retry_after: string | null;
+}
+
+export interface LevelAttemptSummaryOut {
+  id: string;
+  level: CefrLevel;
+  from_level: CefrLevel | null;
+  correct: number | null;
+  total: number | null;
+  passed: boolean;
+  submitted_at: string | null;
+}
+
+export interface LevelTestOverviewOut {
+  current: CefrLevel | null;
+  questions: number;
+  pass_share: number;
+  minutes: number;
+  retry_hours: number;
+  levels: LevelStandingOut[];
+  history: LevelAttemptSummaryOut[];
+}
+
+export interface LevelQuestionOut {
+  id: string;
+  skill: 'grammar' | 'vocabulary' | 'reading';
+  passage: string | null;
+  prompt: string;
+  options: string[];
+}
+
+export interface LevelAttemptOut {
+  id: string;
+  level: CefrLevel;
+  expires_at: string;
+  pass_mark: number;
+  questions: LevelQuestionOut[];
+}
+
+export interface LevelTestResultOut {
+  level: CefrLevel;
+  passed: boolean;
+  correct: number;
+  total: number;
+  pass_mark: number;
+  by_skill: Array<{ skill: string; name: string; correct: number; total: number }>;
+  new_level: CefrLevel | null;
+  retry_after: string | null;
 }

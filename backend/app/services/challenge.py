@@ -107,6 +107,26 @@ def describe_prompt(clip_s: float) -> str:
 
 
 
+def difficulty(conn: sqlite3.Connection, user_id: str) -> int:
+    """The learner's Scene Challenge difficulty setting: -1, 0 or +1."""
+    row = conn.execute("SELECT challenge_difficulty FROM user_settings WHERE user_id = ?", (user_id,)).fetchone()
+    return max(-1, min(1, int(row["challenge_difficulty"]))) if row and row["challenge_difficulty"] is not None else 0
+
+
+def hints_enabled(conn: sqlite3.Connection, user_id: str) -> bool:
+    row = conn.execute("SELECT challenge_hints_enabled FROM user_settings WHERE user_id = ?", (user_id,)).fetchone()
+    return bool(row["challenge_hints_enabled"]) if row else True
+
+
+def scene_level(level: str | None, shift: int) -> str | None:
+    """The level scenes are picked around: the learner's, moved one band
+    easier or harder by the setting, and never off the ends of the scale."""
+    order = ("A1", "A2", "B1", "B2", "C1", "C2")
+    if level not in order or shift == 0:
+        return level
+    return order[max(0, min(len(order) - 1, order.index(level) + shift))]
+
+
 def start_round(
     conn: sqlite3.Connection, *, user_id: str, kind: str = "describe", source: str = "vatex"
 ) -> sqlite3.Row | None:
@@ -123,7 +143,9 @@ def _start_vatex(conn: sqlite3.Connection, user_id: str, kind: str) -> sqlite3.R
     # Cheap after the first call — it reads one app_meta row and returns.
     vatex_scenes.ensure_imported(conn)
     level = conn.execute("SELECT cefr_level FROM users WHERE id = ?", (user_id,)).fetchone()
-    scene = vatex_scenes.pick(conn, user_id=user_id, level=level["cefr_level"] if level else None)
+    scene = vatex_scenes.pick(
+        conn, user_id=user_id, level=scene_level(level["cefr_level"] if level else None, difficulty(conn, user_id))
+    )
     if scene is None:
         return None
 

@@ -66,6 +66,19 @@ const PAGE_THEMES: Array<{ key: PageTheme; label: string; sub: string; bg: strin
 const READER_BG: Record<PageTheme, string> = Object.fromEntries(PAGE_THEMES.map((t) => [t.key, t.bg])) as Record<PageTheme, string>;
 const READER_TX: Record<PageTheme, string> = Object.fromEntries(PAGE_THEMES.map((t) => [t.key, t.fg])) as Record<PageTheme, string>;
 
+/* Text that sits on the page colour itself — the page numbers, the "finished"
+ * button at the end — has to follow it. The app's own text tokens are made for
+ * the app's background, so on a Light or Sepia surround they came out pale on
+ * pale. Two dedicated variables rather than overriding the app's tokens: the
+ * selection toolbar lives inside this area too, on the app's own panel colour,
+ * and must keep the app's text colours. Auto and Dark match the app already. */
+const PAGE_INK: Record<PageTheme, React.CSSProperties> = {
+  auto: {},
+  dark: {},
+  light: { '--page-ink': '#3f4441', '--page-label': '#7a807d' } as React.CSSProperties,
+  sepia: { '--page-ink': '#5c4f3d', '--page-label': '#8d7d67' } as React.CSSProperties,
+};
+
 function TabIcon({ tab, color }: { tab: Tab; color: string }) {
   return (
     <svg viewBox="0 0 16 16" className="h-[13px] w-[13px] flex-none" fill="none" stroke={color} strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round">
@@ -265,6 +278,15 @@ export function Reader() {
   const setPanelOpen = (next: boolean) => setPrefs({ panel_open: next });
   const [showOriginal, setShowOriginal] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Esc closes the settings sheet, as it would any sheet over a panel.
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSettingsOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [settingsOpen]);
 
   /* The book's own typeset page, for the things the text pipeline cannot
    * carry: figures, plates, equations set as images, the layout itself. Only
@@ -572,12 +594,12 @@ export function Reader() {
         style={{
           borderColor: book?.finished_at ? 'var(--accLine)' : 'var(--line)',
           background: book?.finished_at ? 'var(--accSoft)' : 'transparent',
-          color: book?.finished_at ? 'var(--acc)' : 'var(--tx2)',
+          color: book?.finished_at ? 'var(--acc)' : 'var(--page-ink, var(--tx2))',
         }}
       >
         {book?.finished_at ? '✓ Finished — mark as unread' : 'Mark as finished'}
       </button>
-      <span className="font-mono text-[9.5px] text-tx3">
+      <span className="font-mono text-[9.5px]" style={{ color: 'var(--page-label, var(--tx3))' }}>
         {book?.finished_at
           ? `finished ${new Date(book.finished_at).toLocaleDateString()}`
           : 'that was the last page'}
@@ -596,9 +618,11 @@ export function Reader() {
           simply the top of the window. */}
       <div
         className="flex min-h-0 min-w-0 flex-1 flex-col transition-colors duration-200"
-        style={{ background: READER_BG[pageTheme] }}
+        style={{ background: READER_BG[pageTheme], ...PAGE_INK[pageTheme] }}
       >
-        <div className="flex w-full flex-none justify-center border-b border-line2 px-6 py-[10px]">
+        {/* The two bars are the app's, not the page's: on the app's own
+            background, whatever colour surrounds the page below. */}
+        <div className="flex w-full flex-none justify-center border-b border-line2 bg-bg px-6 py-[10px]">
           <div className="flex w-full max-w-[760px] flex-wrap items-center gap-[6px]">
             <button
               onClick={handleCloseBook}
@@ -628,7 +652,7 @@ export function Reader() {
           </div>
         </div>
 
-        <div className="flex w-full flex-none justify-center border-b border-line2 px-6 py-[7px]">
+        <div className="flex w-full flex-none justify-center border-b border-line2 bg-bg px-6 py-[7px]">
           <div className="flex w-full max-w-[760px] flex-wrap items-center gap-[9px] font-mono text-[10.5px] text-tx3">
             <span className="flex flex-none items-center gap-[5px]">
               page
@@ -734,7 +758,10 @@ export function Reader() {
             tail={
               <div className="mx-auto w-full max-w-[420px] flex-none pt-3">
                 {finishBlock}
-                <p className="pt-[10px] text-center font-mono text-[9.5px] leading-[1.7] text-tx3">
+                <p
+                  className="pt-[10px] text-center font-mono text-[9.5px] leading-[1.7]"
+                  style={{ color: 'var(--page-label, var(--tx3))' }}
+                >
                   select any text to highlight it, look it up, or ask for it in simpler
                   words · words above your level are tinted on the page
                 </p>
@@ -867,7 +894,7 @@ export function Reader() {
       )}
 
       {panelOpen && (
-        <aside className="flex min-h-0 w-[308px] flex-none flex-col border-l border-line2 bg-panel">
+        <aside className="relative flex min-h-0 w-[308px] flex-none flex-col overflow-hidden border-l border-line2 bg-panel">
           <div className="grid flex-none grid-cols-5 gap-[2px] px-[9px] pt-[9px]">
             {tabs.map((t) => {
               const on = tab === t;
@@ -1584,21 +1611,54 @@ export function Reader() {
           </div>
 
           {/* Reading settings, shut by default and summarised on the strip
-              so opening it is rarely needed. */}
-          <div className="flex-none border-t border-line2">
+              so opening it is rarely needed.
+
+              Open, it is a sheet over the panel rather than more of it: its
+              own tone, an accent edge, a shadow cast upward, a titled header,
+              and the tab behind it dimmed. Opened flush and in the same
+              colour, it read as part of whichever tab was showing. */}
+          {settingsOpen && (
+            <button
+              aria-label="Close reading settings"
+              onClick={() => setSettingsOpen(false)}
+              className="absolute inset-0 z-10 cursor-default bg-black/45 transition-opacity"
+            />
+          )}
+          <div
+            className={`relative z-20 flex-none transition-shadow ${
+              settingsOpen ? 'rounded-t-[12px] border-t-2 border-acc bg-panel2' : 'border-t border-line2'
+            }`}
+            style={settingsOpen ? { boxShadow: '0 -14px 32px rgba(0,0,0,.45)' } : undefined}
+          >
             <button
               onClick={() => setSettingsOpen((v) => !v)}
               aria-expanded={settingsOpen}
-              className="flex w-full items-center justify-between gap-2 px-[13px] py-[9px] text-left hover:bg-line2"
+              className={`flex w-full items-center justify-between gap-2 px-[13px] text-left ${
+                settingsOpen ? 'py-[11px]' : 'py-[9px] hover:bg-line2'
+              }`}
             >
-              <span className="flex items-center gap-[7px] font-mono text-[9.5px] text-tx3">
-                <svg viewBox="0 0 16 16" className="h-[11px] w-[11px] flex-none" fill="none" stroke="var(--tx3)" strokeWidth={1.3}>
-                  <circle cx="8" cy="8" r="2.4" />
-                  <path d="M8 1.6v1.6M8 12.8v1.6M14.4 8h-1.6M3.2 8H1.6M12.5 3.5l-1.1 1.1M4.6 11.4l-1.1 1.1M12.5 12.5l-1.1-1.1M4.6 4.6L3.5 3.5" />
-                </svg>
-                {settingsSummary}
-              </span>
-              <DisclosureArrow open={settingsOpen} color="var(--tx3)" />
+              {settingsOpen ? (
+                <span className="flex items-center gap-[8px] font-sans text-[12.5px] font-semibold text-tx">
+                  <svg viewBox="0 0 16 16" className="h-[13px] w-[13px] flex-none" fill="none" stroke="var(--acc)" strokeWidth={1.4}>
+                    <circle cx="8" cy="8" r="2.4" />
+                    <path d="M8 1.6v1.6M8 12.8v1.6M14.4 8h-1.6M3.2 8H1.6M12.5 3.5l-1.1 1.1M4.6 11.4l-1.1 1.1M12.5 12.5l-1.1-1.1M4.6 4.6L3.5 3.5" />
+                  </svg>
+                  Reading settings
+                </span>
+              ) : (
+                <span className="flex items-center gap-[7px] font-mono text-[9.5px] text-tx3">
+                  <svg viewBox="0 0 16 16" className="h-[11px] w-[11px] flex-none" fill="none" stroke="var(--tx3)" strokeWidth={1.3}>
+                    <circle cx="8" cy="8" r="2.4" />
+                    <path d="M8 1.6v1.6M8 12.8v1.6M14.4 8h-1.6M3.2 8H1.6M12.5 3.5l-1.1 1.1M4.6 11.4l-1.1 1.1M12.5 12.5l-1.1-1.1M4.6 4.6L3.5 3.5" />
+                  </svg>
+                  {settingsSummary}
+                </span>
+              )}
+              {settingsOpen ? (
+                <span className="font-mono text-[10px] text-tx3">close ✕</span>
+              ) : (
+                <DisclosureArrow open={false} color="var(--tx3)" />
+              )}
             </button>
 
             {settingsOpen && (

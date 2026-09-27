@@ -232,11 +232,14 @@ export function Choice<T extends string>({
   options,
   onChange,
   width = 180,
+  placeholder = 'not set',
 }: {
   value: T | null;
   options: Array<{ value: T; label: string }>;
   onChange: (next: T) => void;
   width?: number;
+  /** What an empty choice reads as. */
+  placeholder?: string;
 }) {
   return (
     <select
@@ -245,7 +248,7 @@ export function Choice<T extends string>({
       style={{ width }}
       className="cursor-pointer rounded-field border border-line2 bg-panel px-[9px] py-[6px] font-sans text-[12px] text-tx outline-none focus:border-accLine"
     >
-      {value === null && <option value="">not set</option>}
+      {value === null && <option value="">{placeholder}</option>}
       {options.map((o) => (
         <option key={o.value} value={o.value}>
           {o.label}

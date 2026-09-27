@@ -186,8 +186,54 @@ def _run_stt_download(key: str) -> None:
             state.status, state.error = "error", str(err)
 
 
+def _run_gpu_runtime_download(key: str) -> None:
+    """llama.cpp's prebuilt GPU server for this platform — see llama_runtime."""
+    from app.services.voice import llama_runtime
+
+    state = _state_for(key)
+    asset = llama_runtime.gpu_asset()
+    try:
+        if asset is None:
+            raise OSError("llama.cpp publishes no GPU build for this platform")
+        url = f"{llama_runtime._RELEASES}/{asset}"
+        dest = model_manager.models_dir() / "runtimes" / asset
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with state.lock:
+            state.downloaded_bytes = 0
+            state.total_bytes = _content_length(url)
+        _stream_to_file(url, dest, state)
+        llama_runtime.install(dest)
+        with state.lock:
+            state.status = "ready"
+    except Exception as err:  # noqa: BLE001 — reported through status()
+        with state.lock:
+            state.status, state.error = "error", str(err)
+
+
+def download_gpu_runtime_now() -> None:
+    """The same download, on the calling thread — for Launch AI, which is
+    already a wait the learner chose, and would otherwise fall back to the CPU
+    only because the runtime had not been fetched yet."""
+    key = download_key("gpu_runtime", "")
+    state = _state_for(key)
+    with state.lock:
+        if state.status == "downloading":
+            busy = True
+        else:
+            busy = False
+            state.status, state.error = "downloading", None
+    if busy:
+        while status(key)["status"] == "downloading":
+            threading.Event().wait(0.5)
+    else:
+        _run_gpu_runtime_download(key)
+    result = status(key)
+    if result["status"] != "ready":
+        raise OSError(result["error"] or "the GPU runtime could not be downloaded")
+
+
 def start_download(kind: str, key: str) -> None:
-    """kind: 'llm' | 'stt' | 'tts' | 'pocket_tts'. key: catalog key for 'llm', ignored otherwise."""
+    """kind: 'llm' | 'stt' | 'tts' | 'pocket_tts' | 'gpu_runtime'. key: catalog key for 'llm', ignored otherwise."""
     state = _state_for(download_key(kind, key))
     with state.lock:
         if state.status == "downloading":
@@ -205,6 +251,8 @@ def start_download(kind: str, key: str) -> None:
         thread = threading.Thread(target=_run_pocket_tts_download, args=(download_key(kind, key),), daemon=True)
     elif kind == "stt":
         thread = threading.Thread(target=_run_stt_download, args=(download_key(kind, key),), daemon=True)
+    elif kind == "gpu_runtime":
+        thread = threading.Thread(target=_run_gpu_runtime_download, args=(download_key(kind, key),), daemon=True)
     else:
         raise ValueError(f"unknown download kind: {kind}")
     thread.start()

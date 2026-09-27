@@ -19,6 +19,8 @@ from pydantic import BaseModel, Field
 
 MicSensitivity = Literal["sensitive", "balanced", "robust"]
 TurnPace = Literal["quick", "natural", "patient"]
+ReplyLength = Literal["short", "normal", "long"]
+Corrections = Literal["recast", "explicit"]
 
 
 class AppSettingsOut(BaseModel):
@@ -31,7 +33,15 @@ class AppSettingsOut(BaseModel):
     quiet_hours_end: str
     conversation_mic_sensitivity: MicSensitivity
     conversation_turn_pace: TurnPace
+    conversation_reply_length: ReplyLength = "normal"
+    conversation_corrections: Corrections = "recast"
+    conversation_voice_speed: float = 1.0
+    conversation_hide_text: bool = False
+    conversation_hands_free: bool = True
     scene_embeds_enabled: bool
+    #: Scene Challenge: -1 easier scenes, 0 at the learner's level, +1 harder.
+    challenge_difficulty: int = 0
+    challenge_hints_enabled: bool = True
 
     # --- owned elsewhere, shown so the page can report the truth ----------
     llm_mode: str
@@ -62,4 +72,12 @@ class AppSettingsPatch(BaseModel):
     quiet_hours_end: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
     conversation_mic_sensitivity: MicSensitivity | None = None
     conversation_turn_pace: TurnPace | None = None
+    conversation_reply_length: ReplyLength | None = None
+    conversation_corrections: Corrections | None = None
+    # Slower helps listening; much past these and speech stops sounding like speech.
+    conversation_voice_speed: float | None = Field(default=None, ge=0.75, le=1.25)
+    conversation_hide_text: bool | None = None
+    conversation_hands_free: bool | None = None
     scene_embeds_enabled: bool | None = None
+    challenge_difficulty: int | None = Field(default=None, ge=-1, le=1)
+    challenge_hints_enabled: bool | None = None

@@ -7,9 +7,8 @@
  * tells someone their microphone is one thing when it is another.
  *
  * The groups now follow the app's own shape. One per thing the learner
- * actually does — talk, watch, read, practise — plus the four that cut across
- * all of them: who they are, what the AI is, how it looks, what leaves the
- * machine.
+ * actually does — talk, watch, read, practise — plus the three that cut
+ * across all of them: who they are, what the AI is, and how it looks.
  */
 
 export const SETTINGS_GROUP_ORDER = [
@@ -21,7 +20,6 @@ export const SETTINGS_GROUP_ORDER = [
   'Reading',
   'Challenge',
   'Appearance',
-  'Privacy',
 ] as const;
 
 export type SettingsGroupName = (typeof SETTINGS_GROUP_ORDER)[number];
@@ -48,8 +46,11 @@ export const SETTINGS_GROUPS: Record<SettingsGroupName, SettingsGroupDef> = {
     keywords: ['model', 'llm', 'local', 'openrouter', 'api key', 'download', 'gguf', 'whisper', 'voice'],
   },
   Conversation: {
-    sub: 'Hands-free listening, and the voice that answers',
-    keywords: ['microphone', 'mic', 'vad', 'sensitivity', 'interrupt', 'barge', 'pause', 'turn', 'voice', 'tts', 'speech'],
+    sub: 'Listening, how the partner talks, and its voice',
+    keywords: [
+      'microphone', 'mic', 'vad', 'sensitivity', 'interrupt', 'barge', 'pause', 'turn', 'hands-free',
+      'voice', 'tts', 'speech', 'speed', 'slow', 'reply length', 'corrections', 'mistakes', 'listening practice', 'hide text',
+    ],
   },
   Watching: {
     sub: 'Subtitle defaults, playback aids and the clip engine',
@@ -60,16 +61,12 @@ export const SETTINGS_GROUPS: Record<SettingsGroupName, SettingsGroupDef> = {
     keywords: ['book', 'pdf', 'epub', 'font', 'size', 'theme', 'sepia', 'difficulty', 'heat', 'page view'],
   },
   Challenge: {
-    sub: 'The Scene Description Challenge, and what it contacts',
-    keywords: ['scene', 'vatex', 'youtube', 'embed', 'describe', 'clip'],
+    sub: 'Scenes, their difficulty, and hints',
+    keywords: ['scene', 'vatex', 'youtube', 'embed', 'describe', 'clip', 'difficulty', 'hard', 'easy', 'hints', 'score'],
   },
   Appearance: {
     sub: 'Theme and interface size',
     keywords: ['dark', 'light', 'theme', 'text size', 'scale', 'accessibility', 'contrast'],
-  },
-  Privacy: {
-    sub: 'What stays on this machine, and what you can delete',
-    keywords: ['telemetry', 'network', 'offline', 'dictionary cache', 'clear', 'backup', 'tracking'],
   },
 };
 

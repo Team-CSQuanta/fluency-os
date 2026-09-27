@@ -383,7 +383,10 @@ function PageSlot({
           </span>
         </div>
       )}
-      <div className="pt-[5px] text-center font-mono text-[9.5px] text-tx3">{page}</div>
+      {/* On the page colour, so it follows it (see PAGE_INK in Reader). */}
+      <div className="pt-[5px] text-center font-mono text-[9.5px]" style={{ color: 'var(--page-label, var(--tx3))' }}>
+        {page}
+      </div>
     </div>
   );
 }

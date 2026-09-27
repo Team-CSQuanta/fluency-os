@@ -4,6 +4,7 @@ import { spokenCount, timeWords } from './spokenTiming';
 import { useMicRecorder } from '@/features/conversation/useMicRecorder';
 import { useVadRecorder } from '@/features/conversation/useVadRecorder';
 import { DEFAULT_PROFILE, type ListeningProfile } from '@/features/conversation/vadGate';
+import { UserAvatar } from '@/features/shell/UserAvatar';
 import { useConversationStore } from '@/store/conversationStore';
 import { useEngineStore } from '@/store/engineStore';
 import { useSettingsStore } from '@/store/settingsStore';
@@ -71,7 +72,11 @@ export function ConversationLive() {
   const [textInput, setTextInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [ending, setEnding] = useState(false);
-  const [handsFree, setHandsFree] = useState(true);
+  // Settings → Conversation, when already loaded — so the microphone does
+  // not open for a moment before a "start with tap-to-talk" setting arrives.
+  const [handsFree, setHandsFree] = useState(
+    () => useSettingsStore.getState().settings?.conversation_hands_free ?? true,
+  );
   // Shown immediately on submit, before the round trip (STT + LLM reply)
   // resolves — otherwise a typed message just sits invisible in the input's
   // cleared state until the AI's reply arrives alongside it, which reads as
@@ -100,6 +105,29 @@ export function ConversationLive() {
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
 
   const turns = activeSession?.turns ?? [];
+
+  /* Listening practice (Settings → Conversation): a reply that arrives while
+   * the learner is here stays blurred until it has been heard, or they click
+   * it. Replies already in the conversation when it was opened are shown —
+   * they were heard last time. A freshly started session's opening line is
+   * new, so it counts as arriving now. */
+  const loadedTurnIds = useRef<Set<string> | null>(null);
+  const loadedFor = useRef<string | null>(null);
+  const [heardIds, setHeardIds] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    // Once per session: React's StrictMode runs effects twice in
+    // development, and by the second run the "just started" signal has been
+    // used up by the autoplay below.
+    if (!activeSession || loadedFor.current === activeSession.id) return;
+    loadedFor.current = activeSession.id;
+    const fresh = useConversationStore.getState().justStarted;
+    loadedTurnIds.current = new Set(fresh ? [] : activeSession.turns.map((t) => t.id));
+    setHeardIds(new Set());
+    // Once per session opened, before the opening line's autoplay below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSession?.id]);
+  const markHeard = (turnId: string) =>
+    setHeardIds((prev) => (prev.has(turnId) ? prev : new Set(prev).add(turnId)));
   const isVoice = activeSession?.channel === 'voice';
   // This session's own pinned engine — the one its turns actually call. The
   // global engine state reflects what Settings points at *now*, which can be
@@ -253,6 +281,9 @@ export function ConversationLive() {
         const words = timeWords(chunkTexts[i] ?? '');
         await new Promise<void>((resolve) => {
           const audio = new Audio(url);
+          // Settings → Conversation. Read at play time, so a change applies to
+          // the next reply without reopening the conversation.
+          audio.playbackRate = useSettingsStore.getState().settings?.conversation_voice_speed ?? 1;
           currentAudioRef.current = audio;
 
           // Read from the element every frame rather than running a timer
@@ -292,6 +323,8 @@ export function ConversationLive() {
         setSpeaking({ turnId, chunkIndex: i, spokenInChunk: words.length });
       }
     } finally {
+      // Played through or talked over — either way it has been heard.
+      markHeard(turnId);
       // Awaited, not fire-and-forget: the in-flight prefetch has to land
       // before its URL can be revoked, or it leaks exactly in the barge-in
       // case this is here to cover.
@@ -374,6 +407,15 @@ export function ConversationLive() {
   // conversation without ever visiting settings, and the tuned defaults are
   // what they would get anyway, so a slow or failed read costs nothing.
   const settings = useSettingsStore((s) => s.settings);
+  // Settings → Conversation decides whether a conversation opens hands-free —
+  // once, when it opens; toggling it here afterwards is the learner's call.
+  const handsFreeApplied = useRef(false);
+  useEffect(() => {
+    if (!settings || handsFreeApplied.current) return;
+    handsFreeApplied.current = true;
+    setHandsFree(settings.conversation_hands_free);
+  }, [settings]);
+  const hideUntilHeard = Boolean(settings?.conversation_hide_text) && isVoice;
   const fetchSettings = useSettingsStore((s) => s.fetch);
   useEffect(() => {
     if (!settings) void fetchSettings();
@@ -531,15 +573,17 @@ export function ConversationLive() {
                 className="flex max-w-[78%] gap-[11px]"
                 style={{ flexDirection: isAi ? 'row' : 'row-reverse', alignSelf: isAi ? 'flex-start' : 'flex-end' }}
               >
-                <div
-                  className="grid h-7 w-7 flex-none place-items-center rounded-full font-mono text-[8px] font-semibold"
-                  style={{
-                    background: isAi ? 'var(--accSoft)' : 'var(--tile)',
-                    color: isAi ? 'var(--acc)' : 'var(--tx3)',
-                  }}
-                >
-                  {isAi ? initials(personaName) : 'you'}
-                </div>
+                {isAi ? (
+                  <div
+                    className="grid h-7 w-7 flex-none place-items-center rounded-full font-mono text-[8px] font-semibold"
+                    style={{ background: 'var(--accSoft)', color: 'var(--acc)' }}
+                  >
+                    {initials(personaName)}
+                  </div>
+                ) : (
+                  // Their own picture, when they have set one.
+                  <UserAvatar />
+                )}
                 <div>
                   <div
                     className="rounded-field border px-[14px] py-[11px] font-sans text-[13.5px] leading-[1.65]"
@@ -549,14 +593,26 @@ export function ConversationLive() {
                       color: 'var(--tx)',
                     }}
                   >
-                    {t.text ? (
+                    {t.text && isAi && hideUntilHeard && t.audio_url && !heardIds.has(t.id) &&
+                    !loadedTurnIds.current?.has(t.id) ? (
+                      <button
+                        onClick={() => markHeard(t.id)}
+                        title="Listening practice — click to show the text now"
+                        className="relative block text-left"
+                      >
+                        <span className="pointer-events-none select-none blur-[6px]">{t.text}</span>
+                        <span className="absolute inset-0 grid place-items-center font-mono text-[10.5px] text-acc">
+                          🎧 listen first · click to show
+                        </span>
+                      </button>
+                    ) : t.text ? (
                       <SpokenText
                         text={t.text}
                         chunks={t.audio_chunks}
                         speaking={speaking?.turnId === t.id ? speaking : null}
                       />
                     ) : (
-                      <span className="italic text-tx3">(no speech detected)</span>
+                      <span className="italic text-tx3">{isAi ? '(no reply)' : '(no speech detected)'}</span>
                     )}
                   </div>
                   <div
@@ -576,9 +632,7 @@ export function ConversationLive() {
           })}
           {pendingUserText && (
             <div className="flex max-w-[78%] gap-[11px]" style={{ flexDirection: 'row-reverse', alignSelf: 'flex-end' }}>
-              <div className="grid h-7 w-7 flex-none place-items-center rounded-full bg-tile font-mono text-[8px] font-semibold text-tx3">
-                you
-              </div>
+              <UserAvatar />
               <div>
                 <div
                   className="rounded-field border px-[14px] py-[11px] font-sans text-[13.5px] leading-[1.65] text-tx opacity-60"

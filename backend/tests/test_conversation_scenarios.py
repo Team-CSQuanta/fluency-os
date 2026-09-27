@@ -120,3 +120,49 @@ def test_the_catalog_route_lists_categories_and_the_learners_scenes(client, auth
         f"/conversation/custom-scenarios/{made.json()['id']}", headers=auth_headers, params={"user_id": user_id}
     )
     assert gone.status_code == 204
+
+
+def test_reply_length_and_corrections_shape_the_prompt():
+    coffee = scenarios.BY_KEY["coffee"]
+    short = scenarios.build_system_prompt(coffee, level="B1", target_words=[], reply_length="short")
+    long = scenarios.build_system_prompt(coffee, level="B1", target_words=[], reply_length="long")
+    assert "ONE short sentence" in short and "Two to four sentences" in long
+    gentle = scenarios.build_system_prompt(coffee, level="B1", target_words=[])
+    pointed = scenarios.build_system_prompt(coffee, level="B1", target_words=[], corrections="explicit")
+    assert "Recast instead" in gentle and "Small fix" not in gentle
+    assert "Small fix" in pointed and "exception is the short correction note" in pointed
+
+
+def test_the_settings_reach_the_partner(tmp_path, fake_llm):
+    conn = _fresh_conn(tmp_path)
+    user_id = _make_user(conn)
+    conn.execute("INSERT INTO user_settings (user_id) VALUES (?) ON CONFLICT(user_id) DO NOTHING", (user_id,))
+    conn.execute(
+        "UPDATE user_settings SET conversation_reply_length = 'long', conversation_corrections = 'explicit' "
+        "WHERE user_id = ?",
+        (user_id,),
+    )
+    prefs = conversation.reply_prefs(conn, user_id)
+    assert prefs == {"reply_length": "long", "corrections": "explicit"}
+    assert conversation.reply_tokens(prefs) == scenarios.REPLY_TOKENS["long"] + scenarios.CORRECTION_TOKENS
+
+    conversation.start_session(conn, user_id=user_id, scenario="coffee", channel="text")
+    system_prompt, _ = fake_llm["replies"][0]
+    assert "Two to four sentences" in system_prompt and "Small fix" in system_prompt
+
+
+def test_conversation_settings_are_saved_and_checked(client, auth_headers):
+    from tests.test_conversation import _create_user
+
+    user_id = _create_user(client, auth_headers)
+    patch = {
+        "conversation_reply_length": "short",
+        "conversation_corrections": "explicit",
+        "conversation_voice_speed": 0.9,
+        "conversation_hide_text": True,
+        "conversation_hands_free": False,
+    }
+    body = client.patch(f"/users/{user_id}/settings", headers=auth_headers, json=patch).json()
+    assert {k: body[k] for k in patch} == patch
+    for bad in ({"conversation_voice_speed": 2.0}, {"conversation_reply_length": "essay"}):
+        assert client.patch(f"/users/{user_id}/settings", headers=auth_headers, json=bad).status_code == 422

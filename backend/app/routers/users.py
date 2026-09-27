@@ -94,6 +94,9 @@ def update_profile(
     if not fields:
         return _row_to_user(_get_user_row(conn, user_id))
 
+    if "cefr_level" in fields:
+        _check_level_change(conn, user_id, fields["cefr_level"])
+
     if "display_name" in fields:
         name = fields["display_name"].strip()
         if not name:
@@ -164,11 +167,30 @@ def clear_avatar(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> Us
     return _row_to_user(_get_user_row(conn, user_id))
 
 
+def _check_level_change(conn: sqlite3.Connection, user_id: str, level: str) -> None:
+    """A level can only go UP by passing the level test (routers/level_test).
+    The first placement — no level yet — and moving down are free."""
+    from app.services import level_test
+
+    if level not in level_test.LEVELS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{level} is not a CEFR level.")
+    current = level_test.current_level(conn, user_id)
+    row = conn.execute("SELECT onboarding_completed_at FROM users WHERE id = ?", (user_id,)).fetchone()
+    # Onboarding's placement step can be redone before onboarding finishes.
+    onboarding = row is not None and row["onboarding_completed_at"] is None
+    if not onboarding and current is not None and level_test.rank(level) > level_test.rank(current):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Moving up to {level} needs the level test — take it from Settings → Account.",
+        )
+
+
 @router.patch("/{user_id}/placement", response_model=UserOut)
 def update_placement(
     user_id: str, payload: PlacementUpdate, conn: sqlite3.Connection = Depends(get_db)
 ) -> UserOut:
     _get_user_row(conn, user_id)
+    _check_level_change(conn, user_id, payload.cefr_level)
     conn.execute("UPDATE users SET cefr_level = ? WHERE id = ?", (payload.cefr_level, user_id))
     return _row_to_user(_get_user_row(conn, user_id))
 
@@ -248,7 +270,14 @@ def get_settings(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> Ap
         quiet_hours_end=row["quiet_hours_end"] or "08:00",
         conversation_mic_sensitivity=row["conversation_mic_sensitivity"],
         conversation_turn_pace=row["conversation_turn_pace"],
+        conversation_reply_length=row["conversation_reply_length"],
+        conversation_corrections=row["conversation_corrections"],
+        conversation_voice_speed=row["conversation_voice_speed"],
+        conversation_hide_text=bool(row["conversation_hide_text"]),
+        conversation_hands_free=bool(row["conversation_hands_free"]),
         scene_embeds_enabled=bool(row["scene_embeds_enabled"]),
+        challenge_difficulty=row["challenge_difficulty"],
+        challenge_hints_enabled=bool(row["challenge_hints_enabled"]),
         llm_mode=row["llm_mode"],
         llm_model_id=row["llm_model_id"],
         api_provider=row["api_provider"],
@@ -275,9 +304,22 @@ _PATCHABLE = {
     "quiet_hours_end": "quiet_hours_end",
     "conversation_mic_sensitivity": "conversation_mic_sensitivity",
     "conversation_turn_pace": "conversation_turn_pace",
+    "conversation_reply_length": "conversation_reply_length",
+    "conversation_corrections": "conversation_corrections",
+    "conversation_voice_speed": "conversation_voice_speed",
+    "conversation_hide_text": "conversation_hide_text",
+    "conversation_hands_free": "conversation_hands_free",
     "scene_embeds_enabled": "scene_embeds_enabled",
+    "challenge_difficulty": "challenge_difficulty",
+    "challenge_hints_enabled": "challenge_hints_enabled",
 }
-_BOOL_SETTINGS = {"notifications_enabled", "scene_embeds_enabled"}
+_BOOL_SETTINGS = {
+    "notifications_enabled",
+    "scene_embeds_enabled",
+    "challenge_hints_enabled",
+    "conversation_hide_text",
+    "conversation_hands_free",
+}
 
 
 @router.patch("/{user_id}/settings", response_model=AppSettingsOut)

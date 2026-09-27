@@ -6,7 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import configure_from_argv, settings
 from app.db import get_connection
 from app.migrations.runner import run_migrations
+from app.services.voice import compute, llama_runtime
 from app.routers import (
+    level_test,
     activity,
     books,
     challenge,
@@ -35,6 +37,8 @@ async def lifespan(_app: FastAPI):
     conn = get_connection()
     try:
         run_migrations(conn)
+        # Where local models run — read before any engine loads.
+        compute.load(conn)
         ensure_fts_backfilled(conn)
         backfill_missing_cefr(conn)
         backfill_index_at_end(conn)
@@ -43,6 +47,8 @@ async def lifespan(_app: FastAPI):
     finally:
         conn.close()
     yield
+    # A GPU model server is a child process; it goes when the backend does.
+    llama_runtime.stop_all()
 
 
 app = FastAPI(title="FluencyOS Backend", lifespan=lifespan)
@@ -60,6 +66,7 @@ app.include_router(health.router)
 app.include_router(users.router)
 app.include_router(users.file_router)
 app.include_router(placement.router)
+app.include_router(level_test.router)
 app.include_router(hardware.router)
 app.include_router(books.router)
 app.include_router(challenge.router)

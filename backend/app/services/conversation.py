@@ -137,13 +137,21 @@ def _cloud_engine(provider: str):
 
 def _generate_reply(target: dict, system_prompt: str, history: list[tuple[str, str]], max_tokens: int = 120) -> str:
     if target["provider"] != "local":
-        return _cloud_engine(target["provider"]).generate_reply(
+        reply = _cloud_engine(target["provider"]).generate_reply(
             system_prompt, history, api_key=target["api_key"], model=target["model"], max_tokens=max_tokens
         )
-    option = target["option"]
-    return llm_chat_engine.generate_reply(
-        system_prompt, history, repo_id=option.repo_id, filename=option.filename, max_tokens=max_tokens
-    )
+    else:
+        option = target["option"]
+        reply = llm_chat_engine.generate_reply(
+            system_prompt, history, repo_id=option.repo_id, filename=option.filename, max_tokens=max_tokens
+        )
+    # An empty reply is a failure, whichever engine produced it. Stored, it
+    # became a silent AI turn the learner could only talk past — so it is
+    # refused here, before anything is written, and the learner's own turn is
+    # kept for them to send again.
+    if not (reply or "").strip():
+        raise EngineUnavailable("The AI returned an empty reply — try sending that again.")
+    return reply
 
 
 def _generate_analysis(
@@ -354,14 +362,35 @@ def _system_prompt(
     *,
     detail: dict | None = None,
     level: str = conversation_report.DEFAULT_CEFR,
+    prefs: dict | None = None,
 ) -> str:
     """The scene's instructions — see scenarios.build_system_prompt."""
+    prefs = prefs or {}
     return scenarios.build_system_prompt(
         scenarios.resolve(scenario, detail),
         level=level,
         target_words=[(w["word"], w["definition"]) for w in target_words],
         opening=opening,
+        reply_length=prefs.get("reply_length", "normal"),
+        corrections=prefs.get("corrections", "recast"),
     )
+
+
+def reply_prefs(conn: sqlite3.Connection, user_id: str) -> dict:
+    """How the learner wants the partner to talk — Settings → Conversation."""
+    row = conn.execute(
+        "SELECT conversation_reply_length, conversation_corrections FROM user_settings WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    return {
+        "reply_length": (row["conversation_reply_length"] if row else None) or "normal",
+        "corrections": (row["conversation_corrections"] if row else None) or "recast",
+    }
+
+
+def reply_tokens(prefs: dict) -> int:
+    tokens = scenarios.REPLY_TOKENS.get(prefs.get("reply_length", "normal"), 120)
+    return tokens + (scenarios.CORRECTION_TOKENS if prefs.get("corrections") == "explicit" else 0)
 
 
 def learner_level(conn: sqlite3.Connection, user_id: str) -> str:
@@ -532,10 +561,12 @@ def start_session(
     # conversation, and which "resume" could only ever reopen empty. And it
     # means no write transaction is held open across a call that can take
     # minutes on a cold model load, which would block every other writer.
+    prefs = reply_prefs(conn, user_id)
     opening = _generate_reply(
         target,
-        _system_prompt(scenario, target_words, detail=detail, level=learner_level(conn, user_id)),
+        _system_prompt(scenario, target_words, detail=detail, level=learner_level(conn, user_id), prefs=prefs),
         [("user", scenarios.opening_instruction(scene))],
+        max_tokens=reply_tokens(prefs),
     )
 
     session_id = uuid7()
@@ -721,12 +752,14 @@ def submit_user_turn(
     pairs = [("assistant" if t["speaker"] == "ai" else "user", t["text"]) for t in turns]
     pairs.append(("user", text))
     opening, history = normalise_for_chat(pairs)
+    prefs = reply_prefs(conn, session["user_id"])
     system_prompt = _system_prompt(
         session["scenario"],
         target_words,
         opening,
         detail=session_detail(session),
         level=learner_level(conn, session["user_id"]),
+        prefs=prefs,
     )
 
     # Generate BEFORE writing anything. A failure here used to leave the
@@ -735,7 +768,7 @@ def submit_user_turn(
     # was permanently stuck behind an alternation error that said nothing
     # about the original failure. Nothing is persisted unless there is a
     # reply to persist alongside it.
-    reply = _generate_reply(target, system_prompt, history)
+    reply = _generate_reply(target, system_prompt, history, max_tokens=reply_tokens(prefs))
 
     if response_delay_seconds is not None:
         # Anything outside this is a clock problem, not a learner.

@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { ComputePanel } from '@/features/settings/ComputePanel';
 import { useEngineStore } from '@/store/engineStore';
 import type { DownloadStatusOut } from '@/types/api';
 import { friendlyMessage } from '@/lib/friendlyError';
@@ -439,6 +440,11 @@ export function ModelsPanel() {
       <div className="font-mono text-[9.5px] leading-[1.7] text-tx3">
         models download once and are cached locally · a slow or interrupted download can just be retried
       </div>
+
+      {/* Part of the "Local (this device)" setup: where the models on this
+          machine run. Hidden with a cloud provider, whose replies never run
+          here at all. */}
+      {showLocal && <ComputePanel />}
     </div>
   );
 }

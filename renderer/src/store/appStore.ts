@@ -16,6 +16,8 @@ interface AppState {
   setOnboardingComplete: (user: UserOut) => void;
   /** Change name, languages or level. Returns nothing; the row is replaced. */
   updateProfile: (patch: ProfileUpdate) => Promise<void>;
+  /** Re-reads the profile — after something else changed it, like a passed level test. */
+  refreshUser: () => Promise<void>;
   /** Copy a picture from disk and use it as the profile picture. */
   setAvatar: (path: string) => Promise<void>;
   clearAvatar: () => Promise<void>;
@@ -73,6 +75,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!id) return;
     const user = await api.patch<UserOut>(`/users/${id}`, patch);
     set({ currentUser: user });
+  },
+
+  refreshUser: async () => {
+    const id = get().currentUserId;
+    if (!id) return;
+    set({ currentUser: await api.get<UserOut>(`/users/${id}`) });
   },
 
   setAvatar: async (path) => {

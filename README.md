@@ -49,6 +49,22 @@ faster-whisper — roughly a gigabyte once unpacked. The CPU index is pinned in
 that pin uv would resolve the CUDA build and pull about 3 GB of GPU packages
 nothing here would load.
 
+### Running local models on the GPU
+
+Settings → AI → *Where local AI runs* chooses **Auto**, **GPU** or **CPU** for
+every local model. Nothing extra needs installing for it:
+
+- **Chat model.** In Auto or GPU mode the app downloads llama.cpp's prebuilt
+  server for this machine (12–33 MB, once) into the models folder and runs the
+  model through it: Vulkan on Windows and Linux (NVIDIA, AMD and Intel,
+  integrated graphics included), Metal on Apple Silicon. If that cannot start
+  — no GPU, no build for the platform, offline — it falls back to the CPU and
+  Settings says why.
+- **Speech to text** uses the GPU only on NVIDIA (CUDA); otherwise the CPU.
+- **Kokoro voice** uses whatever GPU backend the installed ONNX Runtime offers
+  (Core ML on Macs; DirectML or CUDA with those builds), otherwise the CPU.
+- **Pocket TTS voice** always runs on the CPU, as it is designed to.
+
 ## Running it
 
 ```bash

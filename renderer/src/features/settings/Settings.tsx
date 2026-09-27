@@ -3,7 +3,6 @@ import { AccountPanel } from '@/features/settings/AccountPanel';
 import { ChallengePanel } from '@/features/settings/ChallengePanel';
 import { ConversationPanel } from '@/features/settings/ConversationPanel';
 import { ModelsPanel } from '@/features/settings/ModelsPanel';
-import { PrivacyPanel } from '@/features/settings/PrivacyPanel';
 import { ReadingPanel } from '@/features/settings/ReadingPanel';
 import { Row, Section, Segmented } from '@/features/settings/controls';
 import {
@@ -149,8 +148,6 @@ function Panel({ group }: { group: SettingsGroupName }) {
       return <ChallengePanel />;
     case 'Appearance':
       return <AppearancePanel />;
-    case 'Privacy':
-      return <PrivacyPanel />;
   }
 }
 

@@ -13,7 +13,7 @@ import wave
 
 import numpy as np
 
-from app.services.voice import model_manager, reply_chunking
+from app.services.voice import compute, model_manager, reply_chunking
 from app.services.voice.errors import EngineUnavailable
 
 VOICE = model_manager.TTS_VOICE
@@ -21,13 +21,30 @@ LANG = "en-us"
 
 _lock = threading.Lock()
 _kokoro = None
+# The ONNX Runtime provider the voice actually runs on, for Settings.
+_provider: str | None = None
+
+
+def runtime_info() -> dict:
+    note = None
+    if _provider == "CPUExecutionProvider" and compute.wants_gpu():
+        note = (
+            "No GPU backend is available to this voice here — on Windows it needs the DirectML build of "
+            "ONNX Runtime, on NVIDIA machines the CUDA build; Macs use Core ML."
+        )
+    return {
+        "device": None if _provider is None else ("cpu" if _provider == "CPUExecutionProvider" else "gpu"),
+        "backend": compute.ORT_PROVIDER_NAMES.get(_provider or "", _provider),
+        "detail": None,
+        "note": note,
+    }
 
 
 def _load_kokoro_locked():
     """Must only be called while holding `_lock` — see the matching note in
     llm_chat_engine._load_llm_locked for why the whole load-and-synthesize
     operation, not just loading, needs to be serialized."""
-    global _kokoro
+    global _kokoro, _provider
     if _kokoro is not None:
         return _kokoro
     try:
@@ -52,9 +69,16 @@ def _load_kokoro_locked():
         # measured no slower. Errors still surface (severity 3).
         options = ort.SessionOptions()
         options.log_severity_level = 3
-        session = ort.InferenceSession(
-            str(model_path), sess_options=options, providers=["CPUExecutionProvider"]
-        )
+        providers = compute.ort_providers(ort.get_available_providers())
+        try:
+            session = ort.InferenceSession(str(model_path), sess_options=options, providers=providers)
+        except Exception:  # noqa: BLE001 — a GPU provider that rejects the model
+            if providers == ["CPUExecutionProvider"]:
+                raise
+            session = ort.InferenceSession(
+                str(model_path), sess_options=options, providers=["CPUExecutionProvider"]
+            )
+        _provider = session.get_providers()[0]
         _kokoro = Kokoro.from_session(session, str(voices_path))
     except Exception as err:  # noqa: BLE001
         raise EngineUnavailable(f"Couldn't load the local TTS voice: {err}") from err
@@ -75,9 +99,10 @@ def unload() -> None:
     """See llm_chat_engine.unload — called when the voice is deleted from
     disk via Settings. Only one TTS option exists, so any delete means
     unconditionally unload."""
-    global _kokoro
+    global _kokoro, _provider
     with _lock:
         _kokoro = None
+        _provider = None
 
 
 def split_for_streaming(text: str) -> list[str]:

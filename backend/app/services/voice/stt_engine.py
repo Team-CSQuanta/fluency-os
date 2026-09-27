@@ -11,7 +11,7 @@ import io
 import threading
 from pathlib import Path
 
-from app.services.voice import model_manager
+from app.services.voice import compute, model_manager
 from app.services.voice.errors import EngineUnavailable
 
 MODEL_SIZE = "tiny.en"
@@ -29,13 +29,36 @@ _MIN_SECONDS = 0.4
 
 _lock = threading.Lock()
 _model = None
+# Where the loaded model runs ("cpu" | "cuda"), for Settings.
+_device: str | None = None
+
+
+def _cuda_devices() -> int:
+    try:
+        import ctranslate2
+
+        return ctranslate2.get_cuda_device_count()
+    except Exception:  # noqa: BLE001 — no CUDA runtime is simply "none"
+        return 0
+
+
+def runtime_info() -> dict:
+    note = None
+    if _device == "cpu" and compute.wants_gpu():
+        note = "Speech-to-text can only use an NVIDIA GPU (CUDA); it is small enough that the CPU keeps up."
+    return {
+        "device": None if _device is None else ("gpu" if _device == "cuda" else "cpu"),
+        "backend": {"cuda": "CUDA", "cpu": "CPU"}.get(_device or ""),
+        "detail": None,
+        "note": note,
+    }
 
 
 def _load_model_locked():
     """Must only be called while holding `_lock` — see the matching note in
     llm_chat_engine._load_llm_locked for why the whole load-and-transcribe
     operation, not just loading, needs to be serialized."""
-    global _model
+    global _model, _device
     if _model is not None:
         return _model
     try:
@@ -48,15 +71,26 @@ def _load_model_locked():
     cache = model_manager.whisper_cache_dir()
     if not any(cache.glob(f"models--Systran--faster-whisper-{MODEL_SIZE}/**/model.bin")):
         raise EngineUnavailable("The model that turns speech into text isn't downloaded yet — download it in Settings first.")
+    device, compute_type = compute.whisper_device(_cuda_devices())
     try:
         _model = WhisperModel(
             MODEL_SIZE,
-            device="cpu",
-            compute_type="int8",
+            device=device,
+            compute_type=compute_type,
             download_root=str(model_manager.whisper_cache_dir()),
         )
+        _device = device
     except Exception as err:  # noqa: BLE001
-        raise EngineUnavailable(f"Couldn't load the local STT model: {err}") from err
+        if device == "cpu":
+            raise EngineUnavailable(f"Couldn't load the local STT model: {err}") from err
+        # The GPU was there but would not take it: the CPU always can.
+        try:
+            _model = WhisperModel(
+                MODEL_SIZE, device="cpu", compute_type="int8", download_root=str(model_manager.whisper_cache_dir())
+            )
+            _device = "cpu"
+        except Exception as err2:  # noqa: BLE001
+            raise EngineUnavailable(f"Couldn't load the local STT model: {err2}") from err2
     return _model
 
 
@@ -74,9 +108,10 @@ def unload() -> None:
     """See llm_chat_engine.unload — called when the model is deleted from
     disk via Settings. Only one STT option exists, so any delete means
     unconditionally unload."""
-    global _model
+    global _model, _device
     with _lock:
         _model = None
+        _device = None
 
 
 # Primes Whisper to write what was said, hesitations included.
