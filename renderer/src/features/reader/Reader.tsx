@@ -12,32 +12,37 @@ import { buildTocRows, isTocRowVisible } from '@/features/reader/tocTree';
 import { termsFromSnippet } from '@/features/reader/pageFind';
 import { getBlockSelectionRanges } from '@/features/reader/useSelectionRange';
 import { useReadingSession } from '@/features/reader/useReadingSession';
+import { AiThinking, useArrivalFlash } from '@/features/shell/AiProgress';
+import { KnownMark, SavedStatus, saveIntent, useSavedCheck } from '@/features/vocabulary/savedCheck';
+import { reportError } from '@/store/errorStore';
 import { useReaderStore } from '@/store/readerStore';
 import { useShellStore } from '@/store/shellStore';
 import { useVocabularyStore } from '@/store/vocabularyStore';
-import type { ChapterOut, HighlightColour, SearchHitOut } from '@/types/api';
+import type { ChapterOut, HighlightColour, LevelMode, SearchHitOut } from '@/types/api';
 
-/* Four, grouped by what the reader is doing: find a place, find a word,
- * come back to what they marked, work on the passage in front of them. */
-type Tab = 'toc' | 'search' | 'marks' | 'study';
+/* Grouped by what the reader is doing: find a place, find a word, come back
+ * to what they marked, look up a word, read a passage in plainer words. */
+type Tab = 'toc' | 'search' | 'marks' | 'word' | 'simpler';
 
 /** Tabs that were their own before the panel was grouped: a stored
  * preference outlives a redesign. */
-const LEGACY_TABS: Record<string, Tab> = { ai: 'study', level: 'study', text: 'toc' };
+const LEGACY_TABS: Record<string, Tab> = { study: 'word', ai: 'word', level: 'simpler', text: 'toc' };
 
 const TAB_ICONS: Record<Tab, string> = {
   toc: 'M2.5 4h11 M2.5 8h11 M2.5 12h7',
   search: 'M7 2.5a4.5 4.5 0 100 9 4.5 4.5 0 000-9z M10.4 10.4L13.5 13.5',
   marks: 'M4 2.5h8v11l-4-3-4 3z',
-  study: 'M8 2.6a3 3 0 013 3c0 1.6-1.4 2.2-2.2 3-.4.4-.5.9-.5 1.4 M8 12.6v.8',
+  word: 'M3.5 13L8 3l4.5 10 M5.2 9.4h5.6',
+  simpler: 'M2.5 4h11 M2.5 8h7.5 M2.5 12h4',
 };
 
-/* One word each: the tab is the label, and the panel is 308px wide. */
+/* One short word each: five share a 308px panel, label under the icon. */
 const TAB_META: Record<Tab, { label: string; empty: string }> = {
   toc: { label: 'Contents', empty: 'This book has no chapter markers.' },
   search: { label: 'Search', empty: 'Search the whole book.' },
   marks: { label: 'Marks', empty: 'Highlights and bookmarks in this book.' },
-  study: { label: 'Study', empty: 'Select a word or a passage on the page.' },
+  word: { label: 'Word', empty: 'Select a word on the page.' },
+  simpler: { label: 'Simpler', empty: 'Select a passage on the page.' },
 };
 
 type PageTheme = 'auto' | 'light' | 'sepia' | 'dark';
@@ -138,7 +143,93 @@ export function Reader() {
   const lookupBlockIndex = useReaderStore((s) => s.lookupBlockIndex);
   const lookupSentence = useReaderStore((s) => s.lookupSentence);
   const lookupPage = useReaderStore((s) => s.lookupPage);
+
+  /* A lookup answers in the side panel, away from where the reader clicked,
+   * so the section it lands in is outlined and scrolled to for a moment —
+   * otherwise a first-time reader has no idea where the meaning went. */
+  const wordSectionRef = useRef<HTMLDivElement>(null);
+  /* Which meaning the word has in this sentence — a dictionary sense by
+   * number, or the AI's reading of it. Saved with the sentence: the same
+   * meaning again adds the sentence to it, a new one adds the meaning. */
+  const [pickedSense, setPickedSense] = useState<number | 'ai'>(0);
+  // Whether this word is already saved, and with which of the meanings on
+  // screen (the dictionary's, then the AI's) — so the save button can say
+  // what it will do. Re-asked after each save.
+  const [savedTick, setSavedTick] = useState(0);
+  const explainForCheck = useReaderStore((s) => s.explain);
+  const lookupForCheck = useReaderStore((s) => s.lookup);
+  const savedCheck = useSavedCheck(
+    lookupForCheck?.word,
+    [
+      ...(lookupForCheck?.senses.map((x) => x.definition) ?? []),
+      ...(explainForCheck ? [explainForCheck.definition] : []),
+    ],
+    savedTick,
+  );
+  useEffect(() => setPickedSense(0), [lookup?.word, lookupSentence]);
+  // No dictionary meaning to pick: the AI's reading is the only meaning
+  // there is, so it is the one saved — not an empty dictionary slot, which
+  // the server refuses.
+  useEffect(() => {
+    if (lookupForCheck && lookupForCheck.senses.length === 0 && explainForCheck) setPickedSense('ai');
+  }, [lookupForCheck, explainForCheck]);
+  const [wordFlash, setWordFlash] = useState(false);
+  const prevLookupStatus = useRef(lookupStatus);
+  useEffect(() => {
+    // When the lookup starts, and again when its answer lands — a slow one
+    // has long since faded by then. Only on those transitions: an answer
+    // already on screen from before must not flash on its own.
+    const was = prevLookupStatus.current;
+    prevLookupStatus.current = lookupStatus;
+    const started = lookupStatus === 'loading' && was !== 'loading';
+    const landed = was === 'loading' && lookupStatus !== 'loading';
+    if (!started && !landed) return;
+    setWordFlash(true);
+    const frame = requestAnimationFrame(() =>
+      wordSectionRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }),
+    );
+    const timer = window.setTimeout(() => setWordFlash(false), 2200);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+      // The timer that would have ended this flash is gone — end it here, or
+      // a re-run that does not flash leaves the outline on for good.
+      setWordFlash(false);
+    };
+  }, [lookupStatus]);
+
+  /* The same pointer for "simpler" on the page: the answer is written over
+   * the words and into the Simpler tab, and this shows where. */
+  const simplifySeq = useReaderStore((s) => s.simplifySeq);
+  const simplerSectionRef = useRef<HTMLDivElement>(null);
+  const [simplerFlash, setSimplerFlash] = useState(false);
+  const leveledNow = useReaderStore((s) => s.leveled);
+  const lastSeq = useRef(simplifySeq);
+  const lastLeveled = useRef(leveledNow);
+  useEffect(() => {
+    // On "simpler", and again when a new simplification lands in the panel —
+    // not when it is cleared, and not for one already there on opening.
+    const pressed = simplifySeq !== lastSeq.current;
+    const landed = leveledNow !== lastLeveled.current && leveledNow !== null;
+    lastSeq.current = simplifySeq;
+    lastLeveled.current = leveledNow;
+    if (!pressed && !landed) return;
+    setSimplerFlash(true);
+    const frame = requestAnimationFrame(() =>
+      simplerSectionRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }),
+    );
+    const timer = window.setTimeout(() => setSimplerFlash(false), 2200);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+      setSimplerFlash(false);
+    };
+  }, [simplifySeq, leveledNow]);
   const explain = useReaderStore((s) => s.explain);
+  // The AI's answers, pointed at when they land: the reading of the word in
+  // its sentence, and the passage in simpler words.
+  const explainFlash = useArrivalFlash<HTMLDivElement>(explain);
+
   const explainStatus = useReaderStore((s) => s.explainStatus);
   const explainError = useReaderStore((s) => s.explainError);
   const explainInContext = useReaderStore((s) => s.explainInContext);
@@ -147,6 +238,8 @@ export function Reader() {
   const levelSelection = useReaderStore((s) => s.levelSelection);
   const levelMode = useReaderStore((s) => s.levelMode);
   const setLevelMode = useReaderStore((s) => s.setLevelMode);
+  const clearLeveled = useReaderStore((s) => s.clearLeveled);
+  const levelBlockIndex = useReaderStore((s) => s.levelBlockIndex);
   const leveled = useReaderStore((s) => s.leveled);
   const levelStatus = useReaderStore((s) => s.levelStatus);
   const levelBlock = useReaderStore((s) => s.levelBlock);
@@ -235,21 +328,35 @@ export function Reader() {
     clearFocusBlock();
   }, [focusBlock, blocks, clearFocusBlock]);
 
-  // Level on demand for the selected block only — never the whole book. At a
-  // couple of seconds per generative call, pre-leveling a 800-block book would
-  // be half an hour of work for text nobody may open.
-  useEffect(() => {
-    if (tab !== 'study') return;
+  /* Levelled only when asked — "simpler" on the page, or a level picked in
+   * the panel. Selecting text is how a reader highlights, copies and looks
+   * up too, and a generative call on every drag spends seconds and quota on
+   * passages nobody wanted rewritten. */
+  const levelWith = (mode: LevelMode) => {
+    setLevelMode(mode);
     if (showingPage) {
-      if (pageSelectionText) void levelSelection(pageSelectionText);
+      // The selection, or — once "simpler" has cleared it — the passage the
+      // panel is already showing.
+      const passage = pageSelectionText ?? leveled?.original;
+      if (passage) void levelSelection(passage);
       return;
     }
-    // selectedPara defaults to the page's first block, so without this,
-    // opening with Study active spends a call on a paragraph nobody chose.
-    if (selectedPara === null || blocks.length === 0) return;
-    void levelBlock(selectedPara);
+    if (blocks.length > 0) void levelBlock(selectedPara, mode);
+  };
+
+  // A new selection makes the old answer about other words: drop it rather
+  // than show it under the new quote. A cleared selection keeps it — that is
+  // what "simpler" leaves behind.
+  useEffect(() => {
+    if (!showingPage || !pageSelectionText || !leveled) return;
+    if (leveled.original.trim() !== pageSelectionText) clearLeveled();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, selectedPara, bookId, showingPage, pageSelectionText, blocks.length]);
+  }, [pageSelectionText, showingPage]);
+  useEffect(() => {
+    if (showingPage || levelBlockIndex === null || levelBlockIndex === selectedPara) return;
+    clearLeveled();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPara, showingPage]);
 
   useEffect(() => {
     setPageDraft(null);
@@ -329,14 +436,18 @@ export function Reader() {
   const heatByBlock = new Map(heat.map((h) => [h.block_index, h.spans]));
 
   const handleWordClick = (word: string, sentence: string, blockIndex: number) => {
-    setTab('study');
+    setTab('word');
     void lookupWord(word, sentence, blockIndex);
   };
   const fsPct = Math.round(((fontSize - 12) / 10) * 100);
   const selectedBlock = blocks.find((b) => b.block_index === selectedPara);
-  /* What the Study panel works on: a paragraph in the reflowed view, the
+  /* What the Simpler tab works on: a paragraph in the reflowed view, the
    * dragged-over words on a printed page. */
-  const selectedText = showingPage ? (pageSelectionText ?? '') : (selectedBlock?.text ?? '');
+  // After "simpler" the selection is gone from the page, but its answer is
+  // still in the panel — so the quote stays with it.
+  const selectedText = showingPage
+    ? (pageSelectionText ?? leveled?.original ?? '')
+    : (selectedBlock?.text ?? '');
 
   const currentChapter = [...toc].reverse().find((c) => c.start_block <= (blocks[0]?.block_index ?? 0));
 
@@ -474,7 +585,7 @@ export function Reader() {
     </div>
   );
 
-  const tabs: Tab[] = ['toc', 'search', 'marks', 'study'];
+  const tabs: Tab[] = ['toc', 'search', 'marks', 'word', 'simpler'];
   const isTurning = readerStatus === 'loading' && blocks.length > 0;
 
   return (
@@ -757,14 +868,14 @@ export function Reader() {
 
       {panelOpen && (
         <aside className="flex min-h-0 w-[308px] flex-none flex-col border-l border-line2 bg-panel">
-          <div className="grid flex-none grid-cols-4 gap-[2px] px-[9px] pt-[9px]">
+          <div className="grid flex-none grid-cols-5 gap-[2px] px-[9px] pt-[9px]">
             {tabs.map((t) => {
               const on = tab === t;
               return (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
-                  className="flex items-center justify-center gap-[5px] rounded-field border py-[7px] font-sans text-[10px] font-medium"
+                  className="flex flex-col items-center justify-center gap-[3px] rounded-field border py-[6px] font-sans text-[10px] font-medium"
                   style={{
                     borderColor: on ? 'var(--accLine)' : 'transparent',
                     background: on ? 'var(--accSoft)' : 'transparent',
@@ -1041,8 +1152,15 @@ export function Reader() {
               </div>
             )}
 
-            {tab === 'study' && (
-              <div className="flex flex-col gap-[14px]">
+            {tab === 'word' && (
+              <div
+                ref={wordSectionRef}
+                className="-mx-[8px] flex flex-col gap-[14px] rounded-field px-[8px] py-[6px] transition-[box-shadow,background-color] duration-500"
+                style={{
+                  boxShadow: wordFlash ? '0 0 0 2px var(--acc)' : '0 0 0 2px transparent',
+                  background: wordFlash ? 'var(--accSoft)' : 'transparent',
+                }}
+              >
                 <div className="font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
                   This word
                 </div>
@@ -1055,7 +1173,7 @@ export function Reader() {
                 )}
 
                 {lookupStatus === 'loading' && (
-                  <div className="font-mono text-[10.5px] text-tx3">looking up…</div>
+                  <AiThinking label="looking it up" />
                 )}
 
                 {lookupStatus === 'error' && (
@@ -1071,6 +1189,7 @@ export function Reader() {
                         </span>
                         {lookup.ipa && <span className="font-mono text-[11.5px] text-tx3">{lookup.ipa}</span>}
                       </div>
+                      <SavedStatus check={savedCheck} />
                       {lookup.found && (
                         <div className="mt-[9px] flex flex-wrap items-center gap-[6px]">
                           {lookup.pos && (
@@ -1101,18 +1220,31 @@ export function Reader() {
                     ) : (
                       <>
                         <div className="border-t border-line2 pt-3">
-                          <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
-                            Dictionary
+                          <div className="mb-2 flex items-baseline justify-between gap-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
+                            <span>Dictionary</span>
+                            {lookup.senses.length > 1 && (
+                              <span className="normal-case tracking-normal">pick the meaning used here</span>
+                            )}
                           </div>
-                          <div className="flex flex-col gap-[9px]">
+                          <div className="flex flex-col gap-[4px]">
                             {lookup.senses.map((sense, i) => (
-                              <div key={i} className="flex gap-2">
+                              <button
+                                key={i}
+                                onClick={() => setPickedSense(i)}
+                                title="The meaning this sentence uses — saved with it"
+                                className="-mx-[7px] flex gap-2 rounded-field border px-[7px] py-[5px] text-left"
+                                style={{
+                                  borderColor: pickedSense === i ? 'var(--accLine)' : 'transparent',
+                                  background: pickedSense === i ? 'var(--accSoft)' : 'transparent',
+                                }}
+                              >
                                 <span className="mt-[2px] flex-none font-mono text-[10px] font-medium text-acc">
-                                  {i + 1}.
+                                  {pickedSense === i ? '●' : `${i + 1}.`}
                                 </span>
                                 <span className="min-w-0">
                                   <span className="block font-sans text-[12px] leading-[1.65] text-tx">
                                     {sense.definition}
+                                    {savedCheck?.known[i] && <KnownMark />}
                                   </span>
                                   {sense.example && (
                                     <span className="mt-[3px] block font-sans text-[11px] leading-[1.6] text-tx3">
@@ -1120,7 +1252,7 @@ export function Reader() {
                                     </span>
                                   )}
                                 </span>
-                              </div>
+                              </button>
                             ))}
                           </div>
                         </div>
@@ -1145,7 +1277,11 @@ export function Reader() {
                       </>
                     )}
 
-                    <div className="border-t border-line2 pt-3">
+                    <div
+                      ref={explainFlash.ref}
+                      className={`border-t border-line2 pt-3 ${explainFlash.className}`}
+                      style={explainFlash.style}
+                    >
                       <div className="mb-2 font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
                         In this sentence
                       </div>
@@ -1157,9 +1293,26 @@ export function Reader() {
                       )}
                       {explain ? (
                         <div className="flex flex-col gap-[7px]">
-                          <div className="font-sans text-[12px] leading-[1.7] text-tx">
-                            {explain.definition}
-                          </div>
+                          {/* The AI's reading can be the meaning saved — the
+                              one to pick when no dictionary sense fits, as
+                              with "student" as a row in a table. */}
+                          <button
+                            onClick={() => setPickedSense('ai')}
+                            title="Save with this meaning"
+                            className="-mx-[7px] flex gap-2 rounded-field border px-[7px] py-[5px] text-left font-sans text-[12px] leading-[1.7] text-tx"
+                            style={{
+                              borderColor: pickedSense === 'ai' ? 'var(--accLine)' : 'transparent',
+                              background: pickedSense === 'ai' ? 'var(--accSoft)' : 'transparent',
+                            }}
+                          >
+                            <span className="mt-[1px] flex-none font-mono text-[10px] text-acc">
+                              {pickedSense === 'ai' ? '●' : '✧'}
+                            </span>
+                            <span>
+                              {explain.definition}
+                              {savedCheck?.known[lookup.senses.length] && <KnownMark />}
+                            </span>
+                          </button>
                           {explain.example && (
                             <div className="font-sans text-[11px] leading-[1.7] text-tx3">
                               e.g. {explain.example}
@@ -1195,6 +1348,7 @@ export function Reader() {
                               ? 'asking the AI…'
                               : '✧ explain it in this sentence'}
                           </button>
+                          {explainStatus === 'loading' && <AiThinking label="the AI is reading the sentence" />}
                           {explainStatus === 'error' && explainError && (
                             <div className="mt-[7px] font-mono text-[10px] leading-[1.7] text-tx3">
                               {explainError}
@@ -1204,36 +1358,70 @@ export function Reader() {
                       )}
                     </div>
 
-                    {/* Only offered once found — there is no dictionary data
-                        to snapshot for a word the offline lexicon doesn't know. */}
-                    {lookup.found && (
+                    {/* Offered once there is a meaning to save it under:
+                        the dictionary's, or the AI's reading of it. */}
+                    {(lookup.found || explain) && (
                       <>
                         <button
                           onClick={async () => {
+                            const dict = typeof pickedSense === 'number' ? lookup.senses[pickedSense] : undefined;
+                            const sense =
+                              pickedSense === 'ai' && explain
+                                ? { pos: explain.pos || null, definition: explain.definition, example: explain.example || null }
+                                : dict
+                                  ? { pos: lookup.pos, definition: dict.definition, example: dict.example }
+                                  : undefined;
                             // The sentence the lookup was made with, or the
                             // paragraph in the reflowed view.
                             const sentence =
                               lookupSentence ??
                               blocks.find((b) => b.block_index === lookupBlockIndex)?.text;
-                            const { alreadySaved } = await saveWord({
-                              word: lookup.word,
-                              sentence,
-                              bookId: bookId ?? undefined,
-                              blockIndex: lookupBlockIndex ?? undefined,
-                              page: lookupPage ?? (showingPage ? page : undefined),
-                            });
+                            let outcome: { alreadySaved: boolean; senseAdded: boolean; contextAdded: boolean };
+                            try {
+                              outcome = await saveWord({
+                                word: lookup.word,
+                                sentence,
+                                bookId: bookId ?? undefined,
+                                blockIndex: lookupBlockIndex ?? undefined,
+                                page: lookupPage ?? (showingPage ? page : undefined),
+                                sense,
+                              });
+                            } catch (err) {
+                              // Said out loud: a save that fails silently
+                              // looks exactly like one that worked.
+                              reportError(err, 'Saving that word');
+                              return;
+                            }
                             flashToast(
-                              alreadySaved
-                                ? `"${lookup.word}" is already in your vocabulary`
-                                : `"${lookup.word}" saved to vocabulary`,
+                              !outcome.alreadySaved
+                                ? `"${lookup.word}" saved to vocabulary`
+                                : outcome.senseAdded
+                                  ? `Added a new meaning of "${lookup.word}", with this sentence`
+                                  : outcome.contextAdded
+                                    ? `"${lookup.word}" is saved with this meaning — added this sentence to it`
+                                    : `"${lookup.word}" already has this meaning and this sentence`,
                             );
+                            setSavedTick((n) => n + 1);
                           }}
                           className="rounded-field border border-accLine bg-accSoft py-[10px] font-sans text-[11.5px] font-medium text-acc hover:brightness-105"
                         >
-                          ＋ Save to vocabulary with this sentence
+                          {/* Says what saving will do to the entry, not only
+                              that it saves. */}
+                          {
+                            {
+                              'new-word': '＋ Save with this sentence',
+                              same: '＋ Add this sentence to your saved word',
+                              'new-meaning': '＋ Add as a new meaning, with this sentence',
+                            }[saveIntent(savedCheck, pickedSense === 'ai' ? lookup.senses.length : pickedSense)]
+                          }
+                          {pickedSense === 'ai'
+                            ? ' · AI meaning'
+                            : lookup.senses.length > 1
+                              ? ` · meaning ${pickedSense + 1}`
+                              : ''}
                         </button>
                         <div className="font-mono text-[9.5px] leading-[1.7] text-tx3">
-                          definitions come from the bundled offline wordlist · no model required
+                          definitions come from the offline wordlist or an online dictionary, kept on this computer once looked up · no AI model required
                         </div>
                       </>
                     )}
@@ -1242,8 +1430,8 @@ export function Reader() {
               </div>
             )}
 
-            {tab === 'study' && (
-              <div className="mt-[6px] flex flex-col gap-[13px] border-t border-line2 pt-[14px]">
+            {tab === 'simpler' && (
+              <div className="flex flex-col gap-[13px]">
                 <div className="font-mono text-[8.5px] font-semibold uppercase tracking-[0.12em] text-tx3">
                   This passage, in simpler words
                 </div>
@@ -1271,8 +1459,10 @@ export function Reader() {
                     return (
                       <button
                         key={m.key}
-                        onClick={() => setLevelMode(m.key)}
-                        className="flex items-center justify-between gap-2 rounded-field border px-[10px] py-2 text-left font-sans text-[11px] font-medium"
+                        onClick={() => levelWith(m.key)}
+                        disabled={!selectedText}
+                        title={selectedText ? `Put this passage in simpler words — ${m.label.toLowerCase()}` : undefined}
+                        className="flex items-center justify-between gap-2 rounded-field border px-[10px] py-2 text-left font-sans text-[11px] font-medium disabled:cursor-default disabled:opacity-50"
                         style={{ borderColor: on ? 'var(--accLine)' : 'var(--line)', background: on ? 'var(--accSoft)' : 'transparent', color: on ? 'var(--acc)' : 'var(--tx2)' }}
                       >
                         <span>{m.label}</span>
@@ -1286,7 +1476,14 @@ export function Reader() {
                     );
                   })}
                 </div>
-                <div className="border-t border-line2 pt-3">
+                <div
+                  ref={simplerSectionRef}
+                  className="-mx-[8px] rounded-field border-t border-line2 px-[8px] pb-[6px] pt-3 transition-[box-shadow,background-color] duration-500"
+                  style={{
+                    boxShadow: simplerFlash ? '0 0 0 2px var(--acc)' : '0 0 0 2px transparent',
+                    background: simplerFlash ? 'var(--accSoft)' : 'transparent',
+                  }}
+                >
                   <div className="mb-2 flex items-baseline justify-between gap-2">
                     <div className="font-mono text-[8.5px] font-semibold uppercase tracking-[0.1em] text-acc">
                       {MODE_LABELS[levelMode]}
@@ -1302,10 +1499,19 @@ export function Reader() {
                   </div>
 
                   {levelStatus === 'loading' && (
-                    <div className="font-mono text-[10.5px] text-tx3">leveling…</div>
+                    <AiThinking label="putting it in simpler words" />
                   )}
                   {levelStatus === 'error' && (
                     <div className="font-mono text-[10.5px] text-tx3">Couldn't level this passage.</div>
+                  )}
+                  {levelStatus === 'idle' && !leveled && (
+                    <div className="font-mono text-[10.5px] leading-[1.7] text-tx3">
+                      {selectedText
+                        ? showingPage
+                          ? 'Pick a level above to put this in simpler words here — or press “simpler” on the page to write it over the words.'
+                          : 'Pick a level above to put this paragraph in simpler words.'
+                        : 'Nothing simplified yet.'}
+                    </div>
                   )}
 
                   {levelStatus !== 'loading' && leveled && (

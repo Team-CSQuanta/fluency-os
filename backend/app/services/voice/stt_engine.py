@@ -79,6 +79,10 @@ def unload() -> None:
         _model = None
 
 
+# Primes Whisper to write what was said, hesitations included.
+_VERBATIM_PROMPT = "Umm, so, uh, I was — I went there and, hmm, it was like, you know, good."
+
+
 def transcribe(audio_bytes: bytes) -> tuple[str, float, float]:
     """Returns (text, confidence, speech_seconds).
 
@@ -120,7 +124,13 @@ def transcribe(audio_bytes: bytes) -> tuple[str, float, float]:
         try:
             # Already decoded above, so hand the samples over directly rather
             # than making faster-whisper decode the same bytes a second time.
-            segments, _info = model.transcribe(audio, vad_filter=True, language="en")
+            # Whisper tidies speech by default — it drops "um" and "uh" and
+            # smooths over false starts — which erased exactly what the
+            # report's filler rate and self-corrections are about. A prompt
+            # written in disfluent style is the known way to keep them.
+            segments, _info = model.transcribe(
+                audio, vad_filter=True, language="en", initial_prompt=_VERBATIM_PROMPT
+            )
             segments = list(segments)
         except Exception as err:  # noqa: BLE001
             raise EngineUnavailable(f"Local transcription failed: {err}") from err

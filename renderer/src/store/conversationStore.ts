@@ -6,7 +6,10 @@ import type {
   ConversationReportOut,
   ConversationSessionDetailOut,
   ConversationSessionOut,
+  CustomScenarioIn,
+  CustomScenarioOut,
   EngineStatusOut,
+  ScenarioCatalogOut,
   ScenarioKey,
   TurnSubmitOut,
 } from '@/types/api';
@@ -32,13 +35,25 @@ interface ConversationState {
   // same fetchSessionDetail call is used to load an existing transcript.
   justStarted: boolean;
 
+  /** The scenes the picker offers, and the learner's own. */
+  catalog: ScenarioCatalogOut | null;
+  fetchCatalog: () => Promise<void>;
+  createCustomScenario: (scene: CustomScenarioIn) => Promise<CustomScenarioOut>;
+  deleteCustomScenario: (id: string) => Promise<void>;
+
   fetchSessions: () => Promise<void>;
-  startSession: (scenario: ScenarioKey, channel: ConversationChannel, seedWordIds?: string[]) => Promise<string>;
+  startSession: (
+    scenario: ScenarioKey,
+    channel: ConversationChannel,
+    seedWordIds?: string[],
+    opts?: { customScenarioId?: string; repeatOf?: string },
+  ) => Promise<string>;
   regenerateReport: (sessionId: string) => Promise<void>;
   fetchSessionDetail: (sessionId: string) => Promise<void>;
   consumeJustStarted: () => boolean;
-  submitTextTurn: (sessionId: string, text: string) => Promise<TurnSubmitOut>;
-  submitAudioTurn: (sessionId: string, blob: Blob) => Promise<TurnSubmitOut>;
+  /** `delayMs`: how long the learner took to start this turn, when measured. */
+  submitTextTurn: (sessionId: string, text: string, delayMs?: number | null) => Promise<TurnSubmitOut>;
+  submitAudioTurn: (sessionId: string, blob: Blob, delayMs?: number | null) => Promise<TurnSubmitOut>;
   endSession: (sessionId: string) => Promise<void>;
   fetchReport: (sessionId: string) => Promise<void>;
   fetchEngineStatus: () => Promise<void>;
@@ -85,13 +100,39 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }
   },
 
-  startSession: async (scenario, channel, seedWordIds) => {
+  catalog: null,
+
+  fetchCatalog: async () => {
+    const userId = requireUserId();
+    set({
+      catalog: await api.get<ScenarioCatalogOut>(`/conversation/scenarios?user_id=${encodeURIComponent(userId)}`),
+    });
+  },
+
+  createCustomScenario: async (scene) => {
+    const userId = requireUserId();
+    const made = await api.post<CustomScenarioOut>('/conversation/custom-scenarios', { user_id: userId, ...scene });
+    set((s) => ({ catalog: s.catalog ? { ...s.catalog, custom: [made, ...s.catalog.custom] } : s.catalog }));
+    return made;
+  },
+
+  deleteCustomScenario: async (id) => {
+    const userId = requireUserId();
+    await api.delete(`/conversation/custom-scenarios/${encodeURIComponent(id)}?user_id=${encodeURIComponent(userId)}`);
+    set((s) => ({
+      catalog: s.catalog ? { ...s.catalog, custom: s.catalog.custom.filter((c) => c.id !== id) } : s.catalog,
+    }));
+  },
+
+  startSession: async (scenario, channel, seedWordIds, opts) => {
     const userId = requireUserId();
     const session = await api.post<ConversationSessionOut>('/conversation/sessions', {
       user_id: userId,
       scenario,
       channel,
       seed_word_ids: seedWordIds,
+      custom_scenario_id: opts?.customScenarioId,
+      repeat_of: opts?.repeatOf,
     });
     set({ activeSession: null, activeStatus: 'idle', report: null });
     await get().fetchSessionDetail(session.id);
@@ -127,10 +168,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }
   },
 
-  submitTextTurn: async (sessionId, text) => {
+  submitTextTurn: async (sessionId, text, delayMs) => {
     const userId = requireUserId();
     const form = new FormData();
     form.set('text', text);
+    if (delayMs != null) form.set('response_delay_ms', String(Math.round(delayMs)));
     const result = await api.postForm<TurnSubmitOut>(
       `/conversation/sessions/${sessionId}/turns?user_id=${encodeURIComponent(userId)}`,
       form,
@@ -147,10 +189,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     return result;
   },
 
-  submitAudioTurn: async (sessionId, blob) => {
+  submitAudioTurn: async (sessionId, blob, delayMs) => {
     const userId = requireUserId();
     const form = new FormData();
     form.set('audio', blob, 'turn.webm');
+    if (delayMs != null) form.set('response_delay_ms', String(Math.round(delayMs)));
     const result = await api.postForm<TurnSubmitOut>(
       `/conversation/sessions/${sessionId}/turns?user_id=${encodeURIComponent(userId)}`,
       form,

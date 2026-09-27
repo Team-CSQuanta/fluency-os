@@ -382,6 +382,35 @@ def test_removing_a_label_leaves_the_page_as_printed(client, auth_headers, pdf_b
     ).json() == []
 
 
+def test_picking_another_level_rewrites_the_label_in_place(client, auth_headers, pdf_book):
+    """The passage on the page follows the level picked in the panel, keeping
+    its place and its original rather than becoming a second label."""
+    user_id = _user_of(client, auth_headers, pdf_book)
+    made = client.post(
+        f"/books/{pdf_book}/page-labels",
+        headers=auth_headers,
+        json={"user_id": user_id, "page": 1, "rects": [_rect(1, 1)],
+              "original_text": "hard", "simple_text": "easy", "mode": "contextual"},
+    ).json()
+    res = client.patch(
+        f"/books/{pdf_book}/page-labels/{made['id']}",
+        headers=auth_headers,
+        json={"simple_text": "very easy", "mode": "semantic"},
+    )
+    assert res.status_code == 200, res.text
+    back = client.get(
+        f"/books/{pdf_book}/page-labels", headers=auth_headers, params={"user_id": user_id}
+    ).json()
+    assert [(l["id"], l["simple_text"], l["mode"], l["original_text"]) for l in back] == [
+        (made["id"], "very easy", "semantic", "hard")
+    ]
+    assert client.patch(
+        f"/books/{pdf_book}/page-labels/{made['id']}",
+        headers=auth_headers,
+        json={"simple_text": "  ", "mode": "inline"},
+    ).status_code == 400
+
+
 # --- the label is the AI's work, or there is no label -----------------------
 #
 # A label is written OVER the printed words. The side panel can honestly

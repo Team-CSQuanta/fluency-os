@@ -46,6 +46,8 @@ def _request(
     temperature: float,
     json_mode: bool = False,
 ) -> str:
+    if engine_health.cloud_is_off():
+        raise EngineUnavailable(engine_health.OFF_MESSAGE)
     if not api_key:
         raise EngineUnavailable(
             "No Gemini API key configured — add one in Settings (AI → Cloud) to use the cloud AI."

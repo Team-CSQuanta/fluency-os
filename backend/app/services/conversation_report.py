@@ -22,10 +22,20 @@ from pydantic import BaseModel, Field
 
 from app.services import cefr_lexicon
 
-# Lexical hesitation markers. Deliberately a short, explicit list of items that
-# are unambiguously fillers in English rather than a cleverer heuristic — the
-# number is reported as a rate, and a wrong word in this list quietly skews it.
-FILLER_WORDS = frozenset({"um", "uh", "erm", "ah", "hmm", "mmm", "like", "basically", "actually"})
+# Hesitation, counted two ways. A filled pause ("um", "uh") is a filler
+# wherever it appears. A discourse marker ("like", "you know", "I mean") is
+# a filler only when it is set off from the sentence — "It was, like, huge"
+# — because the same words are ordinary grammar elsewhere: counting every
+# "like" made "I like coffee" a hesitation and inflated the rate for anyone
+# who likes things.
+FILLER_WORDS = frozenset({"um", "umm", "uh", "uhm", "erm", "er", "ah", "hmm", "mm", "mmm", "basically"})
+_SET_OFF_MARKERS = re.compile(
+    r"(?:^|(?<=[,.;!?—]))\s*(like|actually|literally|you know|i mean|sort of|kind of)\s*(?=[,.;!?—]|$)",
+    re.IGNORECASE,
+)
+
+# A reply started after this long was not hesitation — the learner was away.
+MAX_RESPONSE_DELAY_SECONDS = 120.0
 
 # Used only when a learner has no CEFR level recorded yet (placement not done).
 DEFAULT_CEFR = "B1"
@@ -165,7 +175,7 @@ def compute_metrics(turns: list, target_cefr: str) -> TranscriptMetrics:
     all_words = [w for t in user_turns for w in _words(t["text"])]
     total_words = len(all_words)
 
-    fillers = sum(1 for w in all_words if w in FILLER_WORDS)
+    fillers = sum(count_fillers(t["text"]) for t in user_turns)
     filler_rate = round(100 * fillers / total_words, 1) if total_words else 0.0
 
     # Real speech time, when we have it. Text sessions never do, and using
@@ -173,12 +183,16 @@ def compute_metrics(turns: list, target_cefr: str) -> TranscriptMetrics:
     speech_seconds = sum(_speech_seconds(t) for t in user_turns)
     words_per_minute = round(total_words / (speech_seconds / 60.0)) if speech_seconds > 0 and total_words else None
 
-    # How long the learner took to start answering — the AI's own generation
-    # time sits outside this window, unlike the old all-turn-gaps average.
-    delays = []
-    for prev, cur in zip(turns, turns[1:]):
-        if prev["speaker"] == "ai" and cur["speaker"] == "user":
-            delays.append(_seconds_between(prev["created_at"], cur["created_at"]))
+    # How long the learner took to start answering, as measured by the
+    # client when the turn was taken (see 0039_turn_response_delay.sql). Not
+    # derived from timestamps: those include the AI speaking, the learner
+    # speaking, transcription and generation. Unmeasured turns are left out
+    # rather than guessed at, so an older session reports nothing here.
+    delays = [
+        d
+        for d in (_response_delay(t) for t in user_turns)
+        if d is not None and 0 <= d <= MAX_RESPONSE_DELAY_SECONDS
+    ]
     avg_response_delay = round(sum(delays) / len(delays), 1) if delays else None
 
     longest_run = max((len(_words(t["text"])) for t in user_turns), default=0)
@@ -203,6 +217,20 @@ def compute_metrics(turns: list, target_cefr: str) -> TranscriptMetrics:
     )
 
 
+def count_fillers(text: str) -> int:
+    """Filled pauses anywhere, and discourse markers only where set off."""
+    words = _words(text)
+    return sum(1 for w in words if w in FILLER_WORDS) + len(_SET_OFF_MARKERS.findall(text.strip()))
+
+
+def _response_delay(turn) -> float | None:
+    try:
+        value = turn["response_delay_seconds"]
+    except (KeyError, IndexError):
+        return None
+    return float(value) if value is not None else None
+
+
 def _speech_seconds(turn) -> float:
     try:
         value = turn["speech_seconds"]
@@ -210,10 +238,3 @@ def _speech_seconds(turn) -> float:
         return 0.0
     return float(value) if value else 0.0
 
-
-def _seconds_between(start_iso: str, end_iso: str) -> float:
-    from datetime import datetime
-
-    start = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
-    end = datetime.fromisoformat(end_iso.replace("Z", "+00:00"))
-    return (end - start).total_seconds()

@@ -260,6 +260,13 @@ export function VocabularyList() {
                 <div className="mt-[5px] flex flex-wrap items-center gap-[6px] font-mono text-[9.5px] text-tx3">
                   <MasteryDot level={w.mastery_level} label={w.mastery_label} />
                   <span>{w.mastery_label}</span>
+                  {/* One entry, several meanings — said, since the line
+                      above shows only the first. */}
+                  {(w.senses?.length ?? 0) > 1 && (
+                    <span className="rounded-full bg-accSoft px-[6px] py-[1px] text-acc">
+                      {w.senses!.length} meanings
+                    </span>
+                  )}
                   {w.reps > 0 && <span>· {w.reps} reviews</span>}
                   {w.context_count > 0 && (
                     <span>· {w.context_count} {w.context_count === 1 ? 'context' : 'contexts'}</span>

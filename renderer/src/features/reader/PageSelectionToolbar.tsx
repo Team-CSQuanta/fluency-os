@@ -55,7 +55,7 @@ export function PageSelectionToolbar({
   return (
     <div
       data-page-toolbar
-      className="absolute z-[42] rounded-panel border border-line2 bg-panel px-[9px] py-[7px] shadow-panel"
+      className="absolute z-[42] w-max rounded-panel border border-line2 bg-panel px-[9px] py-[7px] shadow-panel"
       style={{
         left: `${at.x * 100}%`,
         top: `${at.y * 100}%`,
@@ -153,7 +153,7 @@ function ToolButton({
       title={label}
       aria-label={label}
       onClick={onClick}
-      className="grid h-[22px] min-w-[26px] place-items-center rounded-field border px-[7px] hover:border-acc"
+      className="grid h-[22px] min-w-[26px] place-items-center whitespace-nowrap rounded-field border px-[7px] hover:border-acc"
       style={{
         borderColor: accent ? 'var(--accLine)' : 'var(--line2)',
         background: accent ? 'var(--accSoft)' : 'transparent',

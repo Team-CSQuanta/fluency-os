@@ -142,12 +142,12 @@ export const LAYER_FONT = 'sans-serif';
  */
 const REFERENCE_PX = 100;
 
-export function createMeasurer(): (text: string, fontSize: number) => number {
+export function createMeasurer(font: string = LAYER_FONT): (text: string, fontSize: number) => number {
   const cache = new Map<string, number>();
   let ctx: CanvasRenderingContext2D | null = null;
   try {
     ctx = document.createElement('canvas').getContext('2d');
-    if (ctx) ctx.font = `${REFERENCE_PX}px ${LAYER_FONT}`;
+    if (ctx) ctx.font = `${REFERENCE_PX}px ${font}`;
   } catch {
     ctx = null;
   }
@@ -258,4 +258,34 @@ export function coveredBy(mark: Box[], selection: Box[]): boolean {
   let both = 0;
   for (const m of mark) for (const s of selection) both += shared(m, s);
   return both / smaller >= COVERED_SHARE;
+}
+
+/** Words poured into a fixed set of lines, the way the plainer version of a
+ * passage is laid over the lines the original occupied.
+ *
+ * Greedy, like any typesetter's first pass: each line takes words until the
+ * next one would not fit. A word too wide for an empty line goes on it anyway
+ * rather than being lost. Whatever does not fit comes back as `rest`, for the
+ * caller to put somewhere that does not cover the rest of the page.
+ */
+export function flowIntoLines(
+  text: string,
+  widths: number[],
+  /** Measured per line, since lines can be set in different sizes. */
+  measure: (text: string, line: number) => number,
+): { lines: string[]; rest: string } {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let i = 0;
+  for (const [n, width] of widths.entries()) {
+    let line = '';
+    while (i < words.length) {
+      const next = line ? `${line} ${words[i]}` : words[i];
+      if (line && measure(next, n) > width) break;
+      line = next;
+      i += 1;
+    }
+    lines.push(line);
+  }
+  return { lines, rest: words.slice(i).join(' ') };
 }

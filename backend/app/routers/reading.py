@@ -9,6 +9,7 @@ reported as unavailable rather than faked, so the AI panel keeps its honest
 "offline stub" copy for that one section.
 """
 
+import re
 import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -150,6 +151,16 @@ def get_heat(
     )
 
 
+def _bare_word(raw: str) -> str:
+    """The word itself, without what prose attaches to it: surrounding
+    punctuation and quotes, and a possessive. No dictionary has an entry for
+    "system’s", so asking for it came back empty — and a word with no
+    definition cannot be saved."""
+    word = re.sub(r"^[^\w]+|[^\w]+$", "", raw.strip())
+    word = re.sub(r"['’]s$", "", word, flags=re.IGNORECASE)
+    return word.rstrip("'’")
+
+
 @router.get("/lookup", response_model=WordLookupOut)
 def lookup_word(
     w: str,
@@ -172,7 +183,7 @@ def lookup_word(
     contract doesn't change when contextual explanation lands in Phase 7 —
     today it only confirms the word really occurs in that sentence.
     """
-    word = (w or "").strip()
+    word = _bare_word(w or "")
     if not word:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="w is required")
 

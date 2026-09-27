@@ -3,6 +3,8 @@ import { api, fetchBlobUrl } from '@/lib/apiClient';
 import { useAppStore } from '@/store/appStore';
 import type {
   AiExamplesOut,
+  VocabSenseIn,
+  VocabCheckOut,
   AiEnrichOut,
   AiExplainOut,
   AiMnemonicOut,
@@ -59,7 +61,9 @@ interface VocabularyState {
     blockIndex?: number;
     /** The printed page it was met on, when the reader was on one. */
     page?: number;
-  }) => Promise<{ alreadySaved: boolean }>;
+    /** The meaning this sentence uses. */
+    sense?: VocabSenseIn;
+  }) => Promise<{ alreadySaved: boolean; senseAdded: boolean; contextAdded: boolean }>;
   addNote: (text: string) => Promise<void>;
   deleteNote: (noteId: string) => Promise<void>;
   addTag: (tag: string) => Promise<void>;
@@ -81,12 +85,14 @@ interface VocabularyState {
     aiMnemonic?: string;
     aiUsageNote?: string;
     aiSenseDefinition?: string;
-  }) => Promise<{ alreadySaved: boolean }>;
+  }) => Promise<{ alreadySaved: boolean; senseAdded: boolean }>;
 
   // AI-powered additions — all real local-LLM calls (see backend/vocabulary_ai.py),
   // gated the same way Conversation gates AI use (throws with a "Launch AI"
   // message when the model isn't downloaded/loaded).
   aiExplain: (word: string, context: string) => Promise<AiExplainOut>;
+  /** Is this word saved, and with which of these meanings? */
+  checkSaved: (word: string, definitions: string[]) => Promise<VocabCheckOut>;
   aiEnrich: (word: string, opts?: { dictionaryDefinition?: string; context?: string }) => Promise<AiEnrichOut>;
   speakText: (text: string) => Promise<string>;
   fetchAiExamples: (vocabWordId: string, count?: number) => Promise<string[]>;
@@ -210,7 +216,7 @@ export const useVocabularyStore = create<VocabularyState>((set, get) => ({
     }
   },
 
-  saveWord: async ({ word, sentence, bookId, blockIndex, page }) => {
+  saveWord: async ({ word, sentence, bookId, blockIndex, page, sense }) => {
     const userId = requireUserId();
     const result = await api.post<VocabWordSaveOut>('/vocabulary', {
       user_id: userId,
@@ -219,6 +225,7 @@ export const useVocabularyStore = create<VocabularyState>((set, get) => ({
       book_id: bookId ?? null,
       block_index: blockIndex ?? null,
       page: page ?? null,
+      sense: sense ?? null,
     });
 
     set((s) => {
@@ -232,7 +239,11 @@ export const useVocabularyStore = create<VocabularyState>((set, get) => ({
       return { words, selectedDetail };
     });
 
-    return { alreadySaved: result.already_saved };
+    return {
+      alreadySaved: result.already_saved,
+      senseAdded: Boolean(result.sense_added),
+      contextAdded: Boolean(result.context_added),
+    };
   },
 
   addNote: async (text) => {
@@ -340,12 +351,17 @@ export const useVocabularyStore = create<VocabularyState>((set, get) => ({
       return { words };
     });
 
-    return { alreadySaved: result.already_saved };
+    return { alreadySaved: result.already_saved, senseAdded: Boolean(result.sense_added) };
   },
 
   aiExplain: async (word, context) => {
     const userId = requireUserId();
     return api.post<AiExplainOut>('/vocabulary/ai-explain', { user_id: userId, word, context });
+  },
+
+  checkSaved: async (word, definitions) => {
+    const userId = requireUserId();
+    return api.post<VocabCheckOut>('/vocabulary/check', { user_id: userId, word, definitions });
   },
 
   aiEnrich: async (word, opts) => {

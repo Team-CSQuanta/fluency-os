@@ -163,6 +163,13 @@ class PageLabelCreate(BaseModel):
     mode: str
 
 
+class PageLabelUpdate(BaseModel):
+    """The same passage, rewritten at another level."""
+
+    simple_text: str
+    mode: str
+
+
 class PageLabelOut(BaseModel):
     """A passage on the page, shown in plainer words."""
 

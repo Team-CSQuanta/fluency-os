@@ -60,11 +60,11 @@ class ReaderPrefsUpdate(BaseModel):
     page_theme: Literal["auto", "light", "sepia", "dark"]
     heat_on: bool
     panel_open: bool
-    # The panel was grouped into four tabs; "text", "ai" and "level" were
-    # folded into them. Old values are still read back out of settings rows
-    # written before that, and the client maps them forward — only what it
-    # writes is constrained here.
-    panel_tab: Literal["toc", "search", "marks", "study"]
+    # Older names ("text", "ai", "level", "study") are still read back out of
+    # settings rows written before the panel changed, and the client maps
+    # them forward — only what it writes is constrained here. "study" is
+    # kept so an older client can still save its preference.
+    panel_tab: Literal["toc", "search", "marks", "word", "simpler", "study"]
     page_scroll: Literal["vertical", "horizontal"] = "vertical"
     page_zoom: float = Field(default=1.0, ge=PAGE_ZOOM_MIN, le=PAGE_ZOOM_MAX)
 

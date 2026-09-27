@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { HintPanel } from '@/features/challenge/HintPanel';
 import { SceneEmbed } from '@/features/challenge/SceneEmbed';
+import { AiThinking, useArrivalFlash } from '@/features/shell/AiProgress';
 import { AiRequiredDialog } from '@/features/shell/AiRequiredDialog';
 import { useMicRecorder } from '@/features/conversation/useMicRecorder';
 import { SelectionLookup } from '@/features/vocabulary/SelectionLookup';
@@ -80,6 +81,9 @@ export function Challenge() {
   };
 
   const scored = status === 'scored' && round?.status === 'scored';
+  // The score is written by the AI, sometimes slowly, and lands below the
+  // fold on a short window: pointed at once, when it arrives.
+  const scoreFlash = useArrivalFlash<HTMLDivElement>(scored && round ? `scored:${round.id}` : null);
 
   return (
     <div className="flex h-full min-h-0">
@@ -291,6 +295,8 @@ export function Challenge() {
                   )}
                 </div>
 
+                {status === 'scoring' && <AiThinking label="the AI is marking your description" />}
+
                 <div className="mt-[14px] border-t border-line2 pt-[12px]">
                   <HintPanel
                   hints={hints}
@@ -301,7 +307,11 @@ export function Challenge() {
               </div>
             )}
 
-            {scored && round.overall !== null && <ScoreCard round={round} onAgain={() => void startRound()} />}
+            {scored && round.overall !== null && (
+              <div ref={scoreFlash.ref} className={scoreFlash.className} style={scoreFlash.style}>
+                <ScoreCard round={round} onAgain={() => void startRound()} />
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -361,6 +371,9 @@ function EnrichmentPanel() {
   const enrichment = useChallengeStore((s) => s.enrichment);
   const enriching = useChallengeStore((s) => s.enriching);
   const enrich = useChallengeStore((s) => s.enrich);
+  // Pointed at when it lands — it arrives under the ten descriptions, often
+  // out of view by then.
+  const flash = useArrivalFlash<HTMLDivElement>(enrichment);
 
   if (!enrichment) {
     return (
@@ -372,6 +385,7 @@ function EnrichmentPanel() {
       >
           {enriching ? 'writing it…' : 'Show one richer version'}
         </button>
+        {enriching && <AiThinking label="the AI is combining all ten" />}
         <p className="mt-[5px] text-center font-mono text-[9.5px] leading-[1.6] text-tx3">
           the AI combines all ten narrations into one fuller description of the scene, working in
           words from your vocabulary where they genuinely fit
@@ -381,38 +395,40 @@ function EnrichmentPanel() {
   }
 
   return (
-    <div className="mt-[14px] rounded-field border border-accLine bg-accSoft/40 p-[13px]">
-      <div className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-acc">
-        all ten, combined
-      </div>
-      <p className="mt-[7px] font-sans text-[12.5px] leading-[1.7] text-tx">
-        {enrichment.description}
-      </p>
-
-      {enrichment.used_words.length > 0 ? (
-        <div className="mt-[11px] border-t border-accLine/50 pt-[10px]">
-          <div className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
-            your words that fitted this scene
-          </div>
-          <div className="mt-[7px] flex flex-col gap-[5px]">
-            {enrichment.used_words.map((w) => (
-              <div key={w.vocab_word_id} className="flex items-baseline gap-[8px]">
-                <span className="rounded-full border border-accLine bg-accSoft px-[9px] py-[3px] font-sans text-[11px] font-medium text-acc">
-                  {w.word}
-                </span>
-                {w.why && (
-                  <span className="font-sans text-[11px] leading-[1.5] text-tx3">{w.why}</span>
-                )}
-              </div>
-            ))}
-          </div>
+    <div ref={flash.ref} className={`mt-[14px] ${flash.className}`} style={flash.style}>
+      <div className="rounded-field border border-accLine bg-accSoft/40 p-[13px]">
+        <div className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-acc">
+          all ten, combined
         </div>
-      ) : (
-        <p className="mt-[10px] font-mono text-[9.5px] leading-[1.6] text-tx3">
-          none of your saved words fitted this scene — forcing one in would have taught the wrong
-          context for it
+        <p className="mt-[7px] font-sans text-[12.5px] leading-[1.7] text-tx">
+          {enrichment.description}
         </p>
-      )}
+
+        {enrichment.used_words.length > 0 ? (
+          <div className="mt-[11px] border-t border-accLine/50 pt-[10px]">
+            <div className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
+              your words that fitted this scene
+            </div>
+            <div className="mt-[7px] flex flex-col gap-[5px]">
+              {enrichment.used_words.map((w) => (
+                <div key={w.vocab_word_id} className="flex items-baseline gap-[8px]">
+                  <span className="rounded-full border border-accLine bg-accSoft px-[9px] py-[3px] font-sans text-[11px] font-medium text-acc">
+                    {w.word}
+                  </span>
+                  {w.why && (
+                    <span className="font-sans text-[11px] leading-[1.5] text-tx3">{w.why}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <p className="mt-[10px] font-mono text-[9.5px] leading-[1.6] text-tx3">
+            none of your saved words fitted this scene — forcing one in would have taught the wrong
+            context for it
+          </p>
+        )}
+      </div>
     </div>
   );
 }

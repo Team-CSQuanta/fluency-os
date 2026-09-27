@@ -4,6 +4,8 @@ import { api } from '@/lib/apiClient';
 import { useVocabularyStore } from '@/store/vocabularyStore';
 import type { DictionarySearchOut } from '@/types/api';
 import { friendlyMessage } from '@/lib/friendlyError';
+import { AiThinking, useArrivalFlash } from '@/features/shell/AiProgress';
+import { KnownMark, SavedStatus, saveIntent, useSavedCheck, type SaveIntent } from '@/features/vocabulary/savedCheck';
 
 /** Look a word up where you met it, by selecting it.
  *
@@ -129,6 +131,7 @@ export function SelectionLookup({ within, source }: Props) {
   const [status, setStatus] = useState<Status>('loading');
   const [senseIndex, setSenseIndex] = useState(0);
   const [ai, setAi] = useState<AiReading | null>(null);
+  const aiFlash = useArrivalFlash<HTMLDivElement>(ai);
   const [aiStatus, setAiStatus] = useState<AiStatus>('idle');
   const [aiError, setAiError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -316,10 +319,29 @@ export function SelectionLookup({ within, source }: Props) {
     void askAi(null);
   }, [status, target, found, ai, aiStatus, askAi]);
 
+  // Already saved, and with this sense? Then there is nothing to add. Above
+  // the early return: hooks must run on every render.
+  const [savedTick, setSavedTick] = useState(0);
+  const savedCheck = useSavedCheck(
+    status === 'loading' ? null : result?.word || target?.term,
+    senses.map((x) => x.definition),
+    savedTick,
+  );
+  const intent: SaveIntent =
+    senses.length > 0
+      ? saveIntent(savedCheck, senseIndex)
+      : !savedCheck?.saved
+        ? 'new-word'
+        : // No dictionary sense: only the AI's reading could be a new meaning.
+          ai
+          ? 'new-meaning'
+          : 'same';
+
   if (!target || !at) return null;
 
   // The model was asked about a different sense than the one on screen.
   const staleForSense = Boolean(ai && ai.forSense !== null && ai.forSense !== dictDefinition);
+
   const showAi = ai && !staleForSense;
 
   const save = async () => {
@@ -327,7 +349,7 @@ export function SelectionLookup({ within, source }: Props) {
     setSaveError(null);
     try {
       const keep = showAi ? ai : null;
-      const { alreadySaved } = await saveManualWord({
+      const { alreadySaved, senseAdded } = await saveManualWord({
         word: result?.word || target.term,
         pos: sense?.pos || keep?.pos || 'unknown',
         // Whichever source actually has one, dictionary first. A term with no
@@ -349,7 +371,14 @@ export function SelectionLookup({ within, source }: Props) {
         aiMnemonic: keep?.mnemonic || undefined,
         aiSenseDefinition: keep && dictDefinition ? dictDefinition : undefined,
       });
-      setSaved(alreadySaved ? 'already in your vocabulary' : 'saved to vocabulary');
+      setSavedTick((n) => n + 1);
+      setSaved(
+        !alreadySaved
+          ? 'saved to vocabulary'
+          : senseAdded
+            ? 'added this new meaning to the word you already have'
+            : 'already in your vocabulary with this meaning',
+      );
     } catch (err) {
       setSaveError(friendlyMessage(err, 'Saving this word'));
     } finally {
@@ -374,9 +403,14 @@ export function SelectionLookup({ within, source }: Props) {
           </span>
         )}
       </div>
+      {savedCheck?.saved && (
+        <div className="px-[11px] pt-[6px]">
+          <SavedStatus check={savedCheck} />
+        </div>
+      )}
 
       <div className="max-h-[300px] overflow-y-auto px-[11px] py-[9px]">
-        {status === 'loading' && <p className="font-mono text-[10px] text-tx3">looking it up…</p>}
+        {status === 'loading' && <AiThinking label="looking it up" />}
 
         {status === 'error' && (
           <p className="font-sans text-[11px] leading-[1.55] text-tx3">
@@ -388,7 +422,10 @@ export function SelectionLookup({ within, source }: Props) {
           <>
             <Label>dictionary</Label>
             {sense.pos && <div className="mt-[3px] font-mono text-[9px] text-tx3">{sense.pos}</div>}
-            <p className="mt-[3px] font-sans text-[11.5px] leading-[1.6] text-tx">{sense.definition}</p>
+            <p className="mt-[3px] font-sans text-[11.5px] leading-[1.6] text-tx">
+              {sense.definition}
+              {savedCheck?.known[senseIndex] && <KnownMark />}
+            </p>
             {sense.example && (
               <p className="mt-[5px] font-sans text-[10.5px] italic leading-[1.5] text-tx3">“{sense.example}”</p>
             )}
@@ -426,7 +463,11 @@ export function SelectionLookup({ within, source }: Props) {
         )}
 
         {(status !== 'loading' || aiStatus !== 'idle' || ai) && (
-          <div className={found ? 'mt-[10px] border-t border-line2 pt-[8px]' : 'mt-[8px]'}>
+          <div
+            ref={aiFlash.ref}
+            className={`${found ? 'mt-[10px] border-t border-line2 pt-[8px]' : 'mt-[8px]'} ${aiFlash.className}`}
+            style={aiFlash.style}
+          >
             <div className="flex items-center justify-between gap-2">
               <Label>{found ? 'in this sentence' : 'what the AI makes of it'}</Label>
               {/* Offered, not spent. The dictionary already answered; a model
@@ -441,7 +482,7 @@ export function SelectionLookup({ within, source }: Props) {
               )}
             </div>
 
-            {aiStatus === 'loading' && <Muted>asking the AI…</Muted>}
+            {aiStatus === 'loading' && <AiThinking />}
             {aiStatus === 'error' && <Muted>{aiError}</Muted>}
             {aiStatus === 'idle' && !ai && found && (
               <Muted>the model reads the line above and says which sense is meant</Muted>
@@ -471,13 +512,19 @@ export function SelectionLookup({ within, source }: Props) {
         ) : (
           <button
             onClick={() => void save()}
-            disabled={saving || status === 'loading' || aiStatus === 'loading'}
+            disabled={saving || status === 'loading' || aiStatus === 'loading' || intent === 'same'}
             className="w-full rounded-field border border-accLine bg-accSoft py-[6px] font-sans text-[11px] font-medium text-acc hover:brightness-110 disabled:opacity-50"
           >
-            {saving ? 'saving…' : '＋ Add to vocabulary'}
+            {saving
+              ? 'saving…'
+              : {
+                  'new-word': '＋ Add to vocabulary',
+                  same: '✓ already in your vocabulary with this meaning',
+                  'new-meaning': '＋ Add this new meaning',
+                }[intent]}
           </button>
         )}
-        {!saved && (
+        {!saved && intent === 'new-word' && (
           <p className="mt-[6px] font-mono text-[9px] leading-[1.5] text-tx3">
             {showAi && found
               ? 'saved with both readings and the sentence'

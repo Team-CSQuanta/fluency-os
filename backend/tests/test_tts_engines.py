@@ -337,7 +337,7 @@ def test_starting_a_session_refuses_when_the_selected_voice_isnt_loaded(tmp_path
     monkeypatch.setattr(conversation.llm_chat_engine, "is_ready_for", lambda path: True)
 
     with pytest.raises(Exception) as err:
-        conversation.start_session(conn, user_id=user_id, scenario="cafe", channel="voice")
+        conversation.start_session(conn, user_id=user_id, scenario="coffee", channel="voice")
     assert "TTS" in str(err.value)
 
 

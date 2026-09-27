@@ -3,6 +3,7 @@ import { useEngineStore } from '@/store/engineStore';
 import { useVocabularyStore } from '@/store/vocabularyStore';
 import type { AiEnrichOut, DictionarySenseOut } from '@/types/api';
 import { friendlyMessage } from '@/lib/friendlyError';
+import { KnownMark, SavedStatus, saveIntent, useSavedCheck, type SaveIntent } from '@/features/vocabulary/savedCheck';
 
 /** Adding a word, with the dictionary and the local AI working on it
  * together rather than as two separate tabs you had to choose between.
@@ -69,6 +70,25 @@ export function AddWordModal({ onClose }: { onClose: () => void }) {
   // worse than no answer.
   const staleForSense = Boolean(ai && aiSense !== null && aiSense !== dictDefinition);
 
+  // Asked once the dictionary has answered, not on every keystroke: is the
+  // word already saved, and with which of these senses? Adding by hand has no
+  // sentence to contribute, so a sense already saved leaves nothing to add.
+  const [savedTick, setSavedTick] = useState(0);
+  const savedCheck = useSavedCheck(
+    searchResult?.word,
+    senses.map((x) => x.definition),
+    savedTick,
+  );
+  const intent: SaveIntent =
+    senses.length > 0
+      ? saveIntent(savedCheck, senseIndex)
+      : !savedCheck?.saved
+        ? 'new-word'
+        : // No dictionary sense: only the AI's reading could be a new meaning.
+          ai
+          ? 'new-meaning'
+          : 'same';
+
   const runSearch = () => {
     const w = query.trim();
     if (!w) return;
@@ -134,7 +154,7 @@ export function AddWordModal({ onClose }: { onClose: () => void }) {
         new Set([...(searchResult?.synonyms ?? []), ...(keep?.synonyms ?? [])]),
       ).slice(0, 6);
 
-      const { alreadySaved } = await saveManualWord({
+      const { alreadySaved, senseAdded } = await saveManualWord({
         word: headword,
         pos: sense?.pos || 'unknown',
         definition: dictDefinition || keep?.definition || `(no definition yet — ${headword})`,
@@ -149,7 +169,14 @@ export function AddWordModal({ onClose }: { onClose: () => void }) {
         aiUsageNote: keep?.usage_note || undefined,
         aiSenseDefinition: keep ? dictDefinition || undefined : undefined,
       });
-      setSaved(alreadySaved ? 'already in your vocabulary' : 'saved');
+      setSaved(
+        !alreadySaved
+          ? 'saved'
+          : senseAdded
+            ? 'added this new meaning to the word you already have'
+            : 'already in your vocabulary with this meaning',
+      );
+      setSavedTick((n) => n + 1);
       await Promise.all([fetchWords(), fetchOverview()]);
     } catch (err) {
       setSaveError(friendlyMessage(err, 'Saving this word'));
@@ -163,7 +190,7 @@ export function AddWordModal({ onClose }: { onClose: () => void }) {
     onClose();
   };
 
-  const canSave = Boolean(headword) && !saving && !saved;
+  const canSave = Boolean(headword) && !saving && !saved && intent !== 'same';
 
   return (
     <div
@@ -231,6 +258,7 @@ export function AddWordModal({ onClose }: { onClose: () => void }) {
             <div className="mt-4 rounded-field border border-line2 px-3 py-[11px]">
               <div className="flex flex-wrap items-baseline gap-[8px]">
                 <span className="font-sans text-[18px] font-semibold text-tx">{searchResult.word}</span>
+                <SavedStatus check={savedCheck} />
                 {searchResult.ipa && <span className="font-mono text-[11px] text-tx3">{searchResult.ipa}</span>}
                 {searchResult.cefr && (
                   <span className="rounded-[4px] border border-accLine px-[6px] py-[1px] font-mono text-[9.5px] text-acc">
@@ -253,6 +281,7 @@ export function AddWordModal({ onClose }: { onClose: () => void }) {
                 <>
                   <div className="mt-[10px] font-sans text-[12.5px] leading-[1.65] text-tx2">
                     {sense.definition}
+                    {savedCheck?.known[senseIndex] && <KnownMark />}
                   </div>
                   {sense.example && (
                     <div className="mt-[6px] font-sans text-[12px] italic leading-[1.6] text-tx3">
@@ -274,6 +303,7 @@ export function AddWordModal({ onClose }: { onClose: () => void }) {
                           }}
                         >
                           {i + 1} · {s.pos}
+                          {savedCheck?.known[i] && ' ✓'}
                         </button>
                       ))}
                     </div>
@@ -422,7 +452,11 @@ export function AddWordModal({ onClose }: { onClose: () => void }) {
                 disabled={!canSave}
                 className="rounded-field bg-accSolid px-4 py-[9px] font-sans text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-50"
               >
-                {saving ? 'saving…' : 'save word'}
+                {saving
+                  ? 'saving…'
+                  : { 'new-word': 'save word', same: 'already in your vocabulary', 'new-meaning': 'add this new meaning' }[
+                      intent
+                    ]}
               </button>
             </>
           )}

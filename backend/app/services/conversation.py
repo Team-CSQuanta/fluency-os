@@ -2,10 +2,9 @@
 selection, real local LLM chat generation, real STT/TTS on the voice
 channel, and real post-chat analytics + review_logs writes.
 
-Target-word selection is an honest substitute for real SRS "due" scheduling
-(which doesn't exist anywhere in this app yet, see 0006_vocabulary.sql):
-words with no conversation usage yet are preferred, tie-broken by most
-recently saved.
+Target words are picked by services/target_words.py: what still needs
+practice (due for review, never said in conversation, used wrongly), the
+learner's level, and how well the word fits the scene.
 """
 
 import json
@@ -16,7 +15,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from app.config import settings
-from app.services import conversation_report, review
+from app.services import conversation_report, review, scenarios, target_words as target_word_picker
 from app.services.voice import (
     cloud_llm_engine,
     engine_health,
@@ -34,24 +33,9 @@ from app.utils.time import iso8601_utc_now
 
 TARGET_WORD_COUNT = 8
 
-SCENARIOS: dict[str, dict[str, str]] = {
-    "free": {
-        "label": "Free talk",
-        "brief": "An open, casual conversation about whatever comes up — the learner's week, opinions, small updates.",
-    },
-    "coffee": {
-        "label": "Order coffee",
-        "brief": "You are a barista at a coffee shop. Stay in character; take the learner's order, ask natural follow-ups (size, milk, name for the cup).",
-    },
-    "job": {
-        "label": "Job interview",
-        "brief": "You are interviewing the learner for a job they're applying to. Ask realistic interview questions and react to their answers.",
-    },
-    "debate": {
-        "label": "Debate a topic",
-        "brief": "Pick a everyday debatable topic and take a clear side, pushing back on the learner's points respectfully.",
-    },
-}
+# The scenes themselves live in services/scenarios.py, with the prompt they
+# run on. Kept importable here for code that still asks this module.
+SCENARIOS = scenarios.BY_KEY
 
 
 def _audio_dir() -> Path:
@@ -262,6 +246,7 @@ def full_engine_status(conn: sqlite3.Connection, user_id: str) -> dict:
             if target["api_key"] and engine_health.is_verified(target["provider"], target["model"])
             else "not_loaded"
         )
+        st["llm_off"] = engine_health.cloud_is_off()
         return st
     option = target["option"]
     return engine_status.status(str(model_manager.llm_model_path(option.repo_id, option.filename)))
@@ -294,23 +279,18 @@ def _ensure_launched(needs: set[str], *, llm_target: dict, tts_name: str | None 
         )
 
 
-def _select_target_words(conn: sqlite3.Connection, user_id: str) -> list[sqlite3.Row]:
-    """An 'avoided' log means the word was offered as a target but the learner
-    never actually said it — counting that as practice would push exactly the
-    words that still need work to the back of the queue, so only outcomes
-    where the word was really produced count as usage here."""
-    return conn.execute(
-        """
-        SELECT vw.id, vw.word, vw.definition,
-               (SELECT COUNT(*) FROM review_logs rl
-                 WHERE rl.vocab_word_id = vw.id AND rl.outcome <> 'avoided') AS usage_count
-        FROM vocab_words vw
-        WHERE vw.user_id = ?
-        ORDER BY usage_count ASC, vw.created_at DESC
-        LIMIT ?
-        """,
-        (user_id, TARGET_WORD_COUNT),
-    ).fetchall()
+def _select_target_words(
+    conn: sqlite3.Connection, user_id: str, scenario: "scenarios.Scenario | None" = None
+) -> list[target_word_picker.Pick]:
+    """The words this conversation asks for, each with why it was picked —
+    see services/target_words.py."""
+    return target_word_picker.select(
+        conn,
+        user_id,
+        scenario or scenarios.BY_KEY["free"],
+        learner_level(conn, user_id),
+        count=TARGET_WORD_COUNT,
+    )
 
 
 def _words_by_ids(conn: sqlite3.Connection, user_id: str, word_ids: list[str]) -> list[sqlite3.Row]:
@@ -368,26 +348,88 @@ def normalise_for_chat(pairs: list[tuple[str, str]]) -> tuple[list[str], list[tu
 
 
 def _system_prompt(
-    scenario: str, target_words: list[sqlite3.Row], opening: list[str] | None = None
+    scenario: str,
+    target_words: list[sqlite3.Row],
+    opening: list[str] | None = None,
+    *,
+    detail: dict | None = None,
+    level: str = conversation_report.DEFAULT_CEFR,
 ) -> str:
-    scenario_cfg = SCENARIOS[scenario]
-    words_block = (
-        "\n".join(f"- {w['word']}: {w['definition'] or 'no definition on file'}" for w in target_words)
-        or "(the learner has no saved vocabulary yet — just have a natural conversation)"
+    """The scene's instructions — see scenarios.build_system_prompt."""
+    return scenarios.build_system_prompt(
+        scenarios.resolve(scenario, detail),
+        level=level,
+        target_words=[(w["word"], w["definition"]) for w in target_words],
+        opening=opening,
     )
-    return (
-        f"You are Juno, a friendly AI conversation partner helping someone practice English. "
-        f"Scenario: {scenario_cfg['brief']}\n\n"
-        f"The learner is trying to use these target words naturally in this conversation:\n{words_block}\n\n"
-        "Rules: never say a target word yourself before the learner does. Keep replies to ONE or TWO "
-        "short sentences — real spoken conversation, not an essay. Speaking them aloud takes longer "
-        "than generating them, so length is what the learner waits on. Ask a follow-up question to "
-        "keep the conversation going."
-        # Whatever the AI already said cannot stay in the message list without
-        # breaking alternation (see normalise_for_chat), so it is given back
-        # here instead — the model still knows how it opened.
-        + (f"\n\nYou have already said this to the learner: {' '.join(opening)}" if opening else "")
+
+
+def learner_level(conn: sqlite3.Connection, user_id: str) -> str:
+    """The level the partner speaks at: the learner's placement, or the
+    default band when they have not been placed."""
+    row = conn.execute("SELECT cefr_level FROM users WHERE id = ?", (user_id,)).fetchone()
+    return conversation_report.resolve_cefr(row["cefr_level"] if row else None)
+
+
+def session_detail(session: sqlite3.Row) -> dict | None:
+    raw = session["scenario_detail"] if "scenario_detail" in session.keys() else None
+    return json.loads(raw) if raw else None
+
+
+def scenario_label(session: sqlite3.Row) -> str:
+    return scenarios.resolve(session["scenario"], session_detail(session)).label
+
+
+def session_persona(session: sqlite3.Row) -> scenarios.Persona:
+    """Who the learner is talking to in this session's scene."""
+    return scenarios.resolve(session["scenario"], session_detail(session)).persona
+
+
+def target_reasons(session: sqlite3.Row) -> dict[str, str]:
+    raw = session["target_reasons"] if "target_reasons" in session.keys() else None
+    return json.loads(raw) if raw else {}
+
+
+# --- the learner's own scenes -----------------------------------------------
+
+CUSTOM_FIELDS = ("title", "ai_name", "ai_role", "personality", "setting", "learner_role", "goal")
+
+
+def list_custom_scenarios(conn: sqlite3.Connection, user_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM conversation_custom_scenarios WHERE user_id = ? ORDER BY created_at DESC", (user_id,)
+    ).fetchall()
+
+
+def create_custom_scenario(conn: sqlite3.Connection, user_id: str, fields: dict) -> sqlite3.Row:
+    clean = {k: (str(fields.get(k) or "").strip()[: scenarios.CUSTOM_LIMIT] or None) for k in CUSTOM_FIELDS}
+    if not clean["title"] or not clean["ai_role"] or not clean["setting"]:
+        raise ValueError("A scenario needs a title, who the AI plays, and the situation.")
+    scenario_id = uuid7()
+    conn.execute(
+        f"INSERT INTO conversation_custom_scenarios (id, user_id, {', '.join(CUSTOM_FIELDS)}, created_at) "
+        f"VALUES (?, ?, {', '.join('?' for _ in CUSTOM_FIELDS)}, ?)",
+        (scenario_id, user_id, *(clean[k] for k in CUSTOM_FIELDS), iso8601_utc_now()),
     )
+    conn.commit()
+    return conn.execute("SELECT * FROM conversation_custom_scenarios WHERE id = ?", (scenario_id,)).fetchone()
+
+
+def delete_custom_scenario(conn: sqlite3.Connection, user_id: str, scenario_id: str) -> bool:
+    cur = conn.execute(
+        "DELETE FROM conversation_custom_scenarios WHERE id = ? AND user_id = ?", (scenario_id, user_id)
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def _custom_detail(conn: sqlite3.Connection, user_id: str, scenario_id: str) -> dict:
+    row = conn.execute(
+        "SELECT * FROM conversation_custom_scenarios WHERE id = ? AND user_id = ?", (scenario_id, user_id)
+    ).fetchone()
+    if row is None:
+        raise LookupError("no such scenario")
+    return {k: row[k] for k in CUSTOM_FIELDS} | {"custom_scenario_id": row["id"]}
 
 
 def launch_engines(conn: sqlite3.Connection, user_id: str) -> dict:
@@ -405,6 +447,8 @@ def launch_engines(conn: sqlite3.Connection, user_id: str) -> dict:
         label = "Gemini" if target["provider"] == "gemini" else "OpenRouter"
         raise EngineUnavailable(f"No {label} API key configured — add one in Settings before launching AI.")
     else:
+        # Starting the AI is also how a switched-off cloud AI comes back on.
+        engine_health.switch_cloud_on()
         # The cloud equivalent of loading a model: spend one small request to
         # establish that the key really works, instead of assuming it from the
         # fact that something is saved.
@@ -424,11 +468,15 @@ def unload_engines(conn: sqlite3.Connection, user_id: str) -> dict:
 
     Each engine's own unload() takes the same lock generation holds, so this
     waits for any in-flight turn rather than pulling a model out from under
-    it. A cloud LLM has nothing resident to free — its key stays verified, so
-    the conversation can carry on while the local speech models are released."""
+    it. A cloud LLM has nothing resident to free, so for it this is the off
+    switch: no request is sent until launch_engines turns it back on."""
     target = llm_target(conn, user_id)
     if target["provider"] == "local":
         llm_chat_engine.unload()
+    else:
+        # Nothing resident to free, so "off" is a promise instead: no request
+        # goes to the cloud until the AI is started again.
+        engine_health.switch_cloud_off()
     stt_engine.unload()
     tts.unload_all()
     return full_engine_status(conn, user_id)
@@ -441,10 +489,28 @@ def start_session(
     scenario: str,
     channel: str,
     seed_word_ids: list[str] | None = None,
+    custom_scenario_id: str | None = None,
+    repeat_of: str | None = None,
 ) -> str:
     """`seed_word_ids` backs "practise this again": rather than picking a fresh
     set, the new session reuses the words from the one being repeated, so the
-    words that just went badly are the ones that come straight back."""
+    words that just went badly are the ones that come straight back.
+
+    `custom_scenario_id` runs one of the learner's own scenes; `repeat_of`
+    runs the same scene as an earlier session — including a learner-written
+    one that has since been deleted, from the copy that session kept."""
+    detail: dict | None = None
+    if repeat_of:
+        earlier = get_session_row(conn, repeat_of, user_id)
+        if earlier is None:
+            raise LookupError("no such session")
+        scenario, detail = earlier["scenario"], session_detail(earlier)
+    elif scenario == scenarios.CUSTOM:
+        if not custom_scenario_id:
+            raise ValueError("A custom scenario needs custom_scenario_id.")
+        detail = _custom_detail(conn, user_id, custom_scenario_id)
+    elif scenario not in scenarios.BY_KEY:
+        raise ValueError(f"Unknown scenario {scenario!r}.")
     _ensure_ready(conn, user_id, channel)
     target = llm_target(conn, user_id)
     _ensure_launched(
@@ -453,9 +519,13 @@ def start_session(
         tts_name=tts.selected_name(conn, user_id),
     )
 
+    scene = scenarios.resolve(scenario, detail)
     target_words = _words_by_ids(conn, user_id, seed_word_ids) if seed_word_ids else []
+    reasons: dict[str, str] = {w["id"]: "again" for w in target_words}
     if not target_words:
-        target_words = _select_target_words(conn, user_id)
+        picks = _select_target_words(conn, user_id, scene)
+        target_words = [p.row for p in picks]
+        reasons = {p.row["id"]: p.reason for p in picks}
     # Generate the opening BEFORE writing anything, for two reasons. It keeps
     # a failure from leaving a session row with no turns behind — one that
     # would then sit in the learner's history forever as an empty
@@ -464,22 +534,25 @@ def start_session(
     # minutes on a cold model load, which would block every other writer.
     opening = _generate_reply(
         target,
-        _system_prompt(scenario, target_words),
-        [("user", "(The learner has just joined. Greet them and open the conversation.)")],
+        _system_prompt(scenario, target_words, detail=detail, level=learner_level(conn, user_id)),
+        [("user", scenarios.opening_instruction(scene))],
     )
 
     session_id = uuid7()
     conn.execute(
         """
-        INSERT INTO conversation_sessions (id, user_id, scenario, channel, target_word_ids, model_id, started_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO conversation_sessions
+            (id, user_id, scenario, scenario_detail, channel, target_word_ids, target_reasons, model_id, started_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             session_id,
             user_id,
             scenario,
+            json.dumps(detail) if detail else None,
             channel,
             json.dumps([w["id"] for w in target_words]),
+            json.dumps(reasons),
             _session_model_id(target),
             iso8601_utc_now(),
         ),
@@ -498,6 +571,7 @@ def _insert_turn(
     channel: str,
     stt_confidence: float | None = None,
     speech_seconds: float | None = None,
+    response_delay_seconds: float | None = None,
 ) -> sqlite3.Row:
     turn_id = uuid7()
     # Deliberately no synthesis here. Kokoro runs slower than real time on this
@@ -509,8 +583,9 @@ def _insert_turn(
     conn.execute(
         """
         INSERT INTO conversation_turns
-            (id, session_id, turn_index, speaker, text, audio_path, stt_confidence, speech_seconds, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, session_id, turn_index, speaker, text, audio_path, stt_confidence, speech_seconds,
+             response_delay_seconds, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             turn_id,
@@ -521,6 +596,7 @@ def _insert_turn(
             audio_path,
             stt_confidence,
             speech_seconds,
+            response_delay_seconds,
             iso8601_utc_now(),
         ),
     )
@@ -600,7 +676,10 @@ def submit_user_turn(
     *,
     text: str | None,
     audio_bytes: bytes | None,
+    response_delay_seconds: float | None = None,
 ) -> tuple[sqlite3.Row, sqlite3.Row]:
+    """`response_delay_seconds` is how long the learner took to start this
+    turn, measured by the client (see 0039_turn_response_delay.sql)."""
     channel = session["channel"]
     target = _session_llm_target(conn, session)
     _ensure_ready_for_target(target, channel, tts.selected_name(conn, session["user_id"]))
@@ -642,7 +721,13 @@ def submit_user_turn(
     pairs = [("assistant" if t["speaker"] == "ai" else "user", t["text"]) for t in turns]
     pairs.append(("user", text))
     opening, history = normalise_for_chat(pairs)
-    system_prompt = _system_prompt(session["scenario"], target_words, opening)
+    system_prompt = _system_prompt(
+        session["scenario"],
+        target_words,
+        opening,
+        detail=session_detail(session),
+        level=learner_level(conn, session["user_id"]),
+    )
 
     # Generate BEFORE writing anything. A failure here used to leave the
     # learner's turn committed with no reply, and the next attempt then saw
@@ -652,8 +737,19 @@ def submit_user_turn(
     # reply to persist alongside it.
     reply = _generate_reply(target, system_prompt, history)
 
+    if response_delay_seconds is not None:
+        # Anything outside this is a clock problem, not a learner.
+        response_delay_seconds = round(max(0.0, min(3600.0, float(response_delay_seconds))), 2)
     user_turn = _insert_turn(
-        conn, session["id"], next_index, "user", text, channel, stt_confidence, speech_seconds
+        conn,
+        session["id"],
+        next_index,
+        "user",
+        text,
+        channel,
+        stt_confidence,
+        speech_seconds,
+        response_delay_seconds,
     )
     ai_turn = _insert_turn(conn, session["id"], next_index + 1, "ai", reply, channel)
 
@@ -738,6 +834,8 @@ def end_session(conn: sqlite3.Connection, session: sqlite3.Row) -> dict:
         "above_level_words": metrics.above_level_words,
         "self_corrections": analysis.self_corrections,
         "turn_count": len(turns),
+        # The learner's own turns — "turns" above counts the AI's as well.
+        "learner_turns": sum(1 for t in turns if t["speaker"] == "user"),
         "routing": routing,
         "errors": [e.model_dump() for e in analysis.errors[:3]],
         "summary": analysis.summary or "No summary was generated.",

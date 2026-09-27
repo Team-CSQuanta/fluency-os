@@ -1,0 +1,13 @@
+-- How long the learner took to start answering, measured where it happens.
+--
+-- The report used to derive this from two turns' created_at. But a learner's
+-- turn is written only after it is transcribed AND the AI's next reply is
+-- generated, and the AI's turn before it is written before its reply is
+-- spoken — so the "delay" included the AI talking, the learner talking,
+-- transcription and generation. On a real session it read 23 s where the
+-- learner had started speaking within a few.
+--
+-- Measured by the client from the moment the learner could reply (the AI
+-- finished speaking, or its reply appeared) to the moment they began (voice
+-- detected, mic tapped, or first keystroke). NULL where not measured.
+ALTER TABLE conversation_turns ADD COLUMN response_delay_seconds REAL;

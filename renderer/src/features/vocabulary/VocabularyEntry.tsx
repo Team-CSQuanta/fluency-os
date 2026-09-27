@@ -224,6 +224,32 @@ export function VocabularyEntry() {
   }
 
   const detail = selectedDetail;
+  const senses = detail.senses ?? [];
+  const clipCount = detail.contexts.filter((c) => c.kind === 'clip').length;
+  const pageCount = detail.contexts.length - clipCount;
+  // Contexts under the meaning each was saved with, once there is more than
+  // one meaning; anything saved before meanings existed, or with none, last.
+  const contextGroups =
+    senses.length > 1
+      ? [
+          ...senses.map((sense, i) => ({
+            key: sense.id,
+            label: `meaning ${i + 1}`,
+            definition: sense.definition,
+            contexts: detail.contexts.filter((c) => c.sense_id === sense.id),
+          })),
+          ...(detail.contexts.some((c) => !senses.some((x) => x.id === c.sense_id))
+            ? [
+                {
+                  key: 'other',
+                  label: 'other',
+                  definition: 'not tied to a meaning',
+                  contexts: detail.contexts.filter((c) => !senses.some((x) => x.id === c.sense_id)),
+                },
+              ]
+            : []),
+        ]
+      : [{ key: 'all', label: '', definition: '', contexts: detail.contexts }];
 
   return (
     <div className="relative h-full overflow-y-auto bg-bg">
@@ -317,14 +343,35 @@ export function VocabularyEntry() {
           <div className="flex min-w-0 flex-col gap-5">
             <div>
               <div className="mb-[10px] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
-                Definition
+                {senses.length > 1 ? `Meanings · ${senses.length}` : 'Definition'}
               </div>
-              <div className="rounded-field border border-line2 bg-panel px-[14px] py-[13px]">
-                <div className="font-sans text-[13px] leading-[1.7] text-tx">{detail.definition ?? '—'}</div>
-                {detail.example && (
-                  <div className="mt-[8px] font-sans text-[12px] italic leading-[1.6] text-tx2">"{detail.example}"</div>
-                )}
-              </div>
+              {senses.length > 1 ? (
+                /* Every meaning this word was saved with, numbered so each
+                   context below can say which one it shows. */
+                <div className="flex flex-col gap-[7px]">
+                  {senses.map((sense, i) => (
+                    <div key={sense.id} className="flex gap-[10px] rounded-field border border-line2 bg-panel px-[14px] py-[11px]">
+                      <span className="mt-[3px] flex-none font-mono text-[10px] font-semibold text-acc">{i + 1}</span>
+                      <div className="min-w-0">
+                        <div className="font-sans text-[13px] leading-[1.7] text-tx">
+                          {sense.pos && <span className="mr-[6px] font-mono text-[10px] text-tx3">{sense.pos}</span>}
+                          {sense.definition}
+                        </div>
+                        {sense.example && (
+                          <div className="mt-[5px] font-sans text-[12px] italic leading-[1.6] text-tx2">"{sense.example}"</div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-field border border-line2 bg-panel px-[14px] py-[13px]">
+                  <div className="font-sans text-[13px] leading-[1.7] text-tx">{detail.definition ?? '—'}</div>
+                  {detail.example && (
+                    <div className="mt-[8px] font-sans text-[12px] italic leading-[1.6] text-tx2">"{detail.example}"</div>
+                  )}
+                </div>
+              )}
               {detail.synonyms.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-[6px]">
                   {detail.synonyms.map((s) => (
@@ -450,22 +497,48 @@ export function VocabularyEntry() {
                 <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">
                   Contexts · {detail.contexts.length}
                 </span>
-                <span className="font-mono text-[9.5px] text-tx3">where you met it</span>
+                <span className="font-mono text-[9.5px] text-tx3">
+                  {[
+                    pageCount > 0 && `${pageCount} from books`,
+                    clipCount > 0 && `${clipCount} from films`,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ') || 'where you met it'}
+                </span>
               </div>
               <div className="flex flex-col gap-[9px]">
                 {detail.contexts.length === 0 && (
                   <div className="font-mono text-[10.5px] text-tx3">no captured context yet</div>
                 )}
-                {detail.contexts.map((c) =>
-                  c.kind === 'clip' ? (
-                    <ClipContext key={c.id} context={c} />
-                  ) : (
-                    <div key={c.id} className="rounded-field border border-line2 bg-panel p-[11px]">
-                      <div className="font-sans text-[12.5px] leading-[1.7] text-tx">"{c.snippet}"</div>
-                      <div className="mt-[7px] font-mono text-[9.5px] text-tx3">{c.source_label}</div>
-                    </div>
-                  ),
-                )}
+                {/* One entry per meaning, each with the sentences and
+                    clips that show it — books and films together, oldest
+                    first within a meaning. A word saved with one meaning is
+                    one plain list. */}
+                {contextGroups.map((group) => (
+                  <div key={group.key} className="flex flex-col gap-[9px]">
+                    {group.label && (
+                      <div className="mt-[4px] font-sans text-[11.5px] leading-[1.55] text-tx2">
+                        <span className="mr-[6px] rounded-full bg-accSoft px-[7px] py-[1px] font-mono text-[9.5px] text-acc">
+                          {group.label}
+                        </span>
+                        {group.definition}
+                      </div>
+                    )}
+                    {group.contexts.length === 0 && (
+                      <div className="font-mono text-[10px] text-tx3">no sentence or clip for this meaning yet</div>
+                    )}
+                    {group.contexts.map((c) =>
+                      c.kind === 'clip' ? (
+                        <ClipContext key={c.id} context={c} />
+                      ) : (
+                        <div key={c.id} className="rounded-field border border-line2 bg-panel p-[11px]">
+                          <div className="font-sans text-[12.5px] leading-[1.7] text-tx">"{c.snippet}"</div>
+                          <div className="mt-[7px] font-mono text-[9.5px] text-tx3">{c.source_label}</div>
+                        </div>
+                      ),
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
           </div>

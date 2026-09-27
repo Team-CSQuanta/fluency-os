@@ -252,14 +252,131 @@ def test_a_card_that_is_not_due_stays_out_of_the_queue(tmp_path):
     assert review.build_queue(conn, "u1", now=T0 + timedelta(hours=1)) == []
 
 
-def test_card_types_are_interleaved(tmp_path):
-    """Spec §5.5: mixing types measurably improves retention over grouping."""
+def _mature(conn, wid, *, stability, state="review", reps=5):
+    """A card as if it had been reviewed for a while, and due now."""
+    conn.execute(
+        "UPDATE review_cards SET state = ?, stability = ?, difficulty = 5, reps = ?, "
+        "due = ?, last_review = ? WHERE vocab_word_id = ?",
+        (state, stability, reps, "2025-12-31T00:00:00Z", "2025-12-01T00:00:00Z", wid),
+    )
+    conn.commit()
+
+
+def test_a_new_word_is_first_asked_what_it_means(tmp_path):
+    """Recognising comes before recalling: a word met once must not open on
+    "how do you say this?", which is what rotating types by position did."""
     conn = _conn(tmp_path)
     for i in range(8):
         _word(conn, f"word{i}", wid=f"w{i}", example=f"A sentence with word{i} inside.", audio="/a.wav")
-    conn.commit()
-    types = [c["card_type"] for c in review.build_queue(conn, "u1", new_limit=8, now=T0)]
+    types = {c["card_type"] for c in review.build_queue(conn, "u1", new_limit=8, now=T0)}
+    assert types == {"recognition"}
+
+
+def test_a_well_known_word_is_asked_harder_questions_and_they_are_interleaved(tmp_path):
+    """Spec §5.5: mixing types improves retention — among the questions the
+    word's stage calls for."""
+    conn = _conn(tmp_path)
+    for i in range(6):
+        wid = _word(conn, f"word{i}", wid=f"w{i}", example=f"A sentence with word{i} inside.", audio="/a.wav")
+        _mature(conn, wid, stability=40)
+    types = [c["card_type"] for c in review.build_queue(conn, "u1", now=T0)]
+    assert "recognition" not in types
     assert len(set(types)) > 1, f"queue was not interleaved: {types}"
+
+
+def test_a_cloze_names_the_word_as_it_appears_in_the_sentence(tmp_path):
+    conn = _conn(tmp_path)
+    wid = _word(conn, "abandon", wid="w-a", example="They abandoned the plan.")
+    _mature(conn, wid, stability=3)
+    card = review.build_queue(conn, "u1", now=T0)[0]
+    assert card["card_type"] == "cloze"
+    assert card["cloze_answer"] == "abandoned"
+
+
+def test_a_forgotten_card_comes_back_in_the_same_sitting(tmp_path):
+    conn = _conn(tmp_path)
+    wid = _word(conn)
+    again = review.answer_card(conn, "u1", wid, AGAIN, now=T0)
+    assert again["requeue"] is not None and again["requeue"]["vocab_word_id"] == wid
+
+    other = _word(conn, "stark", wid="w-stark")
+    good = review.answer_card(conn, "u1", other, GOOD, now=T0)
+    assert good["state"] == "review" and good["requeue"] is None
+
+
+def test_undo_puts_the_card_back_exactly_as_it_was(tmp_path):
+    conn = _conn(tmp_path)
+    wid = _word(conn)
+    review.answer_card(conn, "u1", wid, GOOD, now=T0)
+    before = dict(conn.execute("SELECT * FROM review_cards WHERE vocab_word_id = ?", (wid,)).fetchone())
+
+    review.answer_card(conn, "u1", wid, AGAIN, now=T0 + timedelta(days=3))
+    card = review.undo_last(conn, "u1", wid)
+
+    after = dict(conn.execute("SELECT * FROM review_cards WHERE vocab_word_id = ?", (wid,)).fetchone())
+    assert after == before
+    assert card["vocab_word_id"] == wid
+    logs = conn.execute("SELECT COUNT(*) AS n FROM review_logs WHERE vocab_word_id = ?", (wid,)).fetchone()["n"]
+    assert logs == 1
+
+
+def test_undo_never_reaches_past_a_conversation(tmp_path):
+    """A later conversation outcome is real evidence, not a mis-click."""
+    conn = _conn(tmp_path)
+    wid = _word(conn)
+    review.answer_card(conn, "u1", wid, GOOD, now=T0)
+    conn.execute(
+        "INSERT INTO conversation_sessions (id, user_id, scenario, channel, target_word_ids, started_at) "
+        "VALUES ('s1', 'u1', 'free', 'text', '[]', '2026-01-01T00:00:00Z')"
+    )
+    review.apply_conversation_outcomes(conn, "u1", "s1", [(wid, "spontaneous")], now=T0 + timedelta(days=2))
+    with pytest.raises(LookupError):
+        review.undo_last(conn, "u1", wid)
+
+
+def test_new_cards_follow_the_per_day_setting_across_sittings(tmp_path):
+    """The setting was ignored: each sitting introduced its own batch, so a
+    second sitting doubled the day's new words."""
+    conn = _conn(tmp_path)
+    conn.execute("UPDATE user_settings SET new_cards_per_day = 3 WHERE user_id = 'u1'")
+    for i in range(10):
+        _word(conn, f"word{i}", wid=f"w{i}")
+
+    first = review.build_queue(conn, "u1", now=T0)
+    assert len(first) == 3
+    for c in first:
+        review.answer_card(conn, "u1", c["vocab_word_id"], GOOD, now=T0)
+    assert [c for c in review.build_queue(conn, "u1", now=T0 + timedelta(minutes=5)) if c["state"] == "new"] == []
+    assert review.stats(conn, "u1", now=T0 + timedelta(minutes=5))["new_available"] == 0
+
+    tomorrow = T0 + timedelta(days=1, hours=1)
+    assert len([c for c in review.build_queue(conn, "u1", now=tomorrow) if c["state"] == "new"]) == 3
+
+
+def test_intervals_are_spread_but_stay_close_and_repeatable():
+    assert fsrs.fuzzed_days(2, seed=7) == 2
+    spread = {fsrs.fuzzed_days(40, seed=n) for n in range(50)}
+    assert len(spread) > 10
+    assert all(38 <= d <= 42 for d in spread)
+    assert fsrs.fuzzed_days(40, seed=123) == fsrs.fuzzed_days(40, seed=123)
+
+
+def test_a_card_shows_the_meaning_its_sentence_was_saved_under(tmp_path):
+    conn = _conn(tmp_path)
+    wid = _word(conn, "student", wid="w-s", definition="A person who is studying.")
+    conn.execute(
+        "INSERT INTO vocab_senses (id, vocab_word_id, pos, definition, example, sense_key, created_at) VALUES "
+        "('s1', 'w-s', 'noun', 'A person who is studying.', NULL, 'a person who is studying', '2026-01-01T00:00:00Z'),"
+        "('s2', 'w-s', 'noun', 'A row in the students table.', NULL, 'a row in the students table', '2026-01-02T00:00:00Z')"
+    )
+    conn.execute(
+        "INSERT INTO vocab_contexts (id, vocab_word_id, kind, snippet, source_label, sense_id, created_at) "
+        "VALUES ('c1', 'w-s', 'page', 'Each student has an id.', 'SQL · p.2', 's2', '2026-01-02T00:00:00Z')"
+    )
+    conn.commit()
+    card = review.build_queue(conn, "u1", now=T0)[0]
+    assert card["definition"] == "A row in the students table."
+    assert card["other_senses"] == ["A person who is studying."]
 
 
 def test_a_cloze_is_only_offered_when_the_word_is_really_in_the_sentence(tmp_path):
@@ -538,3 +655,28 @@ def test_a_clip_whose_film_was_removed_reports_no_media_item(tmp_path):
     card = _card(conn, wid)
     assert card["media_item_id"] is None
     assert card["context_snippet"] == "From a film since removed."
+
+
+def test_the_forecast_splits_days_at_the_learners_midnight(tmp_path, monkeypatch):
+    """At UTC+6, a card due at 03:00 local time is due "today" — UTC days put
+    it into yesterday's bucket, i.e. out of the forecast entirely."""
+    import time
+
+    monkeypatch.setenv("TZ", "Asia/Dhaka")
+    time.tzset()
+    try:
+        conn = _conn(tmp_path)
+        wid = _word(conn)
+        # 01:00 local on 2 Jan is 19:00 UTC on 1 Jan; the card falls due at
+        # 03:00 local, 21:00 UTC — the same local day.
+        now = datetime(2026, 1, 1, 19, 0, tzinfo=timezone.utc)
+        conn.execute(
+            "UPDATE review_cards SET state = 'review', stability = 5, reps = 1, due = ? WHERE vocab_word_id = ?",
+            ("2026-01-01T21:00:00Z", wid),
+        )
+        conn.commit()
+        forecast = review.stats(conn, "u1", now=now)["forecast"]
+        assert forecast[0] == {"date": "2026-01-02", "count": 1}
+    finally:
+        monkeypatch.delenv("TZ")
+        time.tzset()

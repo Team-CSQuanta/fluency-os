@@ -19,13 +19,21 @@ class _Turn(dict):
     close enough for the pure metric functions, which only ever index."""
 
 
-def _turn(speaker, text, created_at="2026-01-01T00:00:00Z", stt_confidence=None, speech_seconds=None):
+def _turn(
+    speaker,
+    text,
+    created_at="2026-01-01T00:00:00Z",
+    stt_confidence=None,
+    speech_seconds=None,
+    response_delay_seconds=None,
+):
     return _Turn(
         speaker=speaker,
         text=text,
         created_at=created_at,
         stt_confidence=stt_confidence,
         speech_seconds=speech_seconds,
+        response_delay_seconds=response_delay_seconds,
         turn_index=0,
     )
 
@@ -90,16 +98,42 @@ def test_type_token_ratio_counts_distinct_lemmas():
     assert compute_metrics(turns, "B1").type_token_ratio == pytest.approx(0.6)
 
 
-def test_response_delay_measures_the_learner_not_the_model():
-    """Timed from the AI finishing to the learner replying. The old metric
-    averaged every gap, so it was dominated by generation latency."""
+def test_response_delay_is_what_the_client_measured_not_the_gap_between_turns():
+    """Turn timestamps include the AI speaking, the learner speaking,
+    transcription and generation; on a real session they read 23 s where the
+    learner had started within a few. Only the measured delay counts."""
     turns = [
         _turn("ai", "how was your week?", created_at="2026-01-01T00:00:00Z"),
-        _turn("user", "good thanks", created_at="2026-01-01T00:00:04Z"),
-        # A long gap that is the model thinking, not the learner pausing.
-        _turn("ai", "tell me more", created_at="2026-01-01T00:00:30Z"),
+        _turn("user", "good thanks", created_at="2026-01-01T00:00:30Z", response_delay_seconds=1.5),
+        _turn("ai", "tell me more", created_at="2026-01-01T00:00:31Z"),
+        _turn("user", "well I went hiking", created_at="2026-01-01T00:01:10Z", response_delay_seconds=2.5),
     ]
-    assert compute_metrics(turns, "B1").avg_response_delay_seconds == pytest.approx(4.0)
+    assert compute_metrics(turns, "B1").avg_response_delay_seconds == pytest.approx(2.0)
+
+
+def test_an_unmeasured_delay_is_reported_as_not_measured_not_guessed():
+    turns = [
+        _turn("ai", "hi", created_at="2026-01-01T00:00:00Z"),
+        _turn("user", "hello", created_at="2026-01-01T00:00:25Z"),
+    ]
+    assert compute_metrics(turns, "B1").avg_response_delay_seconds is None
+
+
+def test_a_learner_who_walked_away_does_not_count_as_hesitating():
+    turns = [
+        _turn("user", "yes", response_delay_seconds=2.0),
+        _turn("user", "back now", response_delay_seconds=900.0),
+    ]
+    assert compute_metrics(turns, "B1").avg_response_delay_seconds == pytest.approx(2.0)
+
+
+def test_like_is_a_filler_only_when_it_is_set_off():
+    """"I like coffee" is not hesitation; "it was, like, huge" is."""
+    assert conversation_report.count_fillers("I like coffee and I would like tea") == 0
+    assert conversation_report.count_fillers("It was, like, huge.") == 1
+    assert conversation_report.count_fillers("You know, I mean, it was fine, sort of.") == 3
+    assert conversation_report.count_fillers("I actually went there") == 0
+    assert conversation_report.count_fillers("Um, uh, hmm") == 3
 
 
 def test_words_per_minute_uses_measured_speech_time():

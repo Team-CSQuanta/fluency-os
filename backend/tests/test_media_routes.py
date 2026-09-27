@@ -377,6 +377,21 @@ def test_player_preferences_work_without_an_onboarding_settings_row(client, auth
     assert client.get(f"/media/prefs/player?user_id={user_id}", headers=auth_headers).json()["blur_subs"] is True
 
 
+def test_auto_pause_and_loop_are_never_on_together(client, auth_headers):
+    """Both decide what happens at the end of a line — stop, or go back —
+    so turning one on turns the other off."""
+    user_id = _user(client, auth_headers)
+    url = f"/media/prefs/player?user_id={user_id}"
+
+    prefs = client.put(url, headers=auth_headers, json={"loop_cue": True}).json()
+    assert (prefs["loop_cue"], prefs["auto_pause"]) == (True, False)
+    prefs = client.put(url, headers=auth_headers, json={"auto_pause": True}).json()
+    assert (prefs["loop_cue"], prefs["auto_pause"]) == (False, True)
+    # Turning one off leaves the other alone.
+    prefs = client.put(url, headers=auth_headers, json={"loop_cue": False}).json()
+    assert (prefs["loop_cue"], prefs["auto_pause"]) == (False, True)
+
+
 def test_a_moved_source_file_is_reported_as_gone_not_as_a_broken_player(client, auth_headers, video):
     user_id, media_id = _import(client, auth_headers, video)
     video.unlink()

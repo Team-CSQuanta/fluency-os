@@ -9,14 +9,17 @@ import { sentenceAround, wordAt } from '@/features/reader/pageSentence';
 import {
   coveredBy,
   createMeasurer,
+  flowIntoLines,
   mergeRects,
   placeWords,
   stretchFor,
 } from '@/features/reader/pageTextGeometry';
+import { LEVEL_MODES } from '@/features/reader/readerConstants';
 import { reportError } from '@/store/errorStore';
 import { useReaderStore } from '@/store/readerStore';
 import type {
   HighlightRect,
+  LevelMode,
   HighlightStyle,
   PageHighlightOut,
   PageLabelOut,
@@ -57,6 +60,7 @@ export function PageTextLayer({
   const labels = useReaderStore((s) => s.labelsByPage[page] ?? NO_LABELS);
   const simplifySelection = useReaderStore((s) => s.simplifySelection);
   const removePageLabel = useReaderStore((s) => s.removePageLabel);
+  const relevelLabel = useReaderStore((s) => s.relevelLabel);
   const setPrefs = useReaderStore((s) => s.setPrefs);
   const setPageSelection = useReaderStore((s) => s.setPageSelection);
   const find = useReaderStore((s) => s.find);
@@ -262,6 +266,8 @@ export function PageTextLayer({
     if (!current || simplifying) return;
     setSimplifying(true);
     setNote(null);
+    // The answer also lands in the Simpler tab, where it reads at full size.
+    setPrefs({ panel_open: true, panel_tab: 'simpler' });
     try {
       const said = await simplifySelection({ page, rects: current.rects, text: current.text });
       setSelection(null);
@@ -282,7 +288,7 @@ export function PageTextLayer({
     setSelection(null);
     // Open the panel on the dictionary tab — the answer arrives where the
     // reader's lookups already live rather than in a second kind of popup.
-    setPrefs({ panel_open: true, panel_tab: 'study' });
+    setPrefs({ panel_open: true, panel_tab: 'word' });
     /* The word goes off with the sentence it sits in: that is what the AI
      * explains and what the vocabulary entry keeps. */
     const word = current.text.split(/\s+/)[0];
@@ -443,7 +449,13 @@ export function PageTextLayer({
       {/* Plainer words, over the words they replace. */}
       {layer &&
         labels.map((l) => (
-          <SimplerWords key={l.id} label={l} layer={layer} onRemove={() => void removePageLabel(l.id)} />
+          <SimplerWords
+            key={l.id}
+            label={l}
+            layer={layer}
+            onRemove={() => void removePageLabel(l.id)}
+            onRelevel={(mode) => relevelLabel(l, mode)}
+          />
         ))}
 
       {/* When the engine had something to say — no model configured, or it
@@ -571,72 +583,264 @@ function MarkMenu({
   );
 }
 
+/** How big the plainer words are set, against the height of the line they
+ * cover. The band runs from ascender to descender, so the type is a little
+ * less than it; and a sans face looks larger than a book's serif at the same
+ * size, so a little less again — which lands on the book's own size. */
+const LABEL_TYPE = 0.75;
+
+/** The rewritten passage's own colour: a hue no highlight uses, so a line in
+ * plainer words can never be mistaken for one the reader marked. */
+const SIMPLER_TINT = '#dff4ef';
+const SIMPLER_INK = '#138a75';
+
 /** A passage of the page, replaced in place by plainer words.
  *
- * Drawn over the original with the page's colour behind it, sized from the
- * original's line height, and free to grow downward since plainer words run
- * longer. The original is one click away and never thrown away.
+ * Line by line: each printed line the selection touched gets its own cover,
+ * exactly over the words that were selected on it, and the plainer version
+ * is poured into those lines. Nothing outside the selection is hidden — the
+ * rest of a first or last line stays readable. Plainer words often run
+ * longer; what does not fit waits behind "more" on the last line and opens
+ * below it only when asked, rather than covering the paragraph that follows.
+ * The original is one click away and never thrown away.
  */
 function SimplerWords({
   label,
   layer,
   onRemove,
+  onRelevel,
 }: {
   label: PageLabelOut;
   layer: { width: number; height: number };
   onRemove: () => void;
+  onRelevel: (mode: LevelMode) => Promise<void>;
 }) {
   const [showingOriginal, setShowingOriginal] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  /* Clicking the passage opens its menu: the four levels, so a passage can
+   * be rewritten at another one where it sits, without selecting it again. */
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [rewriting, setRewriting] = useState<LevelMode | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const away = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', away);
+    return () => document.removeEventListener('mousedown', away);
+  }, [menuOpen]);
+  const pick = async (mode: LevelMode) => {
+    if (rewriting) return;
+    setRewriting(mode);
+    setShowingOriginal(false);
+    try {
+      await onRelevel(mode);
+    } finally {
+      setRewriting(null);
+      setMenuOpen(false);
+    }
+  };
+  // Measured in the font the words are drawn in, so re-measured once the
+  // web font has actually arrived.
+  const [fontsReady, setFontsReady] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void document.fonts?.ready.then(() => live && setFontsReady(true));
+    return () => {
+      live = false;
+    };
+  }, []);
 
-  const left = Math.min(...label.rects.map((r) => r.x));
-  const right = Math.max(...label.rects.map((r) => r.x + r.w));
-  const top = Math.min(...label.rects.map((r) => r.y));
-  const bottom = Math.max(...label.rects.map((r) => r.y + r.h));
-  // The tallest line in the selection is a good proxy for the type size.
-  const lineHeight = Math.max(...label.rects.map((r) => r.h));
+  const lines = useMemo(
+    () => [...label.rects].sort((a, b) => a.y - b.y || a.x - b.x),
+    [label.rects],
+  );
+  // Each line in the size of the type it covers, so a lead paragraph and the
+  // body text after it both read at the book's own size. Lines of one size
+  // share the middle of their heights, so a paragraph does not jitter by a
+  // fraction of a point from line to line.
+  const sizes = useMemo(
+    () =>
+      lines.map((r) => {
+        const kin = lines.map((o) => o.h).filter((h) => Math.abs(h - r.h) <= r.h * 0.12);
+        kin.sort((a, b) => a - b);
+        return kin[Math.floor((kin.length - 1) / 2)] * LABEL_TYPE;
+      }),
+    [lines],
+  );
+  const fontSize = sizes[0] ?? 0;
+  const lastSize = sizes[sizes.length - 1] ?? 0;
+  // Inside the cover, before the words; and how far the cover reaches past
+  // the selected ink, kept small so it never eats a neighbouring word.
+  const pad = fontSize * 0.3;
+  const bleed = fontSize * 0.08;
+
+  const flow = useMemo(() => {
+    const family = getComputedStyle(document.documentElement).getPropertyValue('--sans').trim() || 'sans-serif';
+    const measure = createMeasurer(family);
+    const fits = (t: string, line: number) => measure(t, sizes[line]);
+    // A little slack: the canvas and the DOM round differently, and a line
+    // that overflows by a pixel would clip its last word.
+    const widths = lines.map((r) => (r.w + bleed * 2 - pad * 2) * 0.96);
+    const first = flowIntoLines(label.simple_text, widths, fits);
+    if (!first.rest) return first;
+    // It overflows, so the last line gives up room for the toggle.
+    widths[widths.length - 1] -= measure('… more', lastSize * 0.8) + pad * 2;
+    return flowIntoLines(label.simple_text, widths, fits);
+    // fontsReady: re-measure in the real font once it has loaded.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [label.simple_text, lines, sizes, lastSize, pad, bleed, fontsReady]);
+
+  const pct = (v: number, of: number) => `${(v / of) * 100}%`;
+  const cqw = (v: number) => `${(v / layer.width) * 100}cqw`;
+  const last = lines[lines.length - 1];
+  const left = Math.min(...lines.map((r) => r.x));
+  const right = Math.max(...lines.map((r) => r.x + r.w));
+  const first = lines[0];
+  if (!first || !last) return null;
 
   return (
-    <div
-      className="absolute"
-      style={{
-        left: `${(left / layer.width) * 100}%`,
-        top: `${(top / layer.height) * 100}%`,
-        width: `${((right - left) / layer.width) * 100}%`,
-        minHeight: `${((bottom - top) / layer.height) * 100}%`,
-        // Above the marks and the picture, below the toolbar.
-        zIndex: 20,
-      }}
-    >
+    // Hovering any line shows the controls; the wrapper itself lets clicks
+    // through to the page around the lines.
+    <div ref={rootRef} className="group pointer-events-none absolute inset-0" style={{ zIndex: 20 }}>
+      {/* The original, showing through, still marked as the passage that
+          has a simpler version — otherwise "simpler ×" floats over the page
+          with nothing to say which words it belongs to. A tint rather than
+          a cover, and no hit area, so the printed words stay selectable. */}
+      {showingOriginal &&
+        lines.map((r, i) => (
+          <div
+            key={i}
+            className="absolute"
+            style={{
+              left: pct(r.x - bleed, layer.width),
+              top: pct(r.y, layer.height),
+              width: pct(r.w + bleed * 2, layer.width),
+              height: pct(r.h, layer.height),
+              background: `${SIMPLER_INK}14`,
+              boxShadow: `inset 3px 0 0 ${SIMPLER_INK}`,
+              borderBottom: `1px dashed ${SIMPLER_INK}`,
+            }}
+          />
+        ))}
+
+      {!showingOriginal &&
+        lines.map((r, i) => {
+          const isLast = i === lines.length - 1;
+          return (
+            <div
+              key={i}
+              onClick={() => setMenuOpen((v) => !v)}
+              title="Click to rewrite this at another level"
+              className="pointer-events-auto absolute flex cursor-pointer items-center overflow-hidden whitespace-nowrap"
+              style={{
+                left: pct(r.x - bleed, layer.width),
+                top: pct(r.y, layer.height),
+                width: pct(r.w + bleed * 2, layer.width),
+                height: pct(r.h, layer.height),
+                paddingLeft: `${(pad / layer.width) * 100}cqw`,
+                background: SIMPLER_TINT,
+                // A bar at the start and a dashed rule under the words: read
+                // together, "this line was rewritten", not "this was marked".
+                boxShadow: `inset 3px 0 0 ${SIMPLER_INK}`,
+                borderBottom: `1px dashed ${SIMPLER_INK}`,
+                fontSize: cqw(sizes[i]),
+                lineHeight: 1,
+                color: '#171a19',
+              }}
+            >
+              <span className="font-sans">{flow.lines[i]}</span>
+              {isLast && flow.rest && (
+                <button
+                  onClick={(e) => {
+                    // The toggle, not a click on the passage.
+                    e.stopPropagation();
+                    setExpanded((v) => !v);
+                  }}
+                  title={expanded ? 'hide the rest' : 'show the rest of the simpler version'}
+                  className="ml-auto pl-[0.4em] pr-[0.3em] font-mono text-[0.8em] font-semibold hover:underline"
+                  style={{ color: SIMPLER_INK }}
+                >
+                  {expanded ? 'less' : '… more'}
+                </button>
+              )}
+            </div>
+          );
+        })}
+
+      {/* The overflow, opened on request, below the passage rather than over
+          the lines that follow it for good. */}
+      {!showingOriginal && expanded && flow.rest && (
+        <div
+          className="pointer-events-auto absolute rounded-b-[3px] font-sans"
+          style={{
+            left: pct(left - bleed, layer.width),
+            top: pct(last.y + last.h, layer.height),
+            width: pct(right - left + bleed * 2, layer.width),
+            padding: `0.25em ${(pad / layer.width) * 100}cqw 0.35em`,
+            background: SIMPLER_TINT,
+            boxShadow: `inset 3px 0 0 ${SIMPLER_INK}, 0 3px 8px rgba(0,0,0,.16)`,
+            fontSize: cqw(lastSize),
+            lineHeight: 1.3,
+            color: '#171a19',
+          }}
+        >
+          {flow.rest}
+        </div>
+      )}
+
+      {/* The controls, over the first line's right end: always there while
+          the original shows, since nothing else says the passage was
+          changed; otherwise on hover, so they cover no words. */}
       <div
-        className="rounded-[3px] border-l-[3px] px-[4px] py-[1px]"
+        className={`pointer-events-auto absolute flex -translate-y-full gap-[6px] whitespace-nowrap rounded-t-[3px] px-[5px] py-[1px] shadow-sm transition-opacity ${
+          showingOriginal || menuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'
+        }`}
         style={{
-          background: '#fff',
-          borderLeftColor: 'var(--acc)',
-          boxShadow: '0 1px 4px rgba(0,0,0,.14)',
-          // Matched to the type it covers rather than fixed, using the
-          // rendered page's own scale.
-          fontSize: `${(lineHeight / layer.width) * 100 * 0.62}cqw`,
-          lineHeight: 1.28,
-          color: '#171a19',
+          right: pct(layer.width - (first.x + first.w + bleed), layer.width),
+          top: pct(first.y, layer.height),
+          background: SIMPLER_TINT,
+          boxShadow: `0 0 0 1px ${SIMPLER_INK}33`,
+          fontSize: `max(9px, ${cqw(fontSize * 0.8)})`,
         }}
       >
-        <span className="font-sans">{showingOriginal ? label.original_text : label.simple_text}</span>
-        <span className="ml-[6px] whitespace-nowrap">
-          <button
-            onClick={() => setShowingOriginal((v) => !v)}
-            title={showingOriginal ? 'back to the simpler words' : 'show what was actually printed'}
-            className="font-mono text-[0.72em] text-[#6f51a6] hover:underline"
-          >
-            {showingOriginal ? 'simpler' : 'original'}
-          </button>
-          <button
-            onClick={onRemove}
-            title="remove this and leave the page as printed"
-            className="ml-[6px] font-mono text-[0.72em] text-[#9a6b6b] hover:underline"
-          >
-            ✕
-          </button>
-        </span>
+        {menuOpen &&
+          LEVEL_MODES.map((m) => {
+            const current = label.mode === m.key;
+            return (
+              <button
+                key={m.key}
+                onClick={() => void pick(m.key)}
+                disabled={rewriting !== null}
+                title={`${m.label} (${m.tag})`}
+                className="rounded-[3px] px-[4px] font-sans hover:underline disabled:cursor-default"
+                style={{
+                  color: SIMPLER_INK,
+                  fontWeight: current ? 700 : 400,
+                  background: current ? '#ffffff' : 'transparent',
+                }}
+              >
+                {rewriting === m.key ? 'writing…' : m.key}
+              </button>
+            );
+          })}
+        {menuOpen && <span className="w-px self-stretch" style={{ background: `${SIMPLER_INK}55` }} />}
+        <button
+          onClick={() => setShowingOriginal((v) => !v)}
+          title={showingOriginal ? 'back to the simpler words' : 'show what was actually printed'}
+          className="font-mono hover:underline"
+          style={{ color: SIMPLER_INK }}
+        >
+          {showingOriginal ? 'simpler' : 'original'}
+        </button>
+        <button
+          onClick={onRemove}
+          title="remove this and leave the page as printed"
+          className="font-mono text-[#9a6b6b] hover:underline"
+        >
+          ✕
+        </button>
       </div>
     </div>
   );

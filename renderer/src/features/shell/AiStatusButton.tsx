@@ -36,6 +36,15 @@ export function AiStatusButton() {
     void fetchLlmProvider();
   }, [currentUser, fetchReadiness, fetchStatus, fetchLlmProvider, screen]);
 
+  // And every so often while the app is open: a cloud AI becomes "checked"
+  // the moment any feature's request succeeds, and "off"/"failed" the moment
+  // one is refused — neither of which is a screen change. A local GET.
+  useEffect(() => {
+    if (!currentUser) return;
+    const id = window.setInterval(() => void fetchStatus().catch(() => {}), 15000);
+    return () => window.clearInterval(id);
+  }, [currentUser, fetchStatus]);
+
   const runsLocally = llmProvider === null || llmProvider.provider === 'local';
   // For local this means the model file is on disk; for cloud, that an API key
   // is saved. Neither is the same as the engine being usable — see `ready`.
@@ -43,6 +52,8 @@ export function AiStatusButton() {
   // Local: actually resident in memory. Cloud: a real request has actually
   // succeeded — a saved key that's revoked or out of quota is not ready.
   const ready = status?.llm === 'ready';
+  // Switched off on purpose, as opposed to never checked.
+  const cloudOff = !runsLocally && Boolean(status?.llm_off);
   const engineLabel = readiness?.llm_model_label ?? '—';
 
   // Anything actually occupying RAM right now. A cloud LLM holds none, but the
@@ -50,7 +61,10 @@ export function AiStatusButton() {
   const loadedInMemory =
     (runsLocally && status?.llm === 'ready') || status?.stt === 'ready' || status?.tts === 'ready';
 
-  const colour = ready ? GREEN : launching ? AMBER : RED;
+  // On, with a key, but nothing has answered since the backend started —
+  // not the same as off, and must not look like it: requests will be sent.
+  const cloudUnchecked = !runsLocally && configured && !ready && !cloudOff;
+  const colour = ready ? GREEN : launching || cloudUnchecked ? AMBER : RED;
   const label = !configured
     ? runsLocally
       ? 'AI · not set up'
@@ -59,7 +73,9 @@ export function AiStatusButton() {
       ? 'AI · starting…'
       : ready
         ? `AI · ${runsLocally ? 'local' : 'cloud'}`
-        : 'AI · off';
+        : cloudUnchecked
+          ? 'AI · cloud (unchecked)'
+          : 'AI · off';
 
   const title = !configured
     ? runsLocally
@@ -72,12 +88,12 @@ export function AiStatusButton() {
       : ready
         ? runsLocally
           ? `${engineLabel} — loaded and running on this device. Click to unload and free the memory.`
-          : loadedInMemory
-            ? `${engineLabel} — key checked and answering. Click to free the local speech models.`
-            : `${engineLabel} — key checked and answering; requests leave this device`
+          : `${engineLabel} — key checked and answering; requests leave this device. Click to switch it off.`
         : runsLocally
           ? 'AI is not loaded — click to start it'
-          : 'Cloud AI is unverified or last request failed — click to check the key';
+          : cloudOff
+            ? 'Cloud AI is switched off — nothing is sent. Click to turn it on.'
+            : 'Cloud AI is on, but nothing has answered yet or the last request failed. AI features will still send requests. Click to check the key.';
 
   const handleClick = () => {
     if (!configured) {
@@ -88,7 +104,9 @@ export function AiStatusButton() {
     // Toggle: the button that loads the models is also the one that hands the
     // memory back, which on a machine short of RAM is worth having without
     // quitting the app. Reversible at the cost of another load, so no prompt.
-    if (loadedInMemory) {
+    // For a cloud AI that is on, this is the off switch — and it frees the
+    // local speech models along the way.
+    if (loadedInMemory || (ready && !runsLocally)) {
       void unloadAi().catch(() => {});
       return;
     }

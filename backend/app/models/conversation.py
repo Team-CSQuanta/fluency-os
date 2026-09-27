@@ -2,7 +2,9 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-ScenarioKey = Literal["free", "coffee", "job", "debate"]
+# A key from services/scenarios.py, or "custom" for one the learner wrote.
+# A plain string: the catalog grows, and the service checks the key.
+ScenarioKey = str
 Channel = Literal["voice", "text"]
 Speaker = Literal["user", "ai"]
 UsageOutcome = Literal["spontaneous", "prompted", "incorrect", "avoided"]
@@ -15,6 +17,59 @@ class ConversationSessionCreate(BaseModel):
     # "Practise this again": reuse a previous session's target words instead of
     # selecting a fresh set. Omitted for a normal new conversation.
     seed_word_ids: list[str] | None = None
+    #: With scenario "custom": which of the learner's own scenes to run.
+    custom_scenario_id: str | None = None
+    #: Run the same scene as this earlier session (overrides `scenario`).
+    repeat_of: str | None = None
+
+
+class ScenarioOut(BaseModel):
+    key: str
+    label: str
+    summary: str
+    minutes: int
+    level: str
+    persona_name: str
+    persona_role: str
+    learner_role: str
+
+
+class ScenarioCategoryOut(BaseModel):
+    key: str
+    label: str
+    description: str
+    scenarios: list[ScenarioOut]
+
+
+class CustomScenarioIn(BaseModel):
+    user_id: str
+    title: str
+    #: Who the AI plays.
+    ai_role: str
+    #: Where the scene is and what is going on.
+    setting: str
+    ai_name: str | None = None
+    personality: str | None = None
+    #: Who the learner is in the scene.
+    learner_role: str | None = None
+    goal: str | None = None
+
+
+class CustomScenarioOut(BaseModel):
+    id: str
+    title: str
+    ai_name: str | None
+    ai_role: str
+    personality: str | None
+    setting: str
+    learner_role: str | None
+    goal: str | None
+    created_at: str
+
+
+class ScenarioCatalogOut(BaseModel):
+    categories: list[ScenarioCategoryOut]
+    custom: list[CustomScenarioOut]
 
 
 class ConversationTurnOut(BaseModel):
@@ -41,12 +96,20 @@ class TargetWordOut(BaseModel):
     id: str
     word: str
     used_outcome: UsageOutcome | None  # None until end_session classifies it
+    #: Why it was picked: "due", "new", "retry", "not said yet", "stretch",
+    #: "fits scene", "again" (practise-again), joined with " · ".
+    reason: str | None = None
 
 
 class ConversationSessionOut(BaseModel):
     id: str
     user_id: str
     scenario: ScenarioKey
+    #: What to call it — the catalog's name, or the title the learner gave.
+    scenario_label: str = ""
+    #: The character the learner talks to in this scene.
+    persona_name: str = "Juno"
+    persona_role: str = ""
     channel: Channel
     target_words: list[TargetWordOut]
     started_at: str
@@ -92,6 +155,8 @@ class ConversationReportOut(BaseModel):
     report_version: int = 1
     summary: str
     turn_count: int
+    #: The learner's turns only; None in reports written before it was counted.
+    learner_turns: int | None = None
     routing: list[ReportRoutingRowOut] = []
     errors: list[ReportErrorOut] = []
 
@@ -115,3 +180,5 @@ class EngineStatusOut(BaseModel):
     llm: str
     stt: str
     tts: str
+    #: The cloud AI was switched off from the AI button: nothing is sent.
+    llm_off: bool = False

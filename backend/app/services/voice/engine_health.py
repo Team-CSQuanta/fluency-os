@@ -12,6 +12,9 @@ a broken key, and must not flip the engine to unusable.
 """
 
 import threading
+from pathlib import Path
+
+from app.config import settings
 
 _lock = threading.Lock()
 # (provider, model) -> last transport outcome. Absent means never attempted,
@@ -37,6 +40,33 @@ def is_verified(provider: str, model: str) -> bool:
 def last_error(provider: str, model: str) -> str | None:
     with _lock:
         return _outcomes.get((provider, model))
+
+
+# Switched off from the AI button. Checked by every cloud request before it
+# leaves, so "off" means nothing is sent — not merely that the badge is grey.
+# Kept as a file beside the database, so it survives a restart: someone who
+# switched the cloud AI off has not agreed to it coming back on by itself.
+OFF_MESSAGE = "The cloud AI is switched off. Turn it on from the AI button in the top bar."
+
+
+def _off_flag() -> Path:
+    return Path(settings.db_path).resolve().parent / "cloud-ai-off"
+
+
+def switch_cloud_off() -> None:
+    with _lock:
+        _off_flag().touch()
+        # Whatever was proven before it went off is not claimed after.
+        _outcomes.clear()
+
+
+def switch_cloud_on() -> None:
+    with _lock:
+        _off_flag().unlink(missing_ok=True)
+
+
+def cloud_is_off() -> bool:
+    return _off_flag().exists()
 
 
 def forget_all() -> None:

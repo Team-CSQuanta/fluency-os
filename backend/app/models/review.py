@@ -9,6 +9,9 @@ class ReviewCardOut(BaseModel):
     pos: str | None = None
     cefr: str | None = None
     definition: str | None = None
+    #: The word's other saved meanings, when it has more than one. The card
+    #: is about `definition` — the meaning its sentence was saved under.
+    other_senses: list[str] = []
     simpler: str | None = None
     example: str | None = None
     mnemonic: str | None = None
@@ -27,6 +30,8 @@ class ReviewCardOut(BaseModel):
     # Cloze cards only: the sentence either side of the blank.
     cloze_before: str | None = None
     cloze_after: str | None = None
+    #: The word as it stands in that sentence — what to type into the gap.
+    cloze_answer: str | None = None
 
     state: str
     stability_days: float
@@ -61,6 +66,9 @@ class RateCardOut(BaseModel):
     mastery_label: str
     mastery_reason: str
     interval_label: str
+    #: Still in short steps, so it comes back in this sitting — the card as
+    #: it now stands. None once it has a date.
+    requeue: ReviewCardOut | None = None
 
 
 class ForecastDay(BaseModel):
@@ -74,10 +82,18 @@ class ReviewStatsOut(BaseModel):
     total_cards: int
     suspended: int
     reviewed_today: int
+    #: How many never-seen cards exist, of which `new_available` can still be
+    #: introduced today under `new_per_day`.
+    new_total: int = 0
+    new_per_day: int = 15
     target_retention: float
     forecast: list[ForecastDay]
     # Cards at each mastery level 0-5 (spec §6.3).
     mastery_counts: list[int]
+
+
+class UndoIn(BaseModel):
+    user_id: str
 
 
 class SuspendIn(BaseModel):

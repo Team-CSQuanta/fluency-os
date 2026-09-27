@@ -111,7 +111,7 @@ export function WatchingPanel() {
 
           <Section
             title="Playback aids"
-            note="Both work off the subtitle line under the playhead, so both need a subtitle track."
+            note="Both work off the subtitle line under the playhead, so both need a subtitle track. One at a time — turning one on turns the other off."
           >
             <Row
               label="Pause at the end of each line"

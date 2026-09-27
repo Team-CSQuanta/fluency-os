@@ -614,7 +614,7 @@ def save_word_from_video(
     item = _require_item(conn, media_id)
     settings_row = _player_prefs_row(conn, payload.user_id)
 
-    word_row, already_saved = vocabulary.save_manual_word(
+    saved = vocabulary.save_manual_word(
         conn,
         user_id=payload.user_id,
         word=payload.word,
@@ -630,7 +630,11 @@ def save_word_from_video(
         ai_mnemonic=payload.ai_mnemonic,
         ai_usage_note=payload.ai_usage_note,
         ai_sense_definition=payload.ai_sense_definition,
+        # A save with no definition (the dictionary had nothing) is a moment,
+        # not a meaning: the placeholder above must not become one.
+        record_sense=bool(payload.definition.strip()),
     )
+    word_row, already_saved = saved
 
     context_id = vocabulary.add_clip_context(
         conn,
@@ -643,6 +647,7 @@ def save_word_from_video(
         # Travels with the moment so it can find this file again if the
         # library entry is ever removed and the film re-imported.
         media_file_hash=item["file_hash"],
+        sense_id=saved.sense_id,
     )
 
     clip_row = None
@@ -687,6 +692,7 @@ def save_word_from_video(
         word=word_row["word"],
         already_saved=already_saved,
         context_added=context_id is not None,
+        sense_added=saved.sense_added,
         clip=_clip_out(clip_row) if clip_row is not None else None,
     )
 
@@ -870,6 +876,13 @@ def update_player_prefs(
 ) -> PlayerPrefsOut:
     _player_prefs_row(conn, user_id)
     fields = payload.model_dump(exclude_unset=True)
+    # Auto-pause and loop are two answers to "what happens at the end of a
+    # line" — stop, or go back — so at most one is on. Turning either on
+    # turns the other off, whichever screen asked.
+    if fields.get("auto_pause") is True:
+        fields["loop_cue"] = False
+    elif fields.get("loop_cue") is True:
+        fields["auto_pause"] = False
 
     height = fields.pop("clip_height", None)
     store_files = fields.pop("clip_store_files", None)

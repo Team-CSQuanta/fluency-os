@@ -439,7 +439,7 @@ def test_conversation_engine_status_route(client, auth_headers):
     res = client.get("/conversation/engine-status", headers=auth_headers, params={"user_id": user_id})
     assert res.status_code == 200
     body = res.json()
-    assert set(body.keys()) == {"llm", "stt", "tts"}
+    assert set(body.keys()) == {"llm", "stt", "tts", "llm_off"}
 
 
 def test_full_session_lifecycle_via_http(client, auth_headers, monkeypatch):
@@ -910,7 +910,7 @@ def test_engine_status_route_reflects_engine_status(client, auth_headers, monkey
     )
     res = client.get("/engine/status", headers=auth_headers, params={"user_id": user_id})
     assert res.status_code == 200
-    assert res.json() == {"llm": "ready", "stt": "not_loaded", "tts": "not_loaded"}
+    assert res.json() == {"llm": "ready", "stt": "not_loaded", "tts": "not_loaded", "llm_off": False}
 
 
 def test_engine_launch_route_requires_token(client):
@@ -929,7 +929,7 @@ def test_engine_launch_route_triggers_launch_and_returns_status(client, auth_hea
     monkeypatch.setattr(conversation, "launch_engines", fake_launch_engines)
     res = client.post("/engine/launch", headers=auth_headers, params={"user_id": user_id})
     assert res.status_code == 200
-    assert res.json() == {"llm": "ready", "stt": "ready", "tts": "ready"}
+    assert res.json() == {"llm": "ready", "stt": "ready", "tts": "ready", "llm_off": False}
     assert called["uid"] == user_id
 
 
@@ -1192,10 +1192,14 @@ def test_unload_frees_the_local_models_from_memory(client, auth_headers, monkeyp
     assert res.json()["llm"] == "not_loaded"
 
 
-def test_unload_leaves_a_verified_cloud_key_alone(client, auth_headers, monkeypatch):
-    """A cloud LLM holds no memory to free, and dropping its verification would
-    force another billed request to get back to where it already was."""
-    from app.services.voice import engine_health
+def test_unload_switches_the_cloud_ai_off_until_it_is_started_again(client, auth_headers, monkeypatch):
+    """A cloud LLM holds no memory to free, so the AI button's "off" is a
+    promise instead: nothing is sent until the AI is started again. A grey
+    badge over a connection that still answers would be a lie."""
+    import pytest
+
+    from app.services.voice import engine_health, gemini_llm_engine
+    from app.services.voice.errors import EngineUnavailable
 
     user_id = _create_user(client, auth_headers)
     client.post(
@@ -1209,14 +1213,27 @@ def test_unload_leaves_a_verified_cloud_key_alone(client, auth_headers, monkeypa
     monkeypatch.setattr(llm_chat_engine, "unload", lambda *a, **kw: freed.append("llm"))
     monkeypatch.setattr(stt_engine, "unload", lambda: freed.append("stt"))
     monkeypatch.setattr(tts_engine, "unload", lambda: freed.append("tts"))
+    try:
+        res = client.post("/engine/unload", headers=auth_headers, params={"user_id": user_id})
+        assert res.status_code == 200
+        # The local speech models are freed; there is no local LLM to free...
+        assert sorted(freed) == ["stt", "tts"]
+        # ...and the cloud one reads as off, and is.
+        assert res.json()["llm"] == "not_loaded"
+        assert res.json()["llm_off"] is True
+        with pytest.raises(EngineUnavailable, match="switched off"):
+            gemini_llm_engine.generate_reply(
+                "system", [("user", "hello")], api_key="gm-x", model="gemini-2.0-flash"
+            )
 
-    res = client.post("/engine/unload", headers=auth_headers, params={"user_id": user_id})
-    assert res.status_code == 200
-    # Local speech models still get freed; the cloud LLM is untouched...
-    assert "llm" not in freed
-    assert sorted(freed) == ["stt", "tts"]
-    # ...and stays usable without re-verifying.
-    assert res.json()["llm"] == "ready"
+        # Starting the AI is the way back on.
+        monkeypatch.setattr(gemini_llm_engine, "verify", lambda **kw: engine_health.record_success("gemini", "gemini-2.0-flash"))
+        res = client.post("/engine/launch", headers=auth_headers, params={"user_id": user_id})
+        assert res.status_code == 200
+        assert res.json()["llm"] == "ready"
+        assert res.json()["llm_off"] is False
+    finally:
+        engine_health.switch_cloud_on()
 
 
 def test_turn_output_carries_the_text_of_each_audio_chunk(tmp_path, monkeypatch):

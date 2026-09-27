@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
-import { CONV_SCENARIOS } from '@/features/conversation/conversationScenarios';
+import { ScenarioPicker, type ScenarioChoice } from '@/features/conversation/ScenarioPicker';
 import { useConversationStore } from '@/store/conversationStore';
 import { useEngineStore } from '@/store/engineStore';
 import { useShellStore } from '@/store/shellStore';
 import type { ConversationSessionOut } from '@/types/api';
 import { friendlyMessage } from '@/lib/friendlyError';
 
-const SCENARIO_LABEL: Record<string, string> = Object.fromEntries(CONV_SCENARIOS.map((s) => [s.key, s.n]));
+/** A session's scene, by name: the server's label, falling back to the key
+ * for a session listed before labels existed. */
+const sceneName = (s: ConversationSessionOut) => s.scenario_label || s.scenario;
 
 function formatDuration(startedAt: string, endedAt: string | null): string {
   if (!endedAt) return 'in progress';
@@ -86,13 +88,13 @@ export function ConversationList() {
     return () => clearInterval(id);
   }, [needsLaunch, fetchEngineGlobalStatus]);
 
-  const handleStart = async (scenarioKey: (typeof CONV_SCENARIOS)[number]['key']) => {
+  const handleStart = async (choice: ScenarioChoice) => {
     if (notReady || needsLaunch) return;
     setStartError(null);
-    setStarting(scenarioKey);
+    setStarting(choice.id);
     try {
-      await startSession(scenarioKey, 'voice');
-      goConvLive(SCENARIO_LABEL[scenarioKey]);
+      await startSession(choice.scenario, 'voice', undefined, { customScenarioId: choice.customScenarioId });
+      goConvLive(choice.label);
     } catch (err) {
       setStartError(friendlyMessage(err, 'Starting a conversation'));
     } finally {
@@ -104,7 +106,7 @@ export function ConversationList() {
 
   const handleResume = async (session: ConversationSessionOut) => {
     await fetchSessionDetail(session.id);
-    goConvLive(SCENARIO_LABEL[session.scenario] ?? session.scenario);
+    goConvLive(sceneName(session));
   };
 
   const handleReport = async (session: ConversationSessionOut) => {
@@ -186,18 +188,12 @@ export function ConversationList() {
               {aiLaunchError && <span className="font-mono text-[10px] text-[#c0563f]">{aiLaunchError}</span>}
             </div>
           ) : (
-            <div className="mt-[14px] flex flex-wrap gap-[6px] border-t border-accLine pt-[13px]">
-              {CONV_SCENARIOS.map((c) => (
-                <button
-                  key={c.key}
-                  onClick={() => void handleStart(c.key)}
-                  disabled={starting !== null}
-                  className="flex items-center gap-[7px] rounded-full border border-line2 bg-panel px-3 py-[7px] font-sans text-[11px] font-medium text-tx2 hover:border-acc disabled:opacity-50"
-                >
-                  {starting === c.key ? (warmingUp ? 'warming up the local model…' : 'starting…') : c.n}
-                  <span className="font-mono text-[9.5px] text-tx3">{c.k}</span>
-                </button>
-              ))}
+            <div className="mt-[14px] border-t border-accLine pt-[13px]">
+              <ScenarioPicker
+                onStart={(choice) => void handleStart(choice)}
+                starting={starting}
+                warmingUp={Boolean(warmingUp)}
+              />
             </div>
           )}
           {startError && <div className="mt-3 font-mono text-[10.5px] text-[#c0563f]">{startError}</div>}
@@ -227,7 +223,7 @@ export function ConversationList() {
               </span>
               <span className="min-w-[180px] flex-1">
                 <span className="block font-sans text-[13px] font-semibold text-tx">
-                  {SCENARIO_LABEL[c.scenario] ?? c.scenario}
+                  {sceneName(c)}
                 </span>
                 <span className="mt-1 block font-mono text-[10px] text-tx3">
                   {new Date(c.started_at).toLocaleDateString()} · {formatDuration(c.started_at, c.ended_at)}

@@ -13,10 +13,80 @@ import sqlite3
 from pathlib import Path
 
 from app.config import settings
-from app.services import cefr_lexicon, pagination, review
+from app.services import cefr_lexicon, dictionary, pagination, review
 from app.services.voice import tts
 from app.utils.ids import uuid7
 from app.utils.time import iso8601_utc_now
+
+
+class Saved(tuple):
+    """What a save did. Unpacks as (row, already_existed) like it always has;
+    the rest says what an existing entry gained, so the caller can tell the
+    learner "added a new meaning" rather than only "already saved"."""
+
+    def __new__(
+        cls,
+        row: sqlite3.Row,
+        already_existed: bool,
+        *,
+        sense_id: str | None = None,
+        sense_added: bool = False,
+        context_added: bool = False,
+    ):
+        obj = super().__new__(cls, (row, already_existed))
+        obj.row = row
+        obj.already_existed = already_existed
+        obj.sense_id = sense_id
+        #: A meaning this entry did not have before (never set on a new entry).
+        obj.sense_added = sense_added
+        obj.context_added = context_added
+        return obj
+
+
+def sense_key(definition: str) -> str:
+    """What makes two meanings one: the definition, lowercased, without the
+    spaces and closing punctuation around it. Must match the SQL that
+    0036_vocab_senses.sql backfilled with — LOWER(TRIM(definition, ' .;:')),
+    and SQLite's LOWER folds ASCII only."""
+    stripped = definition.strip(" .;:")
+    return "".join(c.lower() if c.isascii() else c for c in stripped)
+
+
+def ensure_sense(
+    conn: sqlite3.Connection,
+    vocab_word_id: str,
+    *,
+    pos: str | None,
+    definition: str | None,
+    example: str | None,
+) -> tuple[str | None, bool]:
+    """The entry's row for this meaning, added if it is new to it.
+
+    Returns (sense_id, created). No definition, no meaning: (None, False).
+    """
+    if not definition or not definition.strip():
+        return None, False
+    key = sense_key(definition)
+    existing = conn.execute(
+        "SELECT id FROM vocab_senses WHERE vocab_word_id = ? AND sense_key = ?", (vocab_word_id, key)
+    ).fetchone()
+    if existing is not None:
+        return existing["id"], False
+    sense_id = uuid7()
+    conn.execute(
+        """
+        INSERT INTO vocab_senses (id, vocab_word_id, pos, definition, example, sense_key, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (sense_id, vocab_word_id, pos or None, definition.strip(), example, key, iso8601_utc_now()),
+    )
+    return sense_id, True
+
+
+def list_senses(conn: sqlite3.Connection, vocab_word_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM vocab_senses WHERE vocab_word_id = ? ORDER BY created_at, id", (vocab_word_id,)
+    ).fetchall()
 
 
 def save_word(
@@ -28,18 +98,46 @@ def save_word(
     book_id: str | None,
     block_index: int | None,
     page: int | None = None,
-) -> tuple[sqlite3.Row, bool] | None:
+    sense: dict | None = None,
+) -> Saved | None:
     """Insert-or-fetch the vocab_words row for this user+word, then append a
     context if one wasn't already captured for this exact book/block.
 
-    Returns None when the word isn't in the offline lexicon — there is no
-    dictionary data to snapshot, so nothing is saved. Returns
-    (row, already_existed) otherwise; already_existed lets the caller show
-    "already in your vocabulary" instead of "saved".
+    The offline lexicon first; failing that, the dictionary answer this
+    machine already holds — the reader's lookup put it there a moment ago, so
+    a word the panel just defined can be saved even when the bundled list has
+    never heard of it. Returns None only when neither has anything to
+    snapshot. Returns (row, already_existed) otherwise; already_existed lets
+    the caller show "already in your vocabulary" instead of "saved".
+
+    `sense` ({pos, definition, example}) is the meaning the reader picked for
+    this sentence. Without one, the dictionary's first meaning is used. The
+    same meaning again adds only the sentence; a new meaning is added to the
+    entry along with it.
     """
-    entry = cefr_lexicon.lookup(word)
-    if entry is None:
+    fields = _snapshot(conn, word)
+    if fields is None and not (sense and sense.get("definition")):
         return None
+    if fields is None:
+        # A meaning the reader brought (the AI's reading of a word no
+        # dictionary here has) is enough to save it.
+        fields = {
+            "lemma": cefr_lexicon.normalise(word),
+            "pos": None,
+            "cefr": cefr_lexicon.band_of(word),
+            "definition": None,
+            "example": None,
+            "simpler": None,
+            "synonyms": [],
+        }
+    if sense and sense.get("definition"):
+        fields = {
+            **fields,
+            "pos": sense.get("pos") or fields["pos"],
+            "definition": sense["definition"],
+            "example": sense.get("example") or fields["example"],
+        }
+    lemma = fields["lemma"]
 
     new_id = uuid7()
     conn.execute(
@@ -52,18 +150,18 @@ def save_word(
             new_id,
             user_id,
             word.strip(),
-            entry.lemma,
-            entry.pos or None,
-            entry.cefr or cefr_lexicon.band_of(word),
-            entry.definition,
-            entry.example,
-            entry.simpler,
-            json.dumps(list(entry.synonyms)),
+            lemma,
+            fields["pos"],
+            fields["cefr"],
+            fields["definition"],
+            fields["example"],
+            fields["simpler"],
+            json.dumps(fields["synonyms"]),
             iso8601_utc_now(),
         ),
     )
     row = conn.execute(
-        "SELECT * FROM vocab_words WHERE user_id = ? AND lemma = ?", (user_id, entry.lemma)
+        "SELECT * FROM vocab_words WHERE user_id = ? AND lemma = ?", (user_id, lemma)
     ).fetchone()
     already_existed = row["id"] != new_id
 
@@ -76,10 +174,58 @@ def save_word(
     # pointing at it has no word to belong to.
     review.ensure_card(conn, user_id, row["id"])
 
-    _add_context_if_new(
-        conn, row["id"], sentence=sentence, book_id=book_id, block_index=block_index, page=page
+    sense_id, sense_created = ensure_sense(
+        conn, row["id"], pos=fields["pos"], definition=fields["definition"], example=fields["example"]
     )
-    return row, already_existed
+    context_added = _add_context_if_new(
+        conn,
+        row["id"],
+        sentence=sentence,
+        book_id=book_id,
+        block_index=block_index,
+        page=page,
+        sense_id=sense_id,
+    )
+    return Saved(
+        row,
+        already_existed,
+        sense_id=sense_id,
+        sense_added=already_existed and sense_created,
+        context_added=context_added,
+    )
+
+
+def _snapshot(conn: sqlite3.Connection, word: str) -> dict | None:
+    """The dictionary fields a saved word keeps, from the nearest source.
+
+    Never the network: saving must not hang on a connection the reader may
+    not have, and the lookup that preceded it has already cached the answer.
+    """
+    entry = cefr_lexicon.lookup(word)
+    if entry is not None:
+        return {
+            "lemma": entry.lemma,
+            "pos": entry.pos or None,
+            "cefr": entry.cefr or cefr_lexicon.band_of(word),
+            "definition": entry.definition,
+            "example": entry.example,
+            "simpler": entry.simpler,
+            "synonyms": list(entry.synonyms),
+        }
+    answer = dictionary.look_up(conn, word, allow_network=False)
+    if not answer.result.found or not answer.result.senses:
+        return None
+    first = answer.result.senses[0]
+    return {
+        # Same resolution as save_manual_word, so the two collide on one row.
+        "lemma": cefr_lexicon.normalise(word),
+        "pos": first.pos or None,
+        "cefr": cefr_lexicon.band_of(word),
+        "definition": first.definition,
+        "example": first.example,
+        "simpler": None,
+        "synonyms": list(answer.result.synonyms),
+    }
 
 
 def save_manual_word(
@@ -99,7 +245,8 @@ def save_manual_word(
     ai_mnemonic: str | None = None,
     ai_usage_note: str | None = None,
     ai_sense_definition: str | None = None,
-) -> tuple[sqlite3.Row, bool]:
+    record_sense: bool = True,
+) -> Saved:
     """Save a word the user picked from a dictionaryapi.dev search rather
     than one captured while reading — same de-dup key (user_id, lemma) as
     save_word, so a manually-added "abandoned" still collides with a later
@@ -170,7 +317,14 @@ def save_manual_word(
     if not already_existed and note_text and note_text.strip():
         add_note(conn, row["id"], note_text.strip())
 
-    return row, already_existed
+    # The meaning this save is about. Already on the entry: nothing new, and
+    # the caller says it exists. Not yet: the entry gains it.
+    sense_id, sense_created = (
+        ensure_sense(conn, row["id"], pos=pos, definition=definition, example=example)
+        if record_sense
+        else (None, False)
+    )
+    return Saved(row, already_existed, sense_id=sense_id, sense_added=already_existed and sense_created)
 
 
 # What a learner actually wants to slice their collection by. Each maps to a
@@ -383,6 +537,37 @@ def get_tags(conn: sqlite3.Connection, vocab_word_id: str) -> list[str]:
     return [row["tag"] for row in rows]
 
 
+def check_saved(conn: sqlite3.Connection, user_id: str, word: str, definitions: list[str]) -> dict:
+    """What saving this word would do, asked before saving it.
+
+    Whether the word is already an entry, and for each candidate meaning
+    whether the entry already has it — by the same sense_key a save matches
+    on, so the panel's promise ("adds a new meaning") is the save's outcome.
+    """
+    row = get_word_row(conn, user_id, word)
+    if row is None:
+        return {
+            "saved": False,
+            "vocab_word_id": None,
+            "word": None,
+            "sense_count": 0,
+            "context_count": 0,
+            "known": [False] * len(definitions),
+        }
+    keys = {
+        r["sense_key"]
+        for r in conn.execute("SELECT sense_key FROM vocab_senses WHERE vocab_word_id = ?", (row["id"],))
+    }
+    return {
+        "saved": True,
+        "vocab_word_id": row["id"],
+        "word": row["word"],
+        "sense_count": len(keys),
+        "context_count": context_count(conn, row["id"]),
+        "known": [bool(d and d.strip()) and sense_key(d) in keys for d in definitions],
+    }
+
+
 def context_count(conn: sqlite3.Connection, vocab_word_id: str) -> int:
     row = conn.execute(
         "SELECT COUNT(*) AS c FROM vocab_contexts WHERE vocab_word_id = ?", (vocab_word_id,)
@@ -448,33 +633,38 @@ def _add_context_if_new(
     book_id: str | None,
     block_index: int | None,
     page: int | None = None,
-) -> None:
-    """Record where the word was met, if that place is not already recorded.
+    sense_id: str | None = None,
+) -> bool:
+    """Record where the word was met, if that place is not already recorded
+    for this meaning. Returns whether it was added.
 
     Reflowed text supplies a block; a printed page supplies a page instead,
     since a selection there is a run of boxes rather than a paragraph.
     """
     if not sentence or book_id is None or (block_index is None and page is None):
-        return
-    # One context per place. Which column identifies "the place" depends on
-    # which one the reader's view could supply.
+        return False
+    # One context per place and meaning. Which column identifies "the place"
+    # depends on which one the reader's view could supply; the meaning is in
+    # it because one page can use a word two ways.
     if block_index is not None:
         existing = conn.execute(
-            "SELECT id FROM vocab_contexts WHERE vocab_word_id = ? AND book_id = ? AND block_index = ?",
-            (vocab_word_id, book_id, block_index),
+            "SELECT id FROM vocab_contexts WHERE vocab_word_id = ? AND book_id = ? AND block_index = ?"
+            " AND sense_id IS ?",
+            (vocab_word_id, book_id, block_index, sense_id),
         ).fetchone()
     else:
         existing = conn.execute(
-            "SELECT id FROM vocab_contexts WHERE vocab_word_id = ? AND book_id = ? AND page = ?",
-            (vocab_word_id, book_id, page),
+            "SELECT id FROM vocab_contexts WHERE vocab_word_id = ? AND book_id = ? AND page = ?"
+            " AND sense_id IS ?",
+            (vocab_word_id, book_id, page, sense_id),
         ).fetchone()
     if existing is not None:
-        return
+        return False
     conn.execute(
         """
         INSERT INTO vocab_contexts
-          (id, vocab_word_id, kind, snippet, source_label, book_id, block_index, page, created_at)
-        VALUES (?, ?, 'page', ?, ?, ?, ?, ?, ?)
+          (id, vocab_word_id, kind, snippet, source_label, book_id, block_index, page, sense_id, created_at)
+        VALUES (?, ?, 'page', ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             uuid7(),
@@ -484,9 +674,11 @@ def _add_context_if_new(
             book_id,
             block_index,
             page if page is not None else _page_number_for(conn, book_id, block_index),
+            sense_id,
             iso8601_utc_now(),
         ),
     )
+    return True
 
 
 def _page_number_for(conn: sqlite3.Connection, book_id: str, block_index: int | None) -> int | None:
@@ -636,16 +828,20 @@ def add_clip_context(
     start_ms: int,
     end_ms: int,
     media_file_hash: str | None = None,
+    sense_id: str | None = None,
 ) -> str | None:
     """A context captured while watching (spec §4.1.2 "save with context").
 
-    De-duped on the timecode, not just on the media item: the same word met
-    twice in one film is two genuinely different moments and deserves two
-    clips, but pressing save twice on one line is not.
+    De-duped on the timecode and the meaning, not just on the media item: the
+    same word met twice in one film is two genuinely different moments and
+    deserves two clips, but pressing save twice on one line is not. The same
+    line saved under a second meaning is kept, as a page is — it is the
+    example of that meaning.
     """
     existing = conn.execute(
-        "SELECT id FROM vocab_contexts WHERE vocab_word_id = ? AND media_item_id = ? AND start_ms = ?",
-        (vocab_word_id, media_item_id, start_ms),
+        "SELECT id FROM vocab_contexts WHERE vocab_word_id = ? AND media_item_id = ? AND start_ms = ?"
+        " AND sense_id IS ?",
+        (vocab_word_id, media_item_id, start_ms, sense_id),
     ).fetchone()
     if existing is not None:
         return None
@@ -653,8 +849,8 @@ def add_clip_context(
     conn.execute(
         """
         INSERT INTO vocab_contexts (id, vocab_word_id, kind, snippet, source_label,
-                                    media_item_id, start_ms, end_ms, media_file_hash, created_at)
-        VALUES (?, ?, 'clip', ?, ?, ?, ?, ?, ?, ?)
+                                    media_item_id, start_ms, end_ms, media_file_hash, sense_id, created_at)
+        VALUES (?, ?, 'clip', ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             context_id,
@@ -665,6 +861,7 @@ def add_clip_context(
             start_ms,
             end_ms,
             media_file_hash,
+            sense_id,
             iso8601_utc_now(),
         ),
     )

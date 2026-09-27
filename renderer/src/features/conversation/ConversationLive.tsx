@@ -21,6 +21,32 @@ const MIC_META: Record<MicState, { label: string; sub: string; bg: string; bd: s
   speaking: { label: 'Juno is speaking', sub: 'playing the reply', bg: 'var(--tile)', bd: 'var(--line2)', fg: 'var(--tx)', icon: '▮▮' },
 };
 
+/** What each reason a target word was picked for means, for its tooltip. */
+const REASON_HELP: Record<string, string> = {
+  due: 'due for review — using it here counts as the review',
+  new: 'not reviewed yet',
+  retry: 'you used it wrongly last time',
+  'not said yet': "reviewed, but never said in a conversation — the only way past mastery level 2",
+  stretch: 'one level above yours',
+  'fits scene': 'belongs naturally in this scene',
+  again: 'from the conversation you are practising again',
+  practice: 'picked for practice',
+};
+
+function reasonHelp(reason: string): string {
+  return reason
+    .split(' · ')
+    .map((r) => REASON_HELP[r] ?? r)
+    .join('; ');
+}
+
+/** "Maya" → "MA", "Ms. Carter" → "MC": the scene character's initials. */
+function initials(name: string): string {
+  const parts = name.replace(/\./g, '').split(/\s+/).filter(Boolean);
+  const letters = parts.length > 1 ? parts[0][0] + parts[parts.length - 1][0] : name.slice(0, 2);
+  return letters.toUpperCase();
+}
+
 export function ConversationLive() {
   const scenario = useShellStore((s) => s.convScenario);
   const goScreen = useShellStore((s) => s.goScreen);
@@ -137,6 +163,33 @@ export function ConversationLive() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /* How long the learner takes to start answering, for the report.
+   *
+   * The floor opens when the learner could reply — the AI finished speaking,
+   * or its reply appeared if it is not spoken — and the reply starts when
+   * they begin: voice detected, mic tapped, or first keystroke. Talking over
+   * the AI counts as no delay at all. Measured here because nothing on the
+   * server knows either moment: a turn's timestamps also include the AI
+   * talking, the learner talking, transcription and generation. */
+  const floorOpenAt = useRef<number | null>(null);
+  const replyDelayMs = useRef<number | null>(null);
+  const openFloor = () => {
+    floorOpenAt.current = performance.now();
+    replyDelayMs.current = null;
+  };
+  const markReplyStart = (bargeIn = false) => {
+    if (replyDelayMs.current !== null) return; // the first start counts
+    if (bargeIn) replyDelayMs.current = 0;
+    else if (floorOpenAt.current !== null) replyDelayMs.current = performance.now() - floorOpenAt.current;
+  };
+  /** The measured delay for the turn being sent; the floor closes with it. */
+  const takeReplyDelay = () => {
+    const ms = replyDelayMs.current;
+    floorOpenAt.current = null;
+    replyDelayMs.current = null;
+    return ms;
+  };
+
   /** Stops whatever the AI is currently saying, and reports whether anything
    * was actually playing. */
   const stopPlayback = () => {
@@ -247,6 +300,8 @@ export function ConversationLive() {
         currentAudioRef.current = null;
         setSpeaking(null);
         setMicState('idle');
+        // Finished, not interrupted: now it is the learner's turn.
+        openFloor();
       }
     }
   };
@@ -267,7 +322,11 @@ export function ConversationLive() {
   // the two: only startSession sets it, and consuming it here resets it
   // immediately so it can't leak into a later resume in the same app session.
   useEffect(() => {
-    if (!isVoice) return;
+    if (!isVoice) {
+      // Nothing is spoken, so the floor opens as the opening line appears.
+      if (turns.length === 1 && useConversationStore.getState().consumeJustStarted()) openFloor();
+      return;
+    }
     const lastAiTurn = [...turns].reverse().find((t) => t.speaker === 'ai');
     if (!lastAiTurn?.audio_url || lastAiTurn.id === lastAutoPlayedTurnId.current) return;
 
@@ -288,12 +347,13 @@ export function ConversationLive() {
     setPendingUserText('🎤 …'); // real text isn't known until the backend transcribes it
     setError(null);
     try {
-      const { ai_turn } = await submitAudioTurn(activeSession.id, blob);
+      const { ai_turn } = await submitAudioTurn(activeSession.id, blob, takeReplyDelay());
       setPendingUserText(null);
       if (isVoice && ai_turn.audio_url) {
         void playTurnAudio(ai_turn.id, ai_turn.audio_chunks);
       } else {
         setMicState('idle');
+        openFloor();
       }
     } catch (err) {
       setPendingUserText(null);
@@ -332,7 +392,9 @@ export function ConversationLive() {
     aiSpeaking: micState === 'speaking',
     profile: listening,
     onSpeechStart: () => {
-      if (stopPlayback()) setMicState('idle');
+      const interrupted = stopPlayback();
+      if (interrupted) setMicState('idle');
+      markReplyStart(interrupted);
     },
     onUtterance: (blob) => void submitAudio(blob),
   });
@@ -345,6 +407,7 @@ export function ConversationLive() {
     }
     if (turnInFlight) return;
     if (micState === 'idle') {
+      markReplyStart();
       const startError = await recorder.start();
       if (startError) setError(startError);
       else setMicState('recording');
@@ -375,10 +438,12 @@ export function ConversationLive() {
     setError(null);
     setPendingUserText(text);
     try {
-      const { ai_turn } = await submitTextTurn(activeSession.id, text);
+      const { ai_turn } = await submitTextTurn(activeSession.id, text, takeReplyDelay());
       setPendingUserText(null);
       if (isVoice && ai_turn.audio_url) {
         void playTurnAudio(ai_turn.id, ai_turn.audio_chunks);
+      } else {
+        openFloor();
       }
     } catch (err) {
       setPendingUserText(null);
@@ -429,6 +494,8 @@ export function ConversationLive() {
             : 'idle'
     : micState;
   const meta = MIC_META[displayState];
+  // The scene's character, not a fixed "Juno" — the barista is Maya.
+  const personaName = activeSession.persona_name || 'Juno';
   const handsFreeUnavailable = handsFree && !isVoice;
 
   return (
@@ -471,7 +538,7 @@ export function ConversationLive() {
                     color: isAi ? 'var(--acc)' : 'var(--tx3)',
                   }}
                 >
-                  {isAi ? 'fox' : 'you'}
+                  {isAi ? initials(personaName) : 'you'}
                 </div>
                 <div>
                   <div
@@ -496,7 +563,7 @@ export function ConversationLive() {
                     className="mt-[5px] flex items-center gap-[8px] font-mono text-[9.5px] text-tx3"
                     style={{ justifyContent: isAi ? 'flex-start' : 'flex-end' }}
                   >
-                    {isAi ? 'Juno' : t.stt_confidence !== null ? `confidence ${Math.round(t.stt_confidence * 100)}%` : ''}
+                    {isAi ? personaName : t.stt_confidence !== null ? `confidence ${Math.round(t.stt_confidence * 100)}%` : ''}
                     {t.audio_url && (
                       <button onClick={() => void playTurnAudio(t.id, t.audio_chunks)} className="hover:text-acc">
                         ▶ play
@@ -568,7 +635,7 @@ export function ConversationLive() {
             </button>
             <div className="w-[160px]">
               <div className="font-sans text-[12px] font-semibold" style={{ color: meta.fg }}>
-                {meta.label}
+                {displayState === 'speaking' ? `${personaName} is speaking` : meta.label}
               </div>
               <div className="font-mono text-[10px] text-tx3">
                 {handsFreeUnavailable ? 'text session — type below' : meta.sub}
@@ -599,7 +666,11 @@ export function ConversationLive() {
           <form onSubmit={handleTextSubmit} className="flex w-full max-w-[500px] items-center gap-2">
             <input
               value={textInput}
-              onChange={(e) => setTextInput(e.target.value)}
+              onChange={(e) => {
+                // The first keystroke is when a typed reply starts.
+                if (!textInput && e.target.value) markReplyStart(micState === 'speaking');
+                setTextInput(e.target.value);
+              }}
               placeholder="or type instead…"
               className="min-w-0 flex-1 rounded-field border border-line2 bg-panel2 px-3 py-2 font-sans text-[11.5px] text-tx placeholder:text-tx3 focus:border-acc focus:outline-none"
             />
@@ -616,11 +687,16 @@ export function ConversationLive() {
 
       <aside className="flex w-[270px] flex-none flex-col overflow-y-auto border-l border-line2 bg-panel">
         <div className="flex items-center gap-[11px] border-b border-line2 p-4">
-          <div className="grid h-11 w-11 flex-none place-items-center rounded-full border border-accLine bg-accSoft font-mono text-[7.5px] text-acc">
-            fox
+          <div className="grid h-11 w-11 flex-none place-items-center rounded-full border border-accLine bg-accSoft font-mono text-[11px] font-semibold text-acc">
+            {initials(personaName)}
           </div>
           <div className="min-w-0">
-            <div className="font-sans text-[12.5px] font-semibold text-tx">Juno</div>
+            <div className="font-sans text-[12.5px] font-semibold text-tx">{personaName}</div>
+            {activeSession.persona_role && (
+              <div className="truncate font-sans text-[10.5px] text-tx2" title={activeSession.persona_role}>
+                {activeSession.persona_role}
+              </div>
+            )}
             <div className="truncate font-mono text-[10px] text-tx3" title={activeSession.engine_label}>
               {sessionUsesCloud ? 'cloud' : 'local'} · {activeSession.engine_label}
             </div>
@@ -643,12 +719,24 @@ export function ConversationLive() {
                   className="flex items-center justify-between gap-2 rounded-field border border-line2 px-[10px] py-2 text-left"
                 >
                   <span className="font-sans text-[12px] font-medium text-tx">{w.word}</span>
-                  <span className="font-mono text-[9px] font-medium text-tx3">{w.used_outcome ?? 'due'}</span>
+                  {/* How it went, once the report has judged it; until then,
+                      why it was picked. */}
+                  {w.used_outcome ? (
+                    <span className="font-mono text-[9px] font-medium text-acc">{w.used_outcome}</span>
+                  ) : w.reason ? (
+                    <span
+                      className="truncate text-right font-mono text-[9px] font-medium text-tx3"
+                      title={reasonHelp(w.reason)}
+                    >
+                      {w.reason}
+                    </span>
+                  ) : null}
                 </div>
               ))}
             </div>
           )}
           <div className="mt-[14px] border-t border-line2 pt-3 font-mono text-[10px] leading-[1.7] text-tx3">
+            picked by what needs practice, your level and this scene · hover a reason for what it means ·
             the model is asked to never say a target word first
           </div>
         </div>

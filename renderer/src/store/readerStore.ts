@@ -156,6 +156,9 @@ interface ReaderState {
 
   /** Passages shown in plainer words, pinned over the originals, by page. */
   labelsByPage: Record<number, PageLabelOut[]>;
+  /** Bumped each time "simpler" is pressed, so the panel can point at where
+   * the answer is about to appear. */
+  simplifySeq: number;
   /** Asks the model for a simpler version and pins it where the words were.
    * Returns the note the engine sent back, when it had something to say —
    * "no model configured", or which mode it actually ran. */
@@ -165,8 +168,13 @@ interface ReaderState {
     text: string;
   }) => Promise<string | null>;
   removePageLabel: (id: string) => Promise<void>;
+  /** Rewrite a passage already on the page at another level — the page and
+   * the panel both follow. */
+  relevelLabel: (label: PageLabelOut, mode: LevelMode) => Promise<void>;
   clearLookup: () => void;
   setLevelMode: (mode: LevelMode) => void;
+  /** Drop the panel's answer — the reader has moved on to other words. */
+  clearLeveled: () => void;
   levelBlock: (blockIndex: number, mode?: LevelMode) => Promise<void>;
   openSession: () => Promise<void>;
   heartbeat: (seconds: number) => Promise<void>;
@@ -354,6 +362,7 @@ let prefsTouched = false;
 
 export const useReaderStore = create<ReaderState>((set, get) => ({
   ...INITIAL,
+  simplifySeq: 0,
   // Deliberately outside INITIAL — these belong to the reader, not to the
   // book that happens to be open, so closing a book must not reset them.
   prefs: DEFAULT_PREFS,
@@ -642,9 +651,19 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
      * printed words, and an offline mode that changes nothing would cover a
      * sentence with a copy of itself. Checked before sending so a reader
      * with no AI running gets the dialog that starts it, and only once the
-     * app has actually looked — unasked is not the same as no. */
-    const engines = useEngineStore.getState().status;
-    if (engines && engines.llm !== 'ready') {
+     * app has actually looked — unasked is not the same as no.
+     *
+     * Only for a local model. A cloud model has nothing to start: it reads as
+     * "not ready" merely because no request has succeeded since the backend
+     * started (or one briefly failed), and the request itself is the check —
+     * if it really cannot answer, the backend says why. */
+    const { status: engines, llmProvider } = useEngineStore.getState();
+    // Only when the provider is known: right after launch it has not been
+    // fetched yet, and guessing "local" would send a cloud user to start a
+    // model they do not use. The server still refuses if nothing can answer.
+    const runsLocally = llmProvider?.provider === 'local';
+    const cloudOff = !runsLocally && Boolean(engines?.llm_off);
+    if (cloudOff || (runsLocally && engines && engines.llm !== 'ready')) {
       throw new ApiError(
         'POST',
         '/reading/level-text',
@@ -656,13 +675,39 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     }
 
     const mode: LevelMode = get().levelMode === 'semantic' ? 'semantic' : 'contextual';
-    const leveled = await api.post<LeveledTextOut>('/reading/level-text', {
-      text,
-      mode,
-      user_id: userId,
-      require_model: true,
-    });
-    const simple = leveled.segments.map((seg) => seg.text).join('');
+    levelRequestSeq += 1;
+    const seq = levelRequestSeq;
+    set((s) => ({
+      levelStatus: 'loading',
+      levelBlockIndex: null,
+      levelMode: mode,
+      simplifySeq: s.simplifySeq + 1,
+    }));
+    let leveled: LeveledTextOut;
+    try {
+      leveled = await api.post<LeveledTextOut>('/reading/level-text', {
+        text,
+        mode,
+        user_id: userId,
+        require_model: true,
+      });
+    } catch (err) {
+      if (seq === levelRequestSeq) set({ levelStatus: 'idle' });
+      throw err;
+    }
+    // The side panel shows the same answer that goes over the page, so the
+    // reader can read it at a comfortable size and see what was replaced.
+    if (seq === levelRequestSeq && get().bookId === bookId) {
+      set({
+        leveled: {
+          ...leveled,
+          segments: leveled.segments ?? [],
+          substitutions: leveled.substitutions ?? [],
+        },
+        levelStatus: 'idle',
+      });
+    }
+    const simple = (leveled.segments ?? []).map((seg) => seg.text).join('');
     // Nothing to pin. An engine that returned the original unchanged has not
     // simplified anything, and covering the page with a copy of itself would
     // be worse than saying so.
@@ -682,6 +727,13 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       labelsByPage: { ...s.labelsByPage, [page]: [...(s.labelsByPage[page] ?? []), made] },
     }));
     return leveled.available ? null : leveled.note;
+  },
+
+  relevelLabel: async (label, mode) => {
+    set({ levelMode: mode });
+    // levelSelection rewrites every label of this passage once the answer
+    // arrives, and puts the same answer in the panel.
+    await get().levelSelection(label.original_text);
   },
 
   removePageLabel: async (id) => {
@@ -769,17 +821,14 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     void useBookshelfStore.getState().fetchCounts();
   },
 
-  setLevelMode: (mode) => {
-    set({ levelMode: mode });
-    const { levelBlockIndex, pageSelectionText, leveled } = get();
-    if (levelBlockIndex !== null) {
-      void get().levelBlock(levelBlockIndex, mode);
-      return;
-    }
-    // A page passage has no block to re-level, so it goes again from the
-    // words. Only once something has been levelled: changing the mode is not
-    // a request to spend a generative call.
-    if (leveled && pageSelectionText) void get().levelSelection(pageSelectionText);
+  // Only the choice. Levelling is asked for separately, by the reader, so
+  // picking a mode is the request and selecting text never is.
+  setLevelMode: (mode) => set({ levelMode: mode }),
+
+  clearLeveled: () => {
+    // Any answer still on its way was for the passage being cleared.
+    levelRequestSeq += 1;
+    set({ leveled: null, levelStatus: 'idle', levelBlockIndex: null });
   },
 
   levelBlock: async (blockIndex, mode) => {
@@ -857,6 +906,34 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
         },
         levelStatus: 'idle',
       });
+
+      /* The same passage may already be written over the page, from
+       * "simpler". Picking another level rewrites it there too, so the page
+       * and the panel never show two different versions of one passage. A
+       * level with nothing to offer (a gloss with no model) leaves it be. */
+      const simple = (result.segments ?? []).map((seg) => seg.text).join('');
+      if (!simple.trim()) return;
+      const stale = Object.values(get().labelsByPage)
+        .flat()
+        .filter((l) => l.original_text.trim() === passage && l.simple_text !== simple);
+      const swap = (next: PageLabelOut) =>
+        set((st) => ({
+          labelsByPage: {
+            ...st.labelsByPage,
+            [next.page]: (st.labelsByPage[next.page] ?? []).map((l) => (l.id === next.id ? next : l)),
+          },
+        }));
+      for (const label of stale) {
+        // Shown at once; put back if the change could not be kept.
+        swap({ ...label, simple_text: simple, mode: result.served_mode });
+        api
+          .patch<PageLabelOut>(`/books/${bookId}/page-labels/${label.id}`, {
+            simple_text: simple,
+            mode: result.served_mode,
+          })
+          .then(swap)
+          .catch(() => swap(label));
+      }
     } catch {
       if (seq !== levelRequestSeq) return;
       set({ leveled: null, levelStatus: 'error' });

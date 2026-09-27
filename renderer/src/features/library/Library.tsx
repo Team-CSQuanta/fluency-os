@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AddContentModal } from '@/features/library/AddContentModal';
 import { posterUrl, useMediaStore } from '@/store/mediaStore';
 import { useShellStore } from '@/store/shellStore';
@@ -113,6 +113,13 @@ export function Library() {
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [menuAbove, setMenuAbove] = useState(false);
   const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
+  const focusOnMount = useCallback((el: HTMLInputElement | null) => {
+    if (!el) return;
+    requestAnimationFrame(() => {
+      el.focus();
+      el.select();
+    });
+  }, []);
   const [busy, setBusy] = useState<string | null>(null);
   const searchDebounce = useRef<number | null>(null);
   const firstSearchRun = useRef(true);
@@ -289,7 +296,14 @@ export function Library() {
                   style={menuAbove ? { bottom: 'calc(100% - 30px)' } : { top: 34 }}
                 >
                   {[
-                    { label: 'Rename', run: () => setRenaming({ id: item.id, value: item.title }) },
+                    {
+                      label: 'Rename',
+                      run: () => {
+                        // The menu goes: it sits over the title being renamed.
+                        setMenuFor(null);
+                        setRenaming({ id: item.id, value: item.title });
+                      },
+                    },
                     { label: 'Relink file…', run: () => void pickAndRelink(item.id) },
                     { label: 'Re-scan tracks', run: () => void reingest(item.id).then(() => setMenuFor(null)) },
                     ...(item.index_at_end
@@ -330,7 +344,11 @@ export function Library() {
               <div className="px-3 pb-[13px] pt-[11px]">
                 {renaming?.id === item.id ? (
                   <input
-                    autoFocus
+                    // Focused once it is on screen, with the old name
+                    // selected, so typing replaces it straight away.
+                    // autoFocus alone lost the race with the menu button
+                    // that was just clicked.
+                    ref={focusOnMount}
                     value={renaming.value}
                     onChange={(e) => setRenaming({ id: item.id, value: e.target.value })}
                     onKeyDown={(e) => {

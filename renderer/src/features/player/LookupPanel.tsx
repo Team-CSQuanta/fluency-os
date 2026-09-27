@@ -3,6 +3,8 @@ import { useMediaStore } from '@/store/mediaStore';
 import { useVocabularyStore } from '@/store/vocabularyStore';
 import type { AiEnrichOut, CueOut, DictionarySearchOut } from '@/types/api';
 import { friendlyMessage } from '@/lib/friendlyError';
+import { AiThinking, useArrivalFlash } from '@/features/shell/AiProgress';
+import { KnownMark, SavedStatus, saveIntent, useSavedCheck } from '@/features/vocabulary/savedCheck';
 
 interface Props {
   mediaId: string;
@@ -29,6 +31,7 @@ export function LookupPanel({ mediaId, term, cue, onSaved }: Props) {
   const [aiSense, setAiSense] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const aiFlash = useArrivalFlash<HTMLElement>(ai);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -46,10 +49,31 @@ export function LookupPanel({ mediaId, term, cue, onSaved }: Props) {
   }, [term, searchDictionary, clearSearch]);
 
   const result: DictionarySearchOut | null = searchResult;
+  // The dictionary section is pointed at when a lookup starts (the word was
+  // just clicked on the video, away from here) and again when its answer —
+  // or the news that there is none — arrives.
+  const dictFlash = useArrivalFlash<HTMLElement>(
+    searchStatus === 'loading'
+      ? `start:${term}`
+      : searchStatus === 'idle'
+        ? result
+        : `${searchStatus}:${term}`,
+  );
   const senses = result?.senses ?? [];
   const sense = senses[senseIndex];
   const dictDefinition = sense?.definition ?? '';
   const staleForSense = Boolean(ai && aiSense !== null && aiSense !== dictDefinition);
+  // Already saved? With which of these senses? Re-asked after a save.
+  const [savedTick, setSavedTick] = useState(0);
+  const savedCheck = useSavedCheck(
+    term,
+    senses.map((x) => x.definition),
+    savedTick,
+  );
+  // With no dictionary sense there is no meaning to add — a saved word just
+  // gains the moment — so it never reads "add as a new meaning".
+  const intent =
+    senses.length > 0 ? saveIntent(savedCheck, senseIndex) : savedCheck?.saved ? 'same' : 'new-word';
 
   const hear = async (text: string) => {
     try {
@@ -107,10 +131,15 @@ export function LookupPanel({ mediaId, term, cue, onSaved }: Props) {
         aiSenseDefinition: staleForSense ? null : (ai ? dictDefinition || null : null),
       });
       setSaved(true);
+      setSavedTick((n) => n + 1);
       onSaved(
-        out.context_added
+        !out.already_saved
           ? `saved “${out.word}” · clip queued`
-          : `“${out.word}” already has this moment saved`,
+          : out.sense_added
+            ? `added a new meaning of “${out.word}”, with this moment · clip queued`
+            : out.context_added
+              ? `“${out.word}” is saved with this meaning — added this moment · clip queued`
+              : `“${out.word}” already has this meaning and this moment`,
       );
     } catch (err) {
       setSaveError(friendlyMessage(err, 'Saving this word'));
@@ -140,6 +169,7 @@ export function LookupPanel({ mediaId, term, cue, onSaved }: Props) {
             {sense?.pos && <span>{sense.pos}</span>}
             {result?.cefr && <span className="text-acc">{result.cefr}</span>}
           </div>
+          <SavedStatus check={savedCheck} />
         </div>
       </div>
 
@@ -151,16 +181,19 @@ export function LookupPanel({ mediaId, term, cue, onSaved }: Props) {
           </section>
         )}
 
-        <section className="mb-[16px]">
+        <section ref={dictFlash.ref} className={`mb-[16px] ${dictFlash.className}`} style={dictFlash.style}>
           <Label>dictionary</Label>
-          {searchStatus === 'loading' && <Muted>looking it up…</Muted>}
+          {searchStatus === 'loading' && <AiThinking label="looking it up" />}
           {searchStatus === 'error' && <Muted>{searchError ?? 'the dictionary is unreachable'}</Muted>}
           {searchStatus === 'not-found' && (
             <Muted>no dictionary entry — it can still be saved, and the AI can explain it</Muted>
           )}
           {sense && (
             <>
-              <p className="mt-[6px] font-sans text-[12.5px] leading-[1.65] text-tx">{sense.definition}</p>
+              <p className="mt-[6px] font-sans text-[12.5px] leading-[1.65] text-tx">
+                {sense.definition}
+                {savedCheck?.known[senseIndex] && <KnownMark />}
+              </p>
               {sense.example && (
                 <p className="mt-[6px] font-sans text-[11.5px] italic leading-[1.6] text-tx3">“{sense.example}”</p>
               )}
@@ -184,6 +217,7 @@ export function LookupPanel({ mediaId, term, cue, onSaved }: Props) {
                       >
                         <span className="font-mono text-[9.5px] opacity-70">{i + 1}</span>
                         {shortPos(s.pos)}
+                        {savedCheck?.known[i] && <span title="already saved">✓</span>}
                       </button>
                     ))}
                   </div>
@@ -196,7 +230,7 @@ export function LookupPanel({ mediaId, term, cue, onSaved }: Props) {
           )}
         </section>
 
-        <section className="mb-[16px]">
+        <section ref={aiFlash.ref} className={`mb-[16px] ${aiFlash.className}`} style={aiFlash.style}>
           <div className="flex items-center justify-between">
             <Label>in context</Label>
             <button
@@ -207,12 +241,13 @@ export function LookupPanel({ mediaId, term, cue, onSaved }: Props) {
               {aiBusy ? 'thinking…' : ai ? 'again' : 'ask the AI'}
             </button>
           </div>
-          {aiError && <Muted>{aiError}</Muted>}
+          {aiBusy && <AiThinking />}
+          {aiError && !aiBusy && <Muted>{aiError}</Muted>}
           {!ai && !aiBusy && !aiError && (
-            <Muted>the local model explains this sense using the line above — takes a few seconds</Muted>
+            <Muted>the AI explains this sense using the line above — takes a few seconds</Muted>
           )}
           {ai && staleForSense && <Muted>that explanation was for another sense — ask again</Muted>}
-          {ai && !staleForSense && (
+          {ai && !staleForSense && !aiBusy && (
             <div className="mt-[6px] flex flex-col gap-[8px]">
               <p className="font-sans text-[12.5px] leading-[1.65] text-tx">{ai.definition}</p>
               {ai.examples.map((example, i) => (
@@ -251,7 +286,15 @@ export function LookupPanel({ mediaId, term, cue, onSaved }: Props) {
           disabled={saving || saved || !cue}
           className="w-full rounded-field bg-accSolid px-[14px] py-[10px] font-sans text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-60"
         >
-          {saved ? 'saved ✓' : saving ? 'saving…' : 'Save with this moment'}
+          {saved
+            ? 'saved ✓'
+            : saving
+              ? 'saving…'
+              : {
+                  'new-word': 'Save with this moment',
+                  same: 'Add this moment to your saved word',
+                  'new-meaning': 'Add as a new meaning, with this moment',
+                }[intent]}
         </button>
         <p className="mt-[7px] font-mono text-[9.5px] leading-[1.6] text-tx3">
           stores the word, the line, the timecode, and cuts a clip in the background

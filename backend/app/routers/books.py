@@ -9,6 +9,7 @@ from app.db import get_connection, get_db
 from app.models.books import (
     PageHeatOut,
     PageLabelCreate,
+    PageLabelUpdate,
     PageLabelOut,
     PageTextLayerOut,
     PageWordHeatOut,
@@ -850,6 +851,27 @@ def create_page_label(
     )
     created = conn.execute("SELECT * FROM book_page_labels WHERE id = ?", (label_id,)).fetchone()
     return _row_to_page_label(created)
+
+
+@router.patch("/{book_id}/page-labels/{label_id}", response_model=PageLabelOut)
+def update_page_label(
+    book_id: str, label_id: str, payload: PageLabelUpdate, conn: sqlite3.Connection = Depends(get_db)
+) -> PageLabelOut:
+    """Picking another level in the panel rewrites the passage already on
+    the page, rather than leaving it at the level it was first written at."""
+    if not payload.simple_text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="There are no simpler words to show.",
+        )
+    cur = conn.execute(
+        "UPDATE book_page_labels SET simple_text = ?, mode = ? WHERE id = ? AND book_id = ?",
+        (payload.simple_text, payload.mode, label_id, book_id),
+    )
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    row = conn.execute("SELECT * FROM book_page_labels WHERE id = ?", (label_id,)).fetchone()
+    return _row_to_page_label(row)
 
 
 @router.delete("/{book_id}/page-labels/{label_id}", status_code=status.HTTP_204_NO_CONTENT)

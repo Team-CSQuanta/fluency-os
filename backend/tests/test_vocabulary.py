@@ -37,6 +37,39 @@ def _make_user(conn, user_id="u1"):
 
 
 # ---------------------------------------------------------------- save_word
+def test_save_word_falls_back_to_the_dictionary_cache(tmp_path):
+    """A word the bundled list has never heard of can still be saved when
+    the reader's lookup has cached a definition for it — that is the case
+    for most words in a real book, and it used to answer 422."""
+    from app.services import dictionary
+    from app.services.dictionary_lookup import DictionaryResult, DictionarySense
+
+    conn = _fresh_conn(tmp_path)
+    user_id = _make_user(conn)
+    word = "inspectingz"
+    dictionary.remember(
+        conn,
+        word,
+        DictionaryResult(
+            word=word,
+            found=True,
+            ipa=None,
+            audio_url=None,
+            senses=(DictionarySense(pos="verb", definition="Looking at closely.", example="He was inspecting it."),),
+            synonyms=("examining",),
+        ),
+        source="online",
+    )
+
+    saved = vocabulary.save_word(
+        conn, user_id=user_id, word=word, sentence="He was inspecting it.", book_id=None, block_index=None
+    )
+
+    assert saved is not None
+    row, already = saved
+    assert not already
+    assert row["definition"] == "Looking at closely."
+    assert row["pos"] == "verb"
 
 
 def test_save_word_snapshots_lexicon_fields(tmp_path):
@@ -369,3 +402,131 @@ def test_notes_and_tags_routes(client, auth_headers, tmp_path):
     )
     assert del_tag.status_code == 200
     assert del_tag.json() == []
+
+
+# ---------------------------------------------------------------- meanings
+
+def _save(client, auth_headers, user_id, book_id, block, definition):
+    return client.post(
+        "/vocabulary",
+        headers=auth_headers,
+        json={
+            "user_id": user_id,
+            "word": KNOWN_WORD,
+            "sentence": f"Paragraph number {block} decided to abandon the plan entirely.",
+            "book_id": book_id,
+            "block_index": block,
+            "sense": {"pos": "verb", "definition": definition, "example": None},
+        },
+    ).json()
+
+
+def test_the_same_meaning_again_adds_only_the_sentence(client, auth_headers, tmp_path):
+    user_id, book_id = _import_book(client, auth_headers, tmp_path)
+    _save(client, auth_headers, user_id, book_id, 0, "To leave behind for good.")
+    # Case and closing punctuation do not make a different meaning.
+    again = _save(client, auth_headers, user_id, book_id, 1, "to leave behind for good")
+
+    assert again["already_saved"] is True
+    assert again["sense_added"] is False
+    assert again["context_added"] is True
+    assert len(again["word"]["senses"]) == 1
+    assert again["word"]["context_count"] == 2
+
+
+def test_a_new_meaning_is_added_to_the_same_entry_with_its_sentence(client, auth_headers, tmp_path):
+    user_id, book_id = _import_book(client, auth_headers, tmp_path)
+    first = _save(client, auth_headers, user_id, book_id, 0, "To leave behind for good.")
+    second = _save(client, auth_headers, user_id, book_id, 0, "To stop doing something before it is finished.")
+
+    assert second["already_saved"] is True
+    assert second["sense_added"] is True
+    # Same place, different meaning: a second context, not a duplicate.
+    assert second["context_added"] is True
+    assert second["word"]["id"] == first["word"]["id"]
+    senses = second["word"]["senses"]
+    assert [s["definition"] for s in senses] == [
+        "To leave behind for good.",
+        "To stop doing something before it is finished.",
+    ]
+
+    detail = client.get(f"/vocabulary/by-word/{KNOWN_WORD}", headers=auth_headers, params={"user_id": user_id}).json()
+    assert sorted(c["sense_id"] for c in detail["contexts"]) == sorted(s["id"] for s in senses)
+
+
+def test_adding_by_hand_says_it_exists_for_a_known_meaning_and_adds_a_new_one(tmp_path):
+    conn = _fresh_conn(tmp_path)
+    user_id = _make_user(conn)
+
+    def manual(definition):
+        return vocabulary.save_manual_word(
+            conn, user_id=user_id, word="bank", pos="noun", definition=definition, example=None,
+            synonyms=[], ipa=None, audio_url=None, note_text=None,
+        )
+
+    manual("The side of a river.")
+    same = manual("the side of a river")
+    assert same.already_existed and not same.sense_added
+    other = manual("A place that keeps money.")
+    assert other.already_existed and other.sense_added
+    assert len(vocabulary.list_senses(conn, other.row["id"])) == 2
+
+
+def test_sense_key_matches_the_migrations_backfill(tmp_path):
+    """The migration keyed existing definitions in SQL; a meaning saved later
+    must key the same way, or it would be counted as new."""
+    conn = _fresh_conn(tmp_path)
+    for definition in ["To leave behind.", "  A Place: ", "naïve; simple"]:
+        sql = conn.execute("SELECT LOWER(TRIM(?, ' .;:')) AS k", (definition,)).fetchone()["k"]
+        assert vocabulary.sense_key(definition) == sql
+
+
+def test_check_says_what_saving_would_do_before_it_is_done(client, auth_headers, tmp_path):
+    user_id, book_id = _import_book(client, auth_headers, tmp_path)
+    asked = ["To leave behind for good.", "To stop doing something before it is finished."]
+
+    def check():
+        return client.post(
+            "/vocabulary/check",
+            headers=auth_headers,
+            json={"user_id": user_id, "word": "abandoned", "definitions": asked},
+        ).json()
+
+    before = check()
+    assert before["saved"] is False and before["known"] == [False, False]
+
+    _save(client, auth_headers, user_id, book_id, 0, "to leave behind for good")
+    after = check()
+    # Found through the inflected form, and matched the way a save matches.
+    assert after["saved"] is True
+    assert after["known"] == [True, False]
+    assert after["sense_count"] == 1 and after["context_count"] == 1
+
+
+def test_one_moment_of_a_film_can_illustrate_two_meanings(tmp_path):
+    conn = _fresh_conn(tmp_path)
+    user_id = _make_user(conn)
+    conn.execute(
+        "INSERT INTO media_items (id, user_id, title, file_hash, added_at) "
+        "VALUES ('m1', ?, 'Film', 'h1', '2026-01-01T00:00:00Z')",
+        (user_id,),
+    )
+    first = vocabulary.save_manual_word(
+        conn, user_id=user_id, word="bank", pos="noun", definition="The side of a river.", example=None,
+        synonyms=[], ipa=None, audio_url=None, note_text=None,
+    )
+    second = vocabulary.save_manual_word(
+        conn, user_id=user_id, word="bank", pos="noun", definition="A place that keeps money.", example=None,
+        synonyms=[], ipa=None, audio_url=None, note_text=None,
+    )
+
+    def moment(saved):
+        return vocabulary.add_clip_context(
+            conn, vocab_word_id=saved.row["id"], media_item_id="m1", media_title="Film",
+            snippet="Meet me by the bank.", start_ms=1000, end_ms=2000, sense_id=saved.sense_id,
+        )
+
+    assert moment(first) is not None
+    assert moment(second) is not None
+    # The same line under the same meaning again is still a duplicate.
+    assert moment(first) is None

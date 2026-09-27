@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { reviewEmptyState } from '@/features/review/emptyState';
 import { useAppStore } from '@/store/appStore';
 import { clipThumbUrl, clipUrl } from '@/store/mediaStore';
-import { useReviewStore } from '@/store/reviewStore';
+import { useReviewStore, type SessionCard, type SessionTally } from '@/store/reviewStore';
 import { useShellStore } from '@/store/shellStore';
 import type { ReviewCardOut, ReviewRating } from '@/types/api';
 
@@ -57,6 +57,81 @@ function holdsFor(days: number): string {
   if (days < 365) return `${Math.round(days / 30)} months`;
   const years = days / 365;
   return years < 1.5 ? 'a year' : `${Math.round(years)} years`;
+}
+
+/** Cards answered by typing: the ones that ask for the word itself. Typing
+ * it is recall, and it makes the rating honest — "I think I knew it" becomes
+ * "I wrote it, and it was right". Recognition stays a think-and-reveal card:
+ * a meaning cannot be checked by string comparison. */
+const TYPED_TYPES = new Set(['cloze', 'production', 'listening']);
+
+type Check = 'right' | 'close' | 'wrong';
+
+function normalise(text: string): string {
+  return text.trim().toLowerCase().replace(/[’']/g, "'").replace(/[^\p{L}\p{N}' -]/gu, '');
+}
+
+/** Edit distance, for telling a typo from a different word. */
+function distance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i += 1) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const here = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = here;
+    }
+  }
+  return row[b.length];
+}
+
+/** Right, close (one slip in a longer word), or wrong. Either the saved
+ * word or the form in the sentence is right: "abandon" and "abandoned" both
+ * answer a gap that held "abandoned". */
+function checkAnswer(typed: string, card: ReviewCardOut): Check {
+  const got = normalise(typed);
+  const answers = [card.word, card.cloze_answer].filter(Boolean).map((w) => normalise(w as string));
+  if (answers.includes(got)) return 'right';
+  const slip = answers.some((w) => w.length >= 4 && distance(got, w) <= (w.length >= 9 ? 2 : 1));
+  return slip ? 'close' : 'wrong';
+}
+
+/** The rating a checked answer suggests. Only a suggestion: the learner may
+ * know they guessed, or that a slip was only a slip. */
+const SUGGESTED: Record<Check, ReviewRating> = { right: 3, close: 2, wrong: 1 };
+
+/** How the sitting went, when it ends. */
+function SessionSummary({ tally, answered }: { tally: SessionTally; answered: number }) {
+  if (answered === 0) return null;
+  const minutes = Math.max(1, Math.round((Date.now() - tally.startedAt) / 60000));
+  const remembered = answered - tally.again;
+  const pct = Math.round((remembered / answered) * 100);
+  return (
+    <div className="mt-5 rounded-field border border-line2 px-4 py-3 text-left">
+      <div className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-tx3">this sitting</div>
+      <div className="mt-[6px] font-sans text-[13px] text-tx">
+        {remembered} of {answered} remembered · {pct}% · {minutes} min
+      </div>
+      <div className="mt-[8px] flex h-[6px] overflow-hidden rounded-full bg-line2">
+        {(['again', 'hard', 'good', 'easy'] as const).map((k) =>
+          tally[k] > 0 ? (
+            <div
+              key={k}
+              style={{
+                width: `${(tally[k] / answered) * 100}%`,
+                background: k === 'again' ? '#c0563f' : k === 'hard' ? 'var(--tx3)' : 'var(--acc)',
+                opacity: k === 'easy' ? 0.55 : 1,
+              }}
+            />
+          ) : null,
+        )}
+      </div>
+      <div className="mt-[6px] font-mono text-[10px] text-tx3">
+        again {tally.again} · hard {tally.hard} · good {tally.good} · easy {tally.easy}
+      </div>
+    </div>
+  );
 }
 
 /** The moment the word was met, on the back of the card.
@@ -140,7 +215,7 @@ function ClipReplay({ card }: { card: ReviewCardOut }) {
 
 /** What the learner is asked, which is the whole difference between the four
  * card types — the back is identical. */
-function CardFront({ card }: { card: ReviewCardOut }) {
+function CardFront({ card }: { card: SessionCard }) {
   if (card.card_type === 'cloze') {
     return (
       <div className="font-sans text-[24px] leading-[1.55] tracking-[-0.01em] text-tx">
@@ -181,23 +256,44 @@ function CardFront({ card }: { card: ReviewCardOut }) {
 export function Review() {
   const goScreen = useShellStore((s) => s.goScreen);
   const currentUser = useAppStore((s) => s.currentUser);
-  const { queue, queueStatus, queueError, stats, index, answered, lastResult } = useReviewStore();
+  const { queue, queueStatus, queueError, stats, index, answered, lastResult, tally, history, inFlight } =
+    useReviewStore();
   const fetchStats = useReviewStore((s) => s.fetchStats);
   const startSession = useReviewStore((s) => s.startSession);
   const rate = useReviewStore((s) => s.rate);
+  const undo = useReviewStore((s) => s.undo);
   const suspendCurrent = useReviewStore((s) => s.suspendCurrent);
 
   const [revealed, setRevealed] = useState(false);
+  const [typed, setTyped] = useState('');
+  const [check, setCheck] = useState<Check | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const card = queue[index];
   const done = queue.length > 0 && index >= queue.length;
+  const typedCard = Boolean(card && TYPED_TYPES.has(card.card_type));
+  const suggested = check ? SUGGESTED[check] : null;
+  const canUndo = history.length > 0 && inFlight === 0;
+
+  /** Show the back — checking what was typed, when anything was. */
+  const reveal = () => {
+    if (card && typedCard && typed.trim()) setCheck(checkAnswer(typed, card));
+    setRevealed(true);
+    // Out of the box, so the number keys rate instead of typing digits.
+    inputRef.current?.blur();
+  };
 
   useEffect(() => {
     if (currentUser) void fetchStats();
   }, [currentUser, fetchStats]);
 
   // A new card means a new question — anything else would show the answer
-  // before it was asked.
-  useEffect(() => setRevealed(false), [index]);
+  // before it was asked. Keyed on the word too: undo puts a card back at the
+  // same index.
+  useEffect(() => {
+    setRevealed(false);
+    setTyped('');
+    setCheck(null);
+  }, [index, card?.vocab_word_id]);
 
   useEffect(() => {
     if (done) void fetchStats();
@@ -207,13 +303,25 @@ export function Review() {
   // Reviewing is repetitive by design, and reaching for the mouse on every
   // card is what makes a long queue feel long.
   useEffect(() => {
-    if (!card) return;
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+      // Z takes back the last answer — here or on the finished screen.
+      if ((e.key === 'z' || e.key === 'Z') && canUndo) {
+        e.preventDefault();
+        void undo();
+        return;
+      }
+      if (!card) return;
       if (!revealed && (e.key === ' ' || e.key === 'Enter')) {
         e.preventDefault();
-        setRevealed(true);
+        reveal();
+        return;
+      }
+      // Enter accepts the rating a typed answer suggested.
+      if (revealed && e.key === 'Enter' && suggested) {
+        e.preventDefault();
+        void rate(suggested);
         return;
       }
       if (revealed && e.key >= '1' && e.key <= '4') {
@@ -223,7 +331,8 @@ export function Review() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [card, revealed, rate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card, revealed, rate, undo, canUndo, suggested, typed]);
 
   // --- nothing to do -------------------------------------------------------
 
@@ -244,6 +353,7 @@ export function Review() {
         <div className="w-full max-w-[460px] rounded-panel border border-line2 bg-panel px-7 py-8 text-center">
           <div className="font-sans text-[18px] font-semibold text-tx">{copy.heading}</div>
           <div className="mt-2 font-sans text-[12.5px] leading-[1.7] text-tx2">{copy.body}</div>
+          {done && <SessionSummary tally={tally} answered={answered} />}
 
           {stats && (
             <div className="mt-5 grid grid-cols-3 gap-2 font-mono text-[10px] text-tx3">
@@ -295,6 +405,11 @@ export function Review() {
               back to dashboard
             </button>
           </div>
+          {done && canUndo && (
+            <button onClick={() => void undo()} className="mt-3 font-mono text-[10.5px] text-tx3 hover:text-acc">
+              ↶ undo the last answer <span className="opacity-70">z</span>
+            </button>
+          )}
           {queueError && (
             <div className="mt-3 font-mono text-[10px] text-[#c0563f]">{queueError}</div>
           )}
@@ -321,6 +436,14 @@ export function Review() {
         {/* "Leech" is what a spaced-repetition scheduler calls a card that
             keeps being forgotten. It is a term of art, and the thing it
             describes is worth telling someone about, so it says the thing. */}
+        {card.returning && (
+          <span
+            className="rounded-full border border-accLine px-2 py-[3px] font-mono text-[9.5px] text-acc"
+            title="You didn't get this one earlier in this sitting — here it is again."
+          >
+            second try
+          </span>
+        )}
         {card.is_leech && (
           <span
             className="rounded-full border border-[#c0563f] px-2 py-[3px] font-mono text-[9.5px] text-[#c0563f]"
@@ -337,6 +460,41 @@ export function Review() {
             {CARD_TYPE_LABEL[card.card_type] ?? card.card_type}
           </div>
           <CardFront card={card} />
+          {typedCard && (
+            <div className="mx-auto mt-5 max-w-[360px]">
+              <input
+                ref={inputRef}
+                // A fresh box per card, focused so typing can start at once.
+                key={`${index}-${card.vocab_word_id}`}
+                autoFocus
+                value={typed}
+                disabled={revealed}
+                onChange={(e) => setTyped(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    reveal();
+                  }
+                }}
+                placeholder="type the word, then Enter"
+                spellCheck={false}
+                autoComplete="off"
+                className="w-full rounded-field border border-line2 bg-transparent px-3 py-[9px] text-center font-sans text-[15px] text-tx outline-none focus:border-acc disabled:opacity-80"
+              />
+              {revealed && check && (
+                <div
+                  className="mt-[7px] font-mono text-[11px]"
+                  style={{ color: check === 'right' ? 'var(--acc)' : check === 'close' ? 'var(--tx2)' : '#c0563f' }}
+                >
+                  {check === 'right'
+                    ? '✓ right'
+                    : check === 'close'
+                      ? `almost — it's “${card.cloze_answer ?? card.word}”`
+                      : `✗ it's “${card.cloze_answer ?? card.word}”`}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {revealed && (
@@ -351,6 +509,16 @@ export function Review() {
               )}
               {card.simpler && (
                 <div className="mt-[10px] font-sans text-[12.5px] leading-[1.65] text-tx3">{card.simpler}</div>
+              )}
+              {/* The card asks about one meaning — the one its sentence uses.
+                  The others are still the learner's, so they are named. */}
+              {card.other_senses && card.other_senses.length > 0 && (
+                <div className="mt-[10px] font-sans text-[11.5px] leading-[1.6] text-tx3">
+                  <span className="font-mono text-[9.5px] uppercase tracking-[0.1em]">also means</span>
+                  {card.other_senses.map((d) => (
+                    <div key={d}>· {d}</div>
+                  ))}
+                </div>
               )}
               {/* Keyed on the word: a new card must not inherit the previous
                   one's open video. */}
@@ -414,10 +582,11 @@ export function Review() {
         <div className="flex-none border-t border-line2 px-[34px] pb-5 pt-4">
           {!revealed ? (
             <button
-              onClick={() => setRevealed(true)}
+              onClick={reveal}
               className="w-full rounded-field bg-accSolid py-[13px] font-sans text-[13px] font-semibold text-white hover:brightness-110"
             >
-              Show answer <span className="font-mono text-[11px] font-normal opacity-75">space</span>
+              {typedCard && typed.trim() ? 'Check' : 'Show answer'}{' '}
+              <span className="font-mono text-[11px] font-normal opacity-75">{typedCard ? 'enter' : 'space'}</span>
             </button>
           ) : (
             <div className="grid grid-cols-4 gap-2">
@@ -426,7 +595,12 @@ export function Review() {
                   key={r.label}
                   onClick={() => void rate((i + 1) as ReviewRating)}
                   className="rounded-field border px-[6px] py-[11px] text-center hover:border-acc"
-                  style={{ borderColor: RATING_STYLE[i].bd, background: RATING_STYLE[i].bg }}
+                  style={{
+                    borderColor: RATING_STYLE[i].bd,
+                    background: RATING_STYLE[i].bg,
+                    // What the typed answer suggests — Enter takes it.
+                    boxShadow: suggested === i + 1 ? '0 0 0 2px var(--acc)' : undefined,
+                  }}
                 >
                   <div className="font-sans text-[12.5px] font-semibold" style={{ color: RATING_STYLE[i].fg }}>
                     {r.label} <span className="font-mono text-[10px] font-normal text-tx3">{i + 1}</span>
@@ -444,9 +618,21 @@ export function Review() {
       </div>
 
       <div className="flex w-full max-w-[760px] items-center justify-center gap-2 font-mono text-[10.5px] text-tx3">
+        {canUndo && (
+          <button onClick={() => void undo()} className="text-tx3 hover:text-acc" title="Take back the last answer">
+            ↶ undo <span className="opacity-70">z</span>
+          </button>
+        )}
         {lastResult ? (
           <span>
-            last card → back in <span className="text-acc">{lastResult.interval_label}</span>
+            last card →{' '}
+            {lastResult.requeue ? (
+              <span className="text-acc">back later in this sitting</span>
+            ) : (
+              <>
+                back in <span className="text-acc">{lastResult.interval_label}</span>
+              </>
+            )}
           </span>
         ) : (
           <span>this card can also be answered by using the word in conversation</span>

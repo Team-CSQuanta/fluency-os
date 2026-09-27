@@ -50,12 +50,20 @@ export function reviewEmptyState(
     'nothing-due': 'Nothing due',
   }[state];
 
+  // Unseen cards held back by the daily new-card limit: said, so an empty
+  // queue with words still unseen does not read as a bug.
+  const heldBack = Math.max(0, (stats?.new_total ?? 0) - fresh);
+  const tomorrow =
+    heldBack > 0
+      ? ` Today's new words are done — ${heldBack} more start tomorrow, ${stats?.new_per_day ?? 15} a day (Settings → Study).`
+      : '';
+
   const body = {
-    'cleared-all': `You answered ${answeredLabel}. They'll come back when the scheduler says they're worth your time.`,
+    'cleared-all': `You answered ${answeredLabel}. They'll come back when the scheduler says they're worth your time.${tomorrow}`,
     'cleared-more': `You answered ${answeredLabel}. ${waiting} more ${waiting === 1 ? 'is' : 'are'} waiting whenever you want them — a sitting is capped so a backlog stays workable.`,
     empty: 'Save words while reading or watching and they will appear here on a schedule.',
     ready: `${waiting} card${waiting === 1 ? '' : 's'} waiting — ${due} due, ${fresh} new.`,
-    'nothing-due': 'Nothing is due right now — coming back before a card is due mostly wastes the review.',
+    'nothing-due': `Nothing is due right now — coming back before a card is due mostly wastes the review.${tomorrow}`,
   }[state];
 
   const canStart = state === 'ready' || state === 'cleared-more';

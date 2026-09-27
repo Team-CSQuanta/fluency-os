@@ -22,6 +22,8 @@ DEFAULT_MODEL = "openai/gpt-4o-mini"
 
 
 def _chat(messages: list[dict], *, api_key: str | None, model: str, max_tokens: int, temperature: float) -> str:
+    if engine_health.cloud_is_off():
+        raise EngineUnavailable(engine_health.OFF_MESSAGE)
     if not api_key:
         raise EngineUnavailable(
             "No OpenRouter API key configured — add one in Settings (AI → Cloud) to use the cloud AI."

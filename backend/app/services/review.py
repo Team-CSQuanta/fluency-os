@@ -9,8 +9,10 @@ dictionary in the codebase.
 """
 
 import json
+import re
 import sqlite3
-from dataclasses import dataclass
+import zlib
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 
 from app.services import fsrs
@@ -40,9 +42,10 @@ CONVERSATION_RATINGS: dict[str, int] = {
 # is the blunt half of it — a backlog is worked through at a steady rate
 # instead of presenting four hundred cards and guaranteeing avoidance.
 DEFAULT_SESSION_LIMIT = 20
-# Of that, at most this many cards the learner has never seen. New cards are
-# the ones that create tomorrow's workload, so they are the ones to cap.
-DEFAULT_NEW_PER_SESSION = 5
+# New cards are the ones that create tomorrow's workload, so they are capped
+# per DAY, from the learner's own setting (user_settings.new_cards_per_day).
+# A per-sitting cap alone let a second sitting introduce a second batch.
+DEFAULT_NEW_PER_DAY = 15
 
 CARD_TYPES = ("recognition", "production", "cloze", "listening")
 
@@ -100,6 +103,37 @@ def ensure_card(conn: sqlite3.Connection, user_id: str, vocab_word_id: str) -> s
     ).fetchone()
 
 
+def local_day_start(now: datetime) -> datetime:
+    """The start of the learner's own day, in UTC. "Today" on a review screen
+    means the learner's calendar day — the backend runs on their machine, so
+    its local time zone is theirs. UTC midnight is 6 a.m. in Dhaka."""
+    local = now.astimezone()
+    return local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+
+
+def new_cards_per_day(conn: sqlite3.Connection, user_id: str) -> int:
+    row = conn.execute(
+        "SELECT new_cards_per_day FROM user_settings WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    return int(row["new_cards_per_day"]) if row and row["new_cards_per_day"] is not None else DEFAULT_NEW_PER_DAY
+
+
+def introduced_today(conn: sqlite3.Connection, user_id: str, now: datetime) -> int:
+    """New cards first answered today: the answers whose card was 'new' before."""
+    return conn.execute(
+        """
+        SELECT COUNT(DISTINCT vocab_word_id) AS n FROM review_logs
+        WHERE user_id = ? AND source = 'flashcard' AND created_at >= ?
+          AND json_extract(prev_card, '$.state') = 'new'
+        """,
+        (user_id, _fmt(local_day_start(now))),
+    ).fetchone()["n"]
+
+
+def new_left_today(conn: sqlite3.Connection, user_id: str, now: datetime) -> int:
+    return max(0, new_cards_per_day(conn, user_id) - introduced_today(conn, user_id, now))
+
+
 # --- mastery ----------------------------------------------------------------
 
 
@@ -143,30 +177,49 @@ def mastery_for(card: Card, spontaneous_session_count: int) -> Mastery:
 # --- the queue --------------------------------------------------------------
 
 
-def _card_type_for(word: sqlite3.Row, context: sqlite3.Row | None, position: int) -> str:
-    """Interleaved by position (spec §5.5), but never asking for something
-    the data cannot support — a cloze needs a sentence with the word in it,
-    and a listening card needs audio. Falling back to recognition is always
-    possible because the word itself is always there."""
-    wanted = CARD_TYPES[position % len(CARD_TYPES)]
-    if wanted == "cloze" and not (context or word["example"]):
-        wanted = "recognition"
-    if wanted == "listening" and not word["audio_url"]:
-        wanted = "production" if word["definition"] else "recognition"
-    if wanted == "production" and not word["definition"]:
-        wanted = "recognition"
-    return wanted
+def _card_type_for(
+    card: Card, *, has_cloze: bool, has_audio: bool, has_definition: bool, position: int
+) -> str:
+    """The question gets harder as the word sticks.
+
+    Recognising a word is easier than recalling it, and recalling it inside a
+    sentence is easier than from its meaning alone. Asking the hardest
+    question of a word met once was the old behaviour — types rotated by
+    position in the queue, so a brand-new word could open on "how do you say
+    this?". Now the stage picks the candidates and position only interleaves
+    among them (spec §5.5), and nothing is asked that the data cannot
+    support: a cloze needs the word really in a sentence, listening needs
+    audio, recall needs a definition to recall from.
+    """
+    if card.reps == 0 or card.state == "new":
+        # First meeting: see the word, learn what it means.
+        wanted = ["recognition"]
+    elif card.state in ("learning", "relearning") or card.stability < 7:
+        wanted = ["cloze", "recognition"]
+    elif card.stability < 21:
+        wanted = ["cloze", "production"]
+    else:
+        wanted = ["production", "listening", "cloze"]
+
+    ok = {
+        "recognition": True,
+        "cloze": has_cloze,
+        "production": has_definition,
+        "listening": has_audio,
+    }
+    usable = [t for t in wanted if ok[t]] or ["recognition"]
+    return usable[position % len(usable)]
 
 
-def _cloze(sentence: str, word: str) -> tuple[str, str] | None:
-    """Splits a sentence around the target word. Returns None when the word
-    isn't actually in it — a cloze whose blank hides nothing teaches nothing."""
-    import re
-
+def _cloze(sentence: str, word: str) -> tuple[str, str, str] | None:
+    """Splits a sentence around the target word: (before, the word as it
+    appears, after). None when the word isn't actually in it — a cloze whose
+    blank hides nothing teaches nothing. The middle is the answer to type:
+    "abandoned", when the saved word is "abandon"."""
     match = re.search(rf"\b{re.escape(word)}\w*\b", sentence, re.IGNORECASE)
     if not match:
         return None
-    return sentence[: match.start()].strip(), sentence[match.end() :].strip()
+    return sentence[: match.start()].strip(), match.group(0), sentence[match.end() :].strip()
 
 
 def build_queue(
@@ -174,16 +227,22 @@ def build_queue(
     user_id: str,
     *,
     limit: int = DEFAULT_SESSION_LIMIT,
-    new_limit: int = DEFAULT_NEW_PER_SESSION,
+    new_limit: int | None = None,
     now: datetime | None = None,
 ) -> list[dict]:
-    """Due cards first, then a capped number of new ones.
+    """Due cards first, then as many new ones as today still allows.
+
+    `new_limit` caps new cards in this sitting further; left out, the day's
+    remaining allowance is the cap.
 
     Due-first because an overdue card is actively being forgotten while a new
     one is merely unlearned; introducing new material ahead of rescuing old
     is how backlogs become permanent."""
     now = now or fsrs.utcnow()
     now_iso = _fmt(now)
+    allowed_new = new_left_today(conn, user_id, now)
+    if new_limit is not None:
+        allowed_new = min(allowed_new, new_limit)
 
     due = conn.execute(
         """
@@ -207,7 +266,7 @@ def build_queue(
         ORDER BY w.created_at DESC
         LIMIT ?
         """,
-        (user_id, min(remaining, new_limit)),
+        (user_id, min(remaining, allowed_new)),
     ).fetchall()
 
     retention = target_retention(conn, user_id)
@@ -237,9 +296,12 @@ def _review_context(conn: sqlite3.Connection, vocab_word_id: str) -> sqlite3.Row
     return conn.execute(
         """
         SELECT c.snippet, c.source_label, c.kind, c.media_item_id,
-               k.id AS clip_id, k.status AS clip_status
+               k.id AS clip_id, k.status AS clip_status,
+               s.id AS sense_id, s.pos AS sense_pos, s.definition AS sense_definition,
+               s.example AS sense_example
           FROM vocab_contexts c
           LEFT JOIN media_clips k ON k.vocab_context_id = c.id
+          LEFT JOIN vocab_senses s ON s.id = c.sense_id
          WHERE c.vocab_word_id = ?
          ORDER BY (k.id IS NOT NULL) DESC, c.created_at DESC
          LIMIT 1
@@ -254,16 +316,33 @@ def _card_out(
     context = _review_context(conn, row["vocab_word_id"])
 
     card = card_from_row(row)
-    card_type = _card_type_for(row, context, position)
+    # The meaning this card is about: the one its sentence was saved under,
+    # when the word has several — a SQL book's "student" is a table row, and
+    # the card must not quote that sentence under the novel's meaning.
+    definition = (context["sense_definition"] if context else None) or row["definition"]
+    pos = (context["sense_pos"] if context else None) or row["pos"]
+    example = (context["sense_example"] if context else None) or row["example"]
+    other_senses = [
+        s["definition"]
+        for s in conn.execute(
+            "SELECT definition FROM vocab_senses WHERE vocab_word_id = ? ORDER BY created_at, id",
+            (row["vocab_word_id"],),
+        )
+        if s["definition"] != definition
+    ]
 
-    sentence = (context["snippet"] if context else None) or row["example"]
-    before = after = None
-    if card_type == "cloze" and sentence:
-        split = _cloze(sentence, row["word"])
-        if split:
-            before, after = split
-        else:
-            card_type = "recognition"
+    sentence = (context["snippet"] if context else None) or example
+    split = _cloze(sentence, row["word"]) if sentence else None
+    card_type = _card_type_for(
+        card,
+        has_cloze=split is not None,
+        has_audio=bool(row["audio_url"]),
+        has_definition=bool(definition),
+        position=position,
+    )
+    before = answer = after = None
+    if card_type == "cloze" and split:
+        before, answer, after = split
 
     previews = fsrs.preview(card, now=now, target_retention=retention)
     spont = spontaneous_sessions(conn, row["vocab_word_id"])
@@ -274,11 +353,12 @@ def _card_out(
         "card_type": card_type,
         "word": row["word"],
         "ipa": row["ipa"],
-        "pos": row["pos"],
+        "pos": pos,
         "cefr": row["cefr"],
-        "definition": row["definition"],
+        "definition": definition,
+        "other_senses": other_senses,
         "simpler": row["simpler"],
-        "example": row["example"],
+        "example": example,
         "mnemonic": row["ai_mnemonic"],
         "synonyms": json.loads(row["synonyms"] or "[]"),
         "audio_url": row["audio_url"],
@@ -290,6 +370,7 @@ def _card_out(
         "media_item_id": context["media_item_id"] if context else None,
         "cloze_before": before,
         "cloze_after": after,
+        "cloze_answer": answer,
         "state": row["state"],
         "stability_days": round(card.stability, 1),
         "difficulty": round(card.difficulty, 1),
@@ -334,19 +415,37 @@ def _log(
     card: Card,
     elapsed_days: float | None,
     session_id: str | None = None,
+    prev_card: dict | None = None,
+    now: datetime | None = None,
 ) -> None:
     conn.execute(
         """
         INSERT INTO review_logs
           (id, user_id, vocab_word_id, session_id, source, outcome, rating,
-           stability, difficulty, elapsed_days, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           stability, difficulty, elapsed_days, prev_card, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             uuid7(), user_id, vocab_word_id, session_id, source, outcome, rating,
-            card.stability, card.difficulty, elapsed_days, iso8601_utc_now(),
+            card.stability, card.difficulty, elapsed_days,
+            json.dumps(prev_card) if prev_card is not None else None,
+            _fmt(now) if now else iso8601_utc_now(),
         ),
     )
+
+
+def _snapshot(row: sqlite3.Row) -> dict:
+    """A review_cards row as it stood, for undo."""
+    return {
+        "stability": row["stability"],
+        "difficulty": row["difficulty"],
+        "state": row["state"],
+        "due": row["due"],
+        "last_review": row["last_review"],
+        "reps": row["reps"],
+        "lapses": row["lapses"],
+        "suspended": row["suspended"],
+    }
 
 
 def _save(conn: sqlite3.Connection, vocab_word_id: str, card: Card, *, suspended: bool) -> None:
@@ -383,6 +482,11 @@ def _apply(
     )
 
     after = fsrs.review(before, rating, now=now, target_retention=target_retention(conn, user_id))
+    if after.state == "review" and after.due is not None:
+        # Spread out, so words saved together stop falling due together.
+        days = (after.due - now).total_seconds() / 86400
+        seed = zlib.crc32(f"{vocab_word_id}:{after.reps}".encode())
+        after = replace(after, due=now + timedelta(days=fsrs.fuzzed_days(days, seed)))
     # Spec §5.5: a card that keeps lapsing is not working as posed and should
     # leave the queue rather than keep consuming sittings. Its state is kept,
     # so unsuspending resumes the schedule instead of restarting it.
@@ -399,6 +503,8 @@ def _apply(
         card=after,
         elapsed_days=elapsed,
         session_id=session_id,
+        prev_card=_snapshot(row),
+        now=now,
     )
 
     spont = spontaneous_sessions(conn, vocab_word_id)
@@ -431,10 +537,74 @@ def answer_card(
     ).fetchone()
     if owns is None:
         raise LookupError("no such word")
-    return _apply(
+    now = now or fsrs.utcnow()
+    result = _apply(
         conn, user_id, vocab_word_id, rating,
         source="flashcard", outcome=fsrs.RATING_NAMES[rating], now=now,
     )
+    # Still in short steps — forgotten, or not yet convincing: it comes back
+    # in this sitting, as it now stands. The old queue was fixed, so a card
+    # answered "Again" left with the learner never having got it right.
+    result["requeue"] = (
+        card_for(conn, vocab_word_id, now=now)
+        if result["state"] in ("learning", "relearning") and not result["suspended"]
+        else None
+    )
+    return result
+
+
+def card_for(conn: sqlite3.Connection, vocab_word_id: str, *, now: datetime | None = None) -> dict | None:
+    """One card, built exactly as the queue builds it."""
+    now = now or fsrs.utcnow()
+    row = conn.execute(
+        """
+        SELECT rc.*, w.word, w.lemma, w.pos, w.cefr, w.definition, w.example,
+               w.simpler, w.synonyms, w.ipa, w.audio_url, w.ai_mnemonic
+        FROM review_cards rc JOIN vocab_words w ON w.id = rc.vocab_word_id
+        WHERE rc.vocab_word_id = ?
+        """,
+        (vocab_word_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return _card_out(conn, row, 0, target_retention(conn, row["user_id"]), now)
+
+
+def undo_last(
+    conn: sqlite3.Connection, user_id: str, vocab_word_id: str, *, now: datetime | None = None
+) -> dict:
+    """Takes back this card's last flashcard answer: the card returns to
+    exactly the state it was in, and the answer is no longer on record.
+
+    Only the card's most recent answer, and only a flashcard one. Undoing
+    past a later conversation outcome would erase evidence the learner did
+    not mis-click; undoing an answer from before this migration is not
+    possible because its prior state was never kept.
+    """
+    last = conn.execute(
+        "SELECT * FROM review_logs WHERE vocab_word_id = ? AND user_id = ? "
+        "ORDER BY created_at DESC, id DESC LIMIT 1",
+        (vocab_word_id, user_id),
+    ).fetchone()
+    if last is None or last["source"] != "flashcard" or not last["prev_card"]:
+        raise LookupError("nothing to undo")
+    prev = json.loads(last["prev_card"])
+    conn.execute(
+        """
+        UPDATE review_cards
+           SET stability = ?, difficulty = ?, state = ?, due = ?, last_review = ?,
+               reps = ?, lapses = ?, suspended = ?
+         WHERE vocab_word_id = ? AND user_id = ?
+        """,
+        (
+            prev["stability"], prev["difficulty"], prev["state"], prev["due"], prev["last_review"],
+            prev["reps"], prev["lapses"], prev["suspended"], vocab_word_id, user_id,
+        ),
+    )
+    conn.execute("DELETE FROM review_logs WHERE id = ?", (last["id"],))
+    card = card_for(conn, vocab_word_id, now=now)
+    assert card is not None
+    return card
 
 
 def apply_conversation_outcomes(
@@ -494,20 +664,24 @@ def stats(conn: sqlite3.Connection, user_id: str, *, now: datetime | None = None
 
     # Spec §7: "Upcoming load forecast — reviews due over the next 30 days, so
     # backlogs are visible before they arrive."
+    # Days are the learner's own, from their midnight — UTC days put the
+    # first hours of every local day into the day before.
     forecast = []
+    today = local_day_start(now)
     for day in range(1, 31):
-        start = (now + timedelta(days=day - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        start = today + timedelta(days=day - 1)
         end = start + timedelta(days=1)
         n = conn.execute(
             "SELECT COUNT(*) AS n FROM review_cards WHERE user_id = ? AND suspended = 0 "
             "AND state != 'new' AND due >= ? AND due < ?",
             (user_id, _fmt(start), _fmt(end)),
         ).fetchone()["n"]
-        forecast.append({"date": start.strftime("%Y-%m-%d"), "count": n})
+        forecast.append({"date": start.astimezone().strftime("%Y-%m-%d"), "count": n})
 
+    # Since the learner's own midnight, not UTC's.
     reviewed_today = conn.execute(
         "SELECT COUNT(*) AS n FROM review_logs WHERE user_id = ? AND source = 'flashcard' AND created_at >= ?",
-        (user_id, now.replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")),
+        (user_id, _fmt(local_day_start(now))),
     ).fetchone()["n"]
 
     mastery_counts = [0] * 6
@@ -519,7 +693,12 @@ def stats(conn: sqlite3.Connection, user_id: str, *, now: datetime | None = None
 
     return {
         "due_now": counts["due_now"] or 0,
-        "new_available": counts["new_count"] or 0,
+        # What a sitting can actually introduce today, not every unseen card:
+        # "28 new" beside a start button that brings five was a promise the
+        # queue would not keep.
+        "new_available": min(counts["new_count"] or 0, new_left_today(conn, user_id, now)),
+        "new_total": counts["new_count"] or 0,
+        "new_per_day": new_cards_per_day(conn, user_id),
         "total_cards": counts["total"] or 0,
         "suspended": counts["suspended_count"] or 0,
         "reviewed_today": reviewed_today,

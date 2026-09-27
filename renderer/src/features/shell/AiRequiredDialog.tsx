@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useEngineStore } from '@/store/engineStore';
 import { useShellStore } from '@/store/shellStore';
 
@@ -34,13 +35,25 @@ export function AiRequiredDialog({
   const launchError = useEngineStore((s) => s.launchError);
   const launchAi = useEngineStore((s) => s.launchAi);
   const fetchStatus = useEngineStore((s) => s.fetchStatus);
+  const llmProvider = useEngineStore((s) => s.llmProvider);
+  // A cloud model is never "started" — the button checks the key with a real
+  // request instead, and the wording has to say that.
+  const runsLocally = llmProvider === null || llmProvider.provider === 'local';
+  // Read unconditionally: a hook behind `&&` runs on some renders and not
+  // others, which React cannot survive.
+  const llmOff = useEngineStore((s) => Boolean(s.status?.llm_off));
+  const cloudOff = !runsLocally && llmOff;
+  // The store keeps the last failure until the next attempt, which may have
+  // been minutes ago on another screen; only this dialog's own tries count.
+  const [tried, setTried] = useState(false);
 
   // Downloaded, or a key saved. Not the same as loaded — that is the point.
   const configured = readiness?.llm ?? false;
   const engineLabel = readiness?.llm_model_label ?? 'your AI model';
 
   const launch = async () => {
-    await launchAi();
+    setTried(true);
+    await launchAi().catch(() => {});
     await fetchStatus();
     if (useEngineStore.getState().status?.llm === 'ready') {
       onLaunched?.();
@@ -60,12 +73,21 @@ export function AiRequiredDialog({
         role="dialog"
         aria-modal="true"
       >
-        <div className="font-sans text-[15px] font-semibold text-tx">The AI isn’t running yet</div>
+        <div className="font-sans text-[15px] font-semibold text-tx">
+          {runsLocally
+            ? 'The AI isn’t running yet'
+            : cloudOff
+              ? 'The cloud AI is switched off'
+              : 'The cloud AI didn’t answer'}
+        </div>
         <p className="mt-[8px] font-sans text-[12.5px] leading-[1.65] text-tx2">
-          {what} needs the AI, and it isn’t started right now.
-          {configured
-            ? ' It only takes one click — it’s already on this computer.'
-            : ' Nothing has been set up for it yet, so there’s nothing to start.'}
+          {!configured
+            ? `${what} needs the AI. ${runsLocally ? 'No model has been downloaded' : 'No API key has been saved'} yet, so there’s nothing to start.`
+            : runsLocally
+              ? `${what} needs the AI, and it isn’t started right now. It only takes one click — it’s already on this computer.`
+              : cloudOff
+                ? `${what} needs the AI. You switched it off, so nothing is being sent to ${engineLabel}.`
+                : `${what} needs the AI, and ${engineLabel} didn’t answer. Check the connection and your key, then try again.`}
         </p>
 
         {detail && (
@@ -74,7 +96,7 @@ export function AiRequiredDialog({
           </p>
         )}
 
-        {launchError && (
+        {tried && launchError && (
           <p className="mt-[9px] font-sans text-[11.5px] leading-[1.55] text-[#e06c6c]">{launchError}</p>
         )}
 
@@ -85,7 +107,15 @@ export function AiRequiredDialog({
               disabled={launching}
               className="rounded-field bg-accSolid px-[15px] py-[8px] font-sans text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-60"
             >
-              {launching ? 'starting the AI…' : `Start ${engineLabel}`}
+              {launching
+                ? runsLocally
+                  ? 'starting the AI…'
+                  : 'checking…'
+                : runsLocally
+                  ? `Start ${engineLabel}`
+                  : cloudOff
+                    ? 'Turn the cloud AI on'
+                    : 'Check the key and try again'}
             </button>
           ) : (
             <button

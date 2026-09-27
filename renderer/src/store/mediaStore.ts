@@ -393,9 +393,19 @@ export const useMediaStore = create<MediaState>((set, get) => ({
     set({ playerPrefs: await api.get<PlayerPrefsOut>(`/media/prefs/player?user_id=${encodeURIComponent(userId)}`) });
   },
 
-  setPlayerPrefs: async (patch) => {
+  setPlayerPrefs: async (requested) => {
     const userId = requireUserId();
     const current = get().playerPrefs;
+    // Auto-pause and loop both decide what happens at the end of a line —
+    // stop, or go back — so turning one on turns the other off. Here, so the
+    // player buttons, the O and L keys and Settings all behave the same; the
+    // server enforces it too.
+    const patch: Partial<PlayerPrefsOut> =
+      requested.auto_pause === true
+        ? { ...requested, loop_cue: false }
+        : requested.loop_cue === true
+          ? { ...requested, auto_pause: false }
+          : requested;
     // Applied locally first: these are toggles on top of playing video, and a
     // round trip before the subtitle blurs would feel broken.
     if (current) set({ playerPrefs: { ...current, ...patch } });

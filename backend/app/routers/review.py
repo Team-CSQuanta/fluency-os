@@ -9,6 +9,7 @@ from app.models.review import (
     ReviewCardOut,
     ReviewStatsOut,
     SuspendIn,
+    UndoIn,
 )
 from app.security import require_token
 from app.services import review
@@ -20,10 +21,11 @@ router = APIRouter(prefix="/review", dependencies=[Depends(require_token)])
 def get_queue(
     user_id: str,
     limit: int = review.DEFAULT_SESSION_LIMIT,
-    new_limit: int = review.DEFAULT_NEW_PER_SESSION,
+    new_limit: int | None = None,
     conn: sqlite3.Connection = Depends(get_db),
 ) -> list[ReviewCardOut]:
-    """Cards to answer now: everything due, then a capped number of new ones.
+    """Cards to answer now: everything due, then new ones up to the day's
+    allowance (the learner's new-cards-per-day setting).
 
     Both caps are real scheduling policy, not pagination — spec §5.5's load
     smoothing. Handing over a 400-card backlog produces avoidance, not study."""
@@ -49,6 +51,18 @@ def rate_card(
     except ValueError as err:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err)) from err
     return RateCardOut(**result)
+
+
+@router.post("/cards/{vocab_word_id}/undo", response_model=ReviewCardOut)
+def undo_answer(
+    vocab_word_id: str, payload: UndoIn, conn: sqlite3.Connection = Depends(get_db)
+) -> ReviewCardOut:
+    """Takes back the card's last flashcard answer and returns the card as
+    it was, to be asked again."""
+    try:
+        return ReviewCardOut(**review.undo_last(conn, payload.user_id, vocab_word_id))
+    except LookupError as err:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="There is no answer to undo.") from err
 
 
 @router.post("/cards/{vocab_word_id}/suspend", status_code=status.HTTP_204_NO_CONTENT)

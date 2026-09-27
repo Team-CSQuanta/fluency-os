@@ -10,6 +10,9 @@ from app.db import get_db
 from app.models.conversation import (
     ConversationReportOut,
     ConversationSessionCreate,
+    CustomScenarioIn,
+    CustomScenarioOut,
+    ScenarioCatalogOut,
     ConversationSessionDetailOut,
     ConversationSessionOut,
     ConversationTurnOut,
@@ -18,7 +21,7 @@ from app.models.conversation import (
     TurnSubmitOut,
 )
 from app.security import require_token
-from app.services import conversation
+from app.services import conversation, scenarios
 from app.services.voice import tts
 from app.services.voice.errors import EngineUnavailable
 
@@ -62,7 +65,13 @@ def _target_words_out(conn: sqlite3.Connection, session: sqlite3.Row) -> list[Ta
         report = json.loads(session["report_json"])
         outcomes = {r["word"]: r["outcome"] for r in report.get("routing", [])}
 
-    return [TargetWordOut(id=r["id"], word=r["word"], used_outcome=outcomes.get(r["word"])) for r in rows]
+    reasons = conversation.target_reasons(session)
+    # In the order they were picked — best first — not the database's order.
+    order = {wid: i for i, wid in enumerate(word_ids)}
+    return [
+        TargetWordOut(id=r["id"], word=r["word"], used_outcome=outcomes.get(r["word"]), reason=reasons.get(r["id"]))
+        for r in sorted(rows, key=lambda r: order.get(r["id"], len(order)))
+    ]
 
 
 def _session_out(conn: sqlite3.Connection, row: sqlite3.Row) -> ConversationSessionOut:
@@ -71,6 +80,9 @@ def _session_out(conn: sqlite3.Connection, row: sqlite3.Row) -> ConversationSess
         id=row["id"],
         user_id=row["user_id"],
         scenario=row["scenario"],
+        scenario_label=conversation.scenario_label(row),
+        persona_name=conversation.session_persona(row).name,
+        persona_role=conversation.session_persona(row).role,
         channel=row["channel"],
         target_words=_target_words_out(conn, row),
         started_at=row["started_at"],
@@ -95,6 +107,36 @@ def get_engine_status(user_id: str, conn: sqlite3.Connection = Depends(get_db)) 
     return EngineStatusOut(**conversation.full_engine_status(conn, user_id))
 
 
+def _custom_out(row: sqlite3.Row) -> CustomScenarioOut:
+    return CustomScenarioOut(**{k: row[k] for k in CustomScenarioOut.model_fields})
+
+
+@router.get("/scenarios", response_model=ScenarioCatalogOut)
+def list_scenarios(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> ScenarioCatalogOut:
+    """Every scene the picker offers: the catalog by category, and the
+    learner's own."""
+    return ScenarioCatalogOut(
+        categories=scenarios.catalog(),
+        custom=[_custom_out(r) for r in conversation.list_custom_scenarios(conn, user_id)],
+    )
+
+
+@router.post("/custom-scenarios", response_model=CustomScenarioOut, status_code=status.HTTP_201_CREATED)
+def create_custom_scenario(payload: CustomScenarioIn, conn: sqlite3.Connection = Depends(get_db)) -> CustomScenarioOut:
+    try:
+        row = conversation.create_custom_scenario(conn, payload.user_id, payload.model_dump())
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err)) from err
+    return _custom_out(row)
+
+
+@router.delete("/custom-scenarios/{scenario_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_custom_scenario(scenario_id: str, user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> None:
+    """Sessions already held in the scene keep their own copy of it."""
+    if not conversation.delete_custom_scenario(conn, user_id, scenario_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such scenario")
+
+
 @router.get("/sessions", response_model=list[ConversationSessionOut])
 def list_sessions(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> list[ConversationSessionOut]:
     return [_session_out(conn, row) for row in conversation.list_sessions(conn, user_id)]
@@ -111,9 +153,15 @@ def start_session(
             scenario=payload.scenario,
             channel=payload.channel,
             seed_word_ids=payload.seed_word_ids,
+            custom_scenario_id=payload.custom_scenario_id,
+            repeat_of=payload.repeat_of,
         )
     except EngineUnavailable as err:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(err)) from err
+    except LookupError as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="That scenario no longer exists.") from err
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err)) from err
     row = conversation.get_session_row(conn, session_id, payload.user_id)
     return _session_out(conn, row)
 
@@ -139,6 +187,8 @@ async def submit_turn(
     user_id: str,
     text: str | None = Form(default=None),
     audio: UploadFile | None = File(default=None),
+    # How long the learner took to start this turn, measured by the client.
+    response_delay_ms: int | None = Form(default=None),
     conn: sqlite3.Connection = Depends(get_db),
 ) -> TurnSubmitOut:
     session = _get_owned_session(conn, session_id, user_id)
@@ -158,7 +208,12 @@ async def submit_turn(
         # duration, which otherwise looks like a dropped connection ("Failed
         # to fetch") to the frontend.
         user_turn, ai_turn = await run_in_threadpool(
-            conversation.submit_user_turn, conn, session, text=text, audio_bytes=audio_bytes
+            conversation.submit_user_turn,
+            conn,
+            session,
+            text=text,
+            audio_bytes=audio_bytes,
+            response_delay_seconds=response_delay_ms / 1000 if response_delay_ms is not None else None,
         )
     except EngineUnavailable as err:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(err)) from err

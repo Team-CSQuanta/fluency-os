@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { CONV_SCENARIOS } from '@/features/conversation/conversationScenarios';
 import { useConversationStore } from '@/store/conversationStore';
 import { useShellStore } from '@/store/shellStore';
 
-const SCENARIO_LABEL: Record<string, string> = Object.fromEntries(CONV_SCENARIOS.map((s) => [s.key, s.n]));
 
 // Must track REPORT_VERSION in backend/app/services/conversation_report.py.
 const CURRENT_REPORT_VERSION = 2;
@@ -80,8 +78,12 @@ export function Report() {
     setPractising(true);
     try {
       const seedIds = source?.target_words.map((w) => w.id);
-      await startSession(source?.scenario ?? 'free', source?.channel ?? 'voice', seedIds?.length ? seedIds : undefined);
-      goConvLive(SCENARIO_LABEL[source?.scenario ?? 'free'] ?? 'Free talk');
+      // The same scene — including one the learner wrote, from the copy the
+      // session kept — with the same words.
+      await startSession(source?.scenario ?? 'free', source?.channel ?? 'voice', seedIds?.length ? seedIds : undefined, {
+        repeatOf: source?.id,
+      });
+      goConvLive(source?.scenario_label || 'Free talk');
     } catch {
       setPractising(false);
     }
@@ -260,7 +262,9 @@ export function Report() {
                 <div className="font-sans text-[22px] font-light tracking-[-0.02em] text-tx">
                   <Metric value={report.avg_response_delay_seconds} suffix="s" />
                 </div>
-                <div className="font-mono text-[10px] text-tx3">avg reply delay</div>
+                <div className="font-mono text-[10px] text-tx3">
+                  avg reply delay{report.avg_response_delay_seconds === null ? ' · not measured' : ''}
+                </div>
               </div>
               <div>
                 <div className="font-sans text-[22px] font-light tracking-[-0.02em] text-tx">
@@ -275,8 +279,14 @@ export function Report() {
                 <div className="font-mono text-[10px] text-tx3">self-corrections</div>
               </div>
               <div>
-                <div className="font-sans text-[22px] font-light tracking-[-0.02em] text-tx">{report.turn_count}</div>
-                <div className="font-mono text-[10px] text-tx3">turns</div>
+                {/* Your turns, not the AI's as well — an older report only
+                    has the combined count, and says so. */}
+                <div className="font-sans text-[22px] font-light tracking-[-0.02em] text-tx">
+                  {report.learner_turns ?? report.turn_count}
+                </div>
+                <div className="font-mono text-[10px] text-tx3">
+                  {report.learner_turns != null ? 'your turns' : 'turns (yours + AI)'}
+                </div>
               </div>
             </div>
             {report.above_level_words.length > 0 && (
@@ -297,7 +307,10 @@ export function Report() {
               </div>
             )}
             <div className="mt-3 border-t border-line2 pt-[10px] font-mono text-[9.5px] leading-[1.6] text-tx3">
-              words/min is measured from your speech only · pronunciation is an stt_proxy, not a phoneme score
+              {/* What each number is, so none of them reads as more than it is. */}
+              words/min: your speech only · reply delay: from the AI finishing to you starting · fillers: um/uh
+              anywhere, “like”/“you know” when set off by commas · self-corrections: judged by the AI ·
+              pronunciation is an stt_proxy, not a phoneme score
             </div>
           </div>
           <div className="rounded-panel border border-accLine bg-accSoft p-[18px]">

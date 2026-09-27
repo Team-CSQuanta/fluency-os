@@ -175,7 +175,7 @@ export interface ReadingStatsOut {
 export type LevelMode = 'inline' | 'lexical' | 'contextual' | 'semantic';
 
 export type PageTheme = 'auto' | 'light' | 'sepia' | 'dark';
-export type PanelTab = 'toc' | 'search' | 'marks' | 'study';
+export type PanelTab = 'toc' | 'search' | 'marks' | 'word' | 'simpler';
 
 export interface ReaderPrefsOut {
   font_size: number;
@@ -406,6 +406,8 @@ export interface VocabContextOut {
   source_label: string;
   book_id: string | null;
   block_index: number | null;
+  /** Which of the entry's meanings this context illustrates. */
+  sense_id?: string | null;
   created_at: string;
   /** Set when kind === 'clip': where in which video this was captured, and
    * the state of the clip cut for it. */
@@ -439,6 +441,8 @@ export interface VocabWordOut {
   ai_usage_note: string | null;
   /** The dictionary sense the enrichment was generated against. */
   ai_sense_definition: string | null;
+  /** Every meaning saved for this word, first-saved first. */
+  senses?: VocabSenseOut[];
   created_at: string;
   /** Scheduling state, joined from the review card. */
   card_state: string | null;
@@ -484,9 +488,40 @@ export interface VocabWordDetailOut extends VocabWordOut {
   flashcard_reviews: Record<string, number>;
 }
 
+export interface VocabSenseOut {
+  id: string;
+  pos: string | null;
+  definition: string;
+  example: string | null;
+  created_at: string;
+}
+
+/** The meaning a sentence is being saved under. */
+export interface VocabSenseIn {
+  pos?: string | null;
+  definition: string;
+  example?: string | null;
+}
+
+/** Whether a word is already saved, and which of the meanings asked about
+ * it already has — asked before saving, so the button can say what it does. */
+export interface VocabCheckOut {
+  saved: boolean;
+  vocab_word_id: string | null;
+  word: string | null;
+  sense_count: number;
+  context_count: number;
+  /** One per definition asked about, in order. */
+  known: boolean[];
+}
+
 export interface VocabWordSaveOut {
   word: VocabWordOut;
   already_saved: boolean;
+  /** The entry existed and this save gave it a new meaning. */
+  sense_added?: boolean;
+  /** The sentence was recorded (false when it already was). */
+  context_added?: boolean;
 }
 
 export interface DictionarySenseOut {
@@ -527,7 +562,46 @@ export interface AiPracticeOut {
   question: string;
 }
 
-export type ScenarioKey = 'free' | 'coffee' | 'job' | 'debate';
+/** A catalog scene's key, or 'custom' for one the learner wrote. */
+export type ScenarioKey = string;
+
+export interface ScenarioOut {
+  key: string;
+  label: string;
+  summary: string;
+  minutes: number;
+  level: string;
+  persona_name: string;
+  persona_role: string;
+  learner_role: string;
+}
+
+export interface ScenarioCategoryOut {
+  key: string;
+  label: string;
+  description: string;
+  scenarios: ScenarioOut[];
+}
+
+/** A scene the learner wrote themselves. */
+export interface CustomScenarioOut {
+  id: string;
+  title: string;
+  ai_name: string | null;
+  ai_role: string;
+  personality: string | null;
+  setting: string;
+  learner_role: string | null;
+  goal: string | null;
+  created_at: string;
+}
+
+export type CustomScenarioIn = Omit<CustomScenarioOut, 'id' | 'created_at'>;
+
+export interface ScenarioCatalogOut {
+  categories: ScenarioCategoryOut[];
+  custom: CustomScenarioOut[];
+}
 export type ConversationChannel = 'voice' | 'text';
 export type ConversationSpeaker = 'user' | 'ai';
 export type UsageOutcome = 'spontaneous' | 'prompted' | 'incorrect' | 'avoided';
@@ -538,6 +612,10 @@ export interface ConversationSessionCreate {
   channel: ConversationChannel;
   /** "Practise this again" — reuse a previous session's target words. */
   seed_word_ids?: string[];
+  /** With scenario 'custom': which of the learner's scenes. */
+  custom_scenario_id?: string;
+  /** Run the same scene as this earlier session. */
+  repeat_of?: string;
 }
 
 export interface ConversationTurnOut {
@@ -560,12 +638,20 @@ export interface TargetWordOut {
   id: string;
   word: string;
   used_outcome: UsageOutcome | null;
+  /** Why it was picked — "due", "new", "retry", "not said yet", "stretch",
+   * "fits scene", "again" — joined with " · ". */
+  reason?: string | null;
 }
 
 export interface ConversationSessionOut {
   id: string;
   user_id: string;
   scenario: ScenarioKey;
+  /** The scene's name — the catalog's, or the title the learner gave it. */
+  scenario_label?: string;
+  /** The character the learner talks to in this scene. */
+  persona_name?: string;
+  persona_role?: string;
   channel: ConversationChannel;
   target_words: TargetWordOut[];
   started_at: string;
@@ -603,6 +689,8 @@ export interface ConversationReportOut {
   report_version: number;
   summary: string;
   turn_count: number;
+  /** The learner's turns only; absent in reports written before it was counted. */
+  learner_turns?: number | null;
   routing: ReportRoutingRowOut[];
   errors: ReportErrorOut[];
 
@@ -626,6 +714,8 @@ export interface EngineStatusOut {
   llm: string;
   stt: string;
   tts: string;
+  /** The cloud AI was switched off from the AI button: nothing is sent. */
+  llm_off?: boolean;
 }
 
 export interface DownloadStatusOut {
@@ -718,6 +808,8 @@ export interface ReviewCardOut {
   pos: string | null;
   cefr: string | null;
   definition: string | null;
+  /** The word's other saved meanings; the card is about `definition`. */
+  other_senses?: string[];
   simpler: string | null;
   example: string | null;
   mnemonic: string | null;
@@ -734,6 +826,8 @@ export interface ReviewCardOut {
   media_item_id: string | null;
   cloze_before: string | null;
   cloze_after: string | null;
+  /** The word as it appears in the sentence — what to type into the gap. */
+  cloze_answer?: string | null;
   state: string;
   stability_days: number;
   difficulty: number;
@@ -762,6 +856,8 @@ export interface RateCardOut {
   mastery_label: string;
   mastery_reason: string;
   interval_label: string;
+  /** Still in short steps: comes back in this sitting, as it now stands. */
+  requeue?: ReviewCardOut | null;
 }
 
 export interface ReviewStatsOut {
@@ -770,6 +866,9 @@ export interface ReviewStatsOut {
   total_cards: number;
   suspended: number;
   reviewed_today: number;
+  /** Never-seen cards in total; `new_available` is what today still allows. */
+  new_total?: number;
+  new_per_day?: number;
   target_retention: number;
   forecast: Array<{ date: string; count: number }>;
   /** Cards at each mastery level 0-5. */
@@ -898,6 +997,8 @@ export interface SaveFromVideoOut {
   word: string;
   already_saved: boolean;
   context_added: boolean;
+  /** The entry existed and this save gave it a new meaning. */
+  sense_added?: boolean;
   clip: ClipOut | null;
 }
 

@@ -1,10 +1,27 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { matchingWordIndices } from '@/features/reader/pageFind';
 import { PageTextLayer } from '@/features/reader/PageTextLayer';
 import { fetchBlobUrl } from '@/lib/apiClient';
 import { useReaderStore } from '@/store/readerStore';
 import type { PageScroll } from '@/types/api';
+
+/** The page at the middle of the window, and how far through it the middle
+ * falls. Measured at the middle rather than the top so the line being read
+ * stays put whichever way the window changes. */
+function readAnchor(root: HTMLElement, across: boolean): { page: number; frac: number } | null {
+  const box = root.getBoundingClientRect();
+  const mid = across ? box.left + root.clientWidth / 2 : box.top + root.clientHeight / 2;
+  for (const slot of root.querySelectorAll<HTMLElement>('[data-page-slot]')) {
+    const r = slot.getBoundingClientRect();
+    const start = across ? r.left : r.top;
+    const size = across ? r.width : r.height;
+    if (size > 0 && mid < start + size) {
+      return { page: Number(slot.dataset.pageSlot), frac: (mid - start) / size };
+    }
+  }
+  return null;
+}
 
 /** A book's printed pages, one after another.
  *
@@ -57,10 +74,23 @@ export function PageScroller({
   const ratio = useReaderStore((s) => s.pageRatio);
   const [box, setBox] = useState({ w: 0, h: 0 });
   const across = scroll === 'horizontal';
+  const acrossRef = useRef(across);
+  acrossRef.current = across;
+
+  /* Where the reader is, as a page and a share of the way through it, noted
+   * before the window changes size. The pages are laid out against the
+   * window, so opening the side panel shrinks every page above the one being
+   * read and the same scroll offset lands paragraphs away. */
+  const anchor = useRef<{ page: number; frac: number } | null>(null);
 
   useEffect(() => {
     if (!root) return;
-    const measure = () => setBox({ w: root.clientWidth, h: root.clientHeight });
+    const measure = () => {
+      // Read while the pages are still their old size: the new size only
+      // reaches them on the render this triggers.
+      anchor.current = readAnchor(root, acrossRef.current);
+      setBox({ w: root.clientWidth, h: root.clientHeight });
+    };
     measure();
     // The arrows and Page Up/Down scroll whatever has the keyboard, and
     // nothing here has it until something is clicked. Without this the keys
@@ -149,6 +179,28 @@ export function PageScroller({
       top: Math.max(0, slot.offsetTop + findY * slot.clientHeight - root.clientHeight / 3),
     });
   }, [find, findY, root, box.w]);
+
+  /* And put the reader back there once the pages have their new size —
+   * before paint, so the jump is never seen. */
+  useLayoutEffect(() => {
+    const at = anchor.current;
+    anchor.current = null;
+    if (!at || !root || !placed.current) return;
+    const slot = root.querySelector(`[data-page-slot="${at.page}"]`);
+    if (!(slot instanceof HTMLElement)) return;
+    quietUntil.current = performance.now() + 500;
+    // In window coordinates, so it does not matter what the slot's offset
+    // parent is: move by however far the spot is from the middle.
+    const box = root.getBoundingClientRect();
+    const r = slot.getBoundingClientRect();
+    if (across) {
+      root.scrollLeft += r.left + at.frac * r.width - (box.left + root.clientWidth / 2);
+    } else {
+      root.scrollTop += r.top + at.frac * r.height - (box.top + root.clientHeight / 2);
+    }
+    // Only the window's size: zooming has its own way back to the page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [box.w, box.h]);
 
   const onVisible = useCallback(
     (n: number) => {

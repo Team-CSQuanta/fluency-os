@@ -184,6 +184,8 @@ class SaveFromVideoOut(BaseModel):
     word: str
     already_saved: bool
     context_added: bool
+    #: The entry existed, and this save gave it a meaning it did not have.
+    sense_added: bool = False
     clip: ClipOut | None
 
 

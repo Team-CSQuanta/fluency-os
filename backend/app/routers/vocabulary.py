@@ -20,6 +20,9 @@ from app.models.vocabulary import (
     VocabContextOut,
     VocabNoteCreate,
     VocabNoteOut,
+    VocabSenseOut,
+    VocabCheckIn,
+    VocabCheckOut,
     VocabOverviewOut,
     VocabTagCreate,
     VocabWordCreate,
@@ -74,6 +77,12 @@ def _row_to_word_out(conn: sqlite3.Connection, row: sqlite3.Row) -> VocabWordOut
         ai_examples=json.loads(_opt(row, "ai_examples") or "[]"),
         ai_usage_note=_opt(row, "ai_usage_note"),
         ai_sense_definition=_opt(row, "ai_sense_definition"),
+        senses=[
+            VocabSenseOut(
+                id=s["id"], pos=s["pos"], definition=s["definition"], example=s["example"], created_at=s["created_at"]
+            )
+            for s in vocabulary.list_senses(conn, row["id"])
+        ],
         created_at=row["created_at"],
         **_scheduling(conn, row),
     )
@@ -124,6 +133,7 @@ def _row_to_context_out(row: sqlite3.Row) -> VocabContextOut:
         book_id=row["book_id"],
         block_index=row["block_index"],
         page=row["page"] if "page" in keys else None,
+        sense_id=row["sense_id"] if "sense_id" in keys else None,
         created_at=row["created_at"],
         media_item_id=row["media_item_id"] if "media_item_id" in keys else None,
         start_ms=row["start_ms"] if "start_ms" in keys else None,
@@ -178,6 +188,14 @@ def get_overview(user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> Vo
     return VocabOverviewOut(**vocabulary.overview(conn, user_id))
 
 
+@router.post("/check", response_model=VocabCheckOut)
+def check_word(payload: VocabCheckIn, conn: sqlite3.Connection = Depends(get_db)) -> VocabCheckOut:
+    """Asked by every "save this word" panel before the learner saves, so it
+    can say what saving will do: add a sentence to a meaning already there,
+    add a new meaning, or — when adding by hand — nothing, because it exists."""
+    return VocabCheckOut(**vocabulary.check_saved(conn, payload.user_id, payload.word, payload.definitions))
+
+
 @router.get("/by-word/{word}", response_model=VocabWordDetailOut)
 def get_word_detail(word: str, user_id: str, conn: sqlite3.Connection = Depends(get_db)) -> VocabWordDetailOut:
     row = vocabulary.get_word_row(conn, user_id, word)
@@ -203,14 +221,19 @@ def save_word(payload: VocabWordCreate, conn: sqlite3.Connection = Depends(get_d
         book_id=payload.book_id,
         block_index=payload.block_index,
         page=payload.page,
+        sense=payload.sense.model_dump() if payload.sense else None,
     )
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f'"{payload.word}" isn\'t in the offline dictionary',
+            detail=f'No definition of "{payload.word}" is on this computer to save with it. Look it up first.',
         )
-    row, already_existed = result
-    return VocabWordSaveOut(word=_row_to_word_out(conn, row), already_saved=already_existed)
+    return VocabWordSaveOut(
+        word=_row_to_word_out(conn, result.row),
+        already_saved=result.already_existed,
+        sense_added=result.sense_added,
+        context_added=result.context_added,
+    )
 
 
 @router.get("/dictionary-search", response_model=DictionarySearchOut)
@@ -285,7 +308,7 @@ def clear_dictionary_cache(conn: sqlite3.Connection = Depends(get_db)) -> Dictio
 
 @router.post("/manual", response_model=VocabWordSaveOut)
 def save_manual_word(payload: VocabWordManualCreate, conn: sqlite3.Connection = Depends(get_db)) -> VocabWordSaveOut:
-    row, already_existed = vocabulary.save_manual_word(
+    result = vocabulary.save_manual_word(
         conn,
         user_id=payload.user_id,
         word=payload.word,
@@ -301,8 +324,18 @@ def save_manual_word(payload: VocabWordManualCreate, conn: sqlite3.Connection = 
         ai_mnemonic=payload.ai_mnemonic,
         ai_usage_note=payload.ai_usage_note,
         ai_sense_definition=payload.ai_sense_definition,
+        # The client's stand-in for "nothing to define it with" is not a
+        # meaning, and must not be listed as one.
+        record_sense=not payload.definition.startswith("(no definition yet"),
     )
-    return VocabWordSaveOut(word=_row_to_word_out(conn, row), already_saved=already_existed)
+    # Adding by hand has no sentence to add, so an entry that already has
+    # this meaning gains nothing: already_saved with sense_added false is the
+    # client's "it exists" — a new meaning comes back as sense_added.
+    return VocabWordSaveOut(
+        word=_row_to_word_out(conn, result.row),
+        already_saved=result.already_existed,
+        sense_added=result.sense_added,
+    )
 
 
 @router.delete("/{vocab_word_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -5,6 +5,22 @@ from pydantic import BaseModel
 ContextKind = Literal["clip", "page", "turn"]
 
 
+class VocabSenseIn(BaseModel):
+    """The meaning the learner picked for the sentence they are saving."""
+
+    pos: str | None = None
+    definition: str
+    example: str | None = None
+
+
+class VocabSenseOut(BaseModel):
+    id: str
+    pos: str | None
+    definition: str
+    example: str | None
+    created_at: str
+
+
 class VocabWordCreate(BaseModel):
     user_id: str
     word: str
@@ -14,6 +30,8 @@ class VocabWordCreate(BaseModel):
     #: The printed page it was met on. A lookup on a page image has no block
     #: to point at, so without this the word is saved with no source at all.
     page: int | None = None
+    #: Which meaning this sentence uses. Without it, the dictionary's first.
+    sense: VocabSenseIn | None = None
 
 
 class VocabNoteCreate(BaseModel):
@@ -39,6 +57,8 @@ class VocabContextOut(BaseModel):
     block_index: int | None
     #: The printed page, when the book has one.
     page: int | None = None
+    #: Which of the entry's meanings this context illustrates.
+    sense_id: str | None = None
     created_at: str
     # Where in which video this was captured (kind == 'clip'), so the entry
     # page can replay the moment rather than only quoting the line.
@@ -69,6 +89,9 @@ class VocabWordOut(BaseModel):
     ai_examples: list[str] = []
     ai_usage_note: str | None = None
     ai_sense_definition: str | None = None
+    #: Every meaning saved for this word, first-saved first. `definition`
+    #: above is the first of them.
+    senses: list[VocabSenseOut] = []
     created_at: str
     # Scheduling state, joined from review_cards. The most informative thing
     # about a saved word is where it stands — due, sticking, or a leech — and
@@ -96,9 +119,31 @@ class VocabWordDetailOut(VocabWordOut):
     flashcard_reviews: dict[str, int]
 
 
+class VocabCheckIn(BaseModel):
+    user_id: str
+    word: str
+    #: The meanings on screen, in order — each is reported as known or not.
+    definitions: list[str] = []
+
+
+class VocabCheckOut(BaseModel):
+    """Whether a word is already saved, and which of these meanings it has."""
+
+    saved: bool
+    vocab_word_id: str | None
+    word: str | None
+    sense_count: int
+    context_count: int
+    known: list[bool]
+
+
 class VocabWordSaveOut(BaseModel):
     word: VocabWordOut
     already_saved: bool
+    #: The entry existed, and this save gave it a meaning it did not have.
+    sense_added: bool = False
+    #: The sentence was recorded (false when it was already there).
+    context_added: bool = False
 
 
 class DictionarySenseOut(BaseModel):

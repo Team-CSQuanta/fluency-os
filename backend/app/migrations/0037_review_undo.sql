@@ -1,0 +1,11 @@
+-- Undo for a flashcard answer. A mis-click on "Again" collapses a card's
+-- stability and sends a word the learner knows back into ten-minute steps;
+-- without a way back, the only fix was to answer it wrong on purpose later.
+--
+-- The card's whole state before the answer (FSRS fields and whether it was
+-- suspended), as JSON. The log row already holds the state AFTER, but that
+-- cannot be run backwards: FSRS is not invertible.
+--
+-- Also how "new cards introduced today" is counted: an answer whose previous
+-- state was 'new' is the moment a card was introduced.
+ALTER TABLE review_logs ADD COLUMN prev_card TEXT;

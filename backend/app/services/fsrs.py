@@ -212,6 +212,24 @@ def preview(
     return out
 
 
+def fuzzed_days(days: float, seed: int) -> float:
+    """An interval nudged by a few percent, the same way every time for the
+    same seed.
+
+    Without it, words saved together get identical intervals and stay due on
+    the same days forever: a batch of thirty words from one chapter becomes a
+    thirty-card lump every few weeks. Short intervals are left alone — a day
+    either way matters there. Deterministic from the seed so a review can be
+    replayed in a test, and kept out of `review` so that stays pure.
+    """
+    if days < 3:
+        return days
+    spread = max(1.0, days * 0.05)
+    # A cheap, stable fraction in [0, 1) from the seed.
+    frac = ((seed * 2654435761) % 2**32) / 2**32
+    return _clamp(days + (frac * 2 - 1) * spread, 1, _MAX_INTERVAL_DAYS)
+
+
 def is_leech(card: Card) -> bool:
     """Spec §5.5: eight lapses means the card is not working as posed."""
     return card.lapses >= LEECH_THRESHOLD
