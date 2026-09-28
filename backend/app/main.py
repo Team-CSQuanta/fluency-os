@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -53,9 +54,14 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="FluencyOS Backend", lifespan=lifespan)
 
 # Local-only: renderer talks to us over 127.0.0.1 in dev via the Vite server origin.
+# A UI served from another address can be allowed explicitly. The Selenium
+# UI tests (ui-tests/) run their own dev server on a free port, so they do
+# not clash with a developer's own on 5173. Unset, nothing changes.
+_EXTRA_ORIGINS = [o.strip() for o in os.environ.get("FLUENCYOS_ALLOW_ORIGINS", "").split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173", *_EXTRA_ORIGINS],
     allow_methods=["*"],
     allow_headers=["*"],
 )

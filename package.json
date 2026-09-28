@@ -20,6 +20,7 @@
     "test:backend": "cd backend && uv run pytest -n auto -q",
     "test": "node scripts/test-all.mjs",
     "test:beginner": "node scripts/test-beginner.mjs",
+    "test:ui": "uv run --project backend pytest ui-tests -v --no-header -p no:cacheprovider -p no:warnings",
     "test:frontend": "npm run test --workspace renderer",
     "build:backend-runtime": "node scripts/build-backend-runtime.mjs",
     "dist": "npm run build && npm run build:backend-runtime && electron-builder --publish never",

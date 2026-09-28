@@ -2,8 +2,8 @@
 
 A **test** is a small program that runs part of the app and checks the result
 is what we expect. If someone later breaks that part, the test fails and says
-where. FluencyOS has 1,000+ tests; these 15 are the simple ones, written to
-show the idea.
+where. FluencyOS has 1,000+ tests; these 24 are the simple ones, written to
+show the idea — including 9 that click through the real app in Chrome.
 
 ## Run them
 
@@ -11,8 +11,13 @@ show the idea.
 npm run test:beginner
 ```
 
-About 3 seconds. Every test is printed by name with `PASSED` (Python) or `✓`
-(TypeScript), and the last line says whether all passed.
+About 30 seconds. Every test is printed by name with `PASSED` (Python) or `✓`
+(TypeScript), and the last line says whether all passed. During the last part
+a Chrome window opens and you can watch the tests use the app.
+
+```bash
+npm run test:ui        # only the browser tests (part 4)
+```
 
 ## How every test is written
 
@@ -24,7 +29,7 @@ Each test follows the same three steps, marked with comments in the code:
 | **Act**     | run the code being tested   | `pages = pagination.pages_from_words(words_read)` |
 | **Assert**  | check the result            | `assert pages == 2`                          |
 
-## The 15 tests
+## The 24 tests
 
 **Part 1 — plain functions (unit tests)** · `backend/tests/beginner/test_1_simple_functions.py`
 
@@ -59,6 +64,34 @@ empty database.
 | stays quiet at 23:30 at night | review reminders respect quiet hours (22:00–08:00) |
 | can remind at 12:00 midday | …and are allowed outside them |
 
+**Part 4 — the real app in a browser (UI tests with Selenium)** · `ui-tests/`
+
+Selenium opens Chrome and uses FluencyOS the way a person does: it types,
+clicks buttons and checks what appears. Before the tests, `ui-tests/conftest.py`
+starts the real backend (with an empty database of its own) and the real
+interface. Tests are written with three small helpers from `ui-tests/helpers.py`:
+`type_into`, `click` and `sees`.
+
+```python
+def test_entering_a_name_moves_on_to_the_level_step(browser):
+    type_into(browser, "Enter your name", "Ana")
+    click(browser, "Continue")
+
+    assert sees(browser, "Where you are now")
+```
+
+| Test | What a person would see |
+| --- | --- |
+| the app opens on the first onboarding step | "Who is learning" |
+| a name is needed to continue | Continue without a name shows "Please enter your name to continue." |
+| entering a name moves on to the level step | "Where you are now" |
+| a beginner can start at A1 without a test | "I'm a beginner" sets the level to A1 · Beginner |
+| the AI step recommends a model for this computer | "Recommended for this computer" |
+| finishing onboarding opens the main app | all four steps, then the main menu |
+| the review page says when nothing is saved yet | "Nothing saved yet" |
+| a saved word shows on the vocabulary page | the saved word "harbour" is listed |
+| a saved word is ready to review | "Ready when you are" |
+
 ## Show a test catching a mistake
 
 1. Open `backend/tests/beginner/test_1_simple_functions.py`.
@@ -75,7 +108,7 @@ empty database.
 
 ## The full test suite
 
-`npm test` runs every test — TypeScript type-checking, 45 frontend tests and
-970+ backend tests — in about 3 minutes, and writes a report to
+`npm test` runs every test — TypeScript type-checking, 45 frontend tests,
+970+ backend tests and the 9 browser tests — in about 3–4 minutes, and writes a report to
 `test-reports/index.html` listing every test by feature, with code coverage.
 GitHub Actions runs the same command on every push.

@@ -96,12 +96,14 @@ curl -H "X-FluencyOS-Token: dev-token" http://127.0.0.1:8000/health
 
 [![Tests](https://github.com/Team-CSQuanta/fluency-os/actions/workflows/tests.yml/badge.svg)](https://github.com/Team-CSQuanta/fluency-os/actions/workflows/tests.yml)
 
-To show how the app is tested, start with the beginner tests — 15 short,
-commented tests in three kinds (plain functions, the backend API, frontend
-logic), about 3 seconds to run. `docs/beginner-testing.md` walks through them.
+To show how the app is tested, start with the beginner tests — 24 short,
+commented tests in four kinds: plain functions, the backend API, frontend
+logic, and the real app driven in Chrome by Selenium. About 30 seconds to run;
+`docs/beginner-testing.md` walks through them.
 
 ```bash
-npm run test:beginner        # the 15 beginner tests, each printed by name
+npm run test:beginner        # the 24 beginner tests, each printed by name
+npm run test:ui              # only the Selenium tests — watch Chrome click through the app
 ```
 
 One command runs every check and writes a report:
