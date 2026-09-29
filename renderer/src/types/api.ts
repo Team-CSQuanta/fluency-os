@@ -614,7 +614,21 @@ export interface ConversationTurnOut {
    * highlighting is timed against. Empty for turns never spoken aloud. */
   audio_chunks: string[];
   stt_confidence: number | null;
+  /** Learner turns only: the mistakes the partner fixed, shown on the
+   * message, most important first. */
+  corrections?: TurnCorrection[];
   created_at: string;
+}
+
+export type CorrectionKind = 'grammar' | 'word' | 'sentence';
+
+export interface TurnCorrection {
+  /** As the learner said it, when it could be found in their text. */
+  wrong: string;
+  right: string;
+  kind: CorrectionKind;
+  /** A few words on the rule, shown on hover. */
+  why: string | null;
 }
 
 export interface TargetWordOut {

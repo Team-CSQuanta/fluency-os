@@ -212,6 +212,11 @@ def unload() -> None:
         _voice_states.clear()
 
 
+#: Seconds of synthesis per second of audio, measured on the reference
+#: machine (Ryzen 3 3200G): 2.44s for a 4.64s reply, 0.78s for a 1.36s one.
+SYNTH_RATIO = 0.55
+
+
 def split_for_streaming(text: str) -> list[str]:
     """The same two-chunk rule as Kokoro, despite this engine streaming.
 
@@ -221,8 +226,11 @@ def split_for_streaming(text: str) -> list[str]:
     learner waits for the whole of chunk 0 either way. Measured on the
     reference machine, one chunk per reply cost 2.05s to first audio against
     1.09s when split — so "it streams" is not a reason to skip the split, it
-    is a reason to stream end to end some day."""
-    return reply_chunking.split_for_streaming(text)
+    is a reason to stream end to end some day.
+
+    Unlike Kokoro it runs faster than real time, so its pieces can grow
+    (see reply_chunking) and play back to back."""
+    return reply_chunking.split_for_streaming(text, synth_ratio=SYNTH_RATIO)
 
 
 def synthesize(text: str, voice: str | None = None) -> bytes:

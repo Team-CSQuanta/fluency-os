@@ -1,6 +1,8 @@
 """Conversation scenes: the catalog, the prompt each runs on, and the
 learner's own scenes."""
 
+import json
+
 import pytest
 
 from app.services import conversation, scenarios
@@ -129,8 +131,11 @@ def test_reply_length_and_corrections_shape_the_prompt():
     assert "ONE short sentence" in short and "Two to four sentences" in long
     gentle = scenarios.build_system_prompt(coffee, level="B1", target_words=[])
     pointed = scenarios.build_system_prompt(coffee, level="B1", target_words=[], corrections="explicit")
-    assert "Recast instead" in gentle and "Small fix" not in gentle
-    assert "Small fix" in pointed and "exception is the short correction note" in pointed
+    assert "Recast instead" in gentle and "[fix" not in gentle
+    assert '[fix grammar: "I goed" -> "I went" (past of go)]' in pointed and "exception is the [fix …] notes" in pointed
+    assert "up to 3 fix(es)" in pointed
+    beginner = scenarios.build_system_prompt(coffee, level="A1", target_words=[], corrections="explicit")
+    assert "up to 1 fix(es)" in beginner
 
 
 def test_the_settings_reach_the_partner(tmp_path, fake_llm):
@@ -148,7 +153,7 @@ def test_the_settings_reach_the_partner(tmp_path, fake_llm):
 
     conversation.start_session(conn, user_id=user_id, scenario="coffee", channel="text")
     system_prompt, _ = fake_llm["replies"][0]
-    assert "Two to four sentences" in system_prompt and "Small fix" in system_prompt
+    assert "Two to four sentences" in system_prompt and "[fix KIND:" in system_prompt
 
 
 def test_conversation_settings_are_saved_and_checked(client, auth_headers):
@@ -166,3 +171,146 @@ def test_conversation_settings_are_saved_and_checked(client, auth_headers):
     assert {k: body[k] for k in patch} == patch
     for bad in ({"conversation_voice_speed": 2.0}, {"conversation_reply_length": "essay"}):
         assert client.patch(f"/users/{user_id}/settings", headers=auth_headers, json=bad).status_code == 422
+
+
+def _fix(wrong, right, kind="grammar", why=None):
+    return {"wrong": wrong, "right": right, "kind": kind, "why": why}
+
+
+@pytest.mark.parametrize(
+    "reply, learner, expected",
+    [
+        # The asked-for form; `wrong` comes back as the learner said it.
+        (
+            'Why do you think it\'s too high? [fix word: "500 Drummer" -> "500 dollars" (the currency)]',
+            "500 drummer, do you know the current market price?",
+            [_fix("500 drummer", "500 dollars", "word", "the currency")],
+        ),
+        # Several at once, each kind, most important first.
+        (
+            'Nice! [fix grammar: "I goed" -> "I went" (past of go)] '
+            '[fix word: "price is expensive" -> "price is high"]',
+            "Yesterday I goed to the shop but the price is expensive.",
+            [_fix("I goed", "I went", "grammar", "past of go"), _fix("price is expensive", "price is high", "word")],
+        ),
+        (
+            'They aren\'t! [fix sentence: "I think this scratches crass to look severe" -> '
+            '"I think these scratches look bad"]',
+            "It's fine. Also, I think this scratches, um, crass to look severe.",
+            [_fix("I think this scratches, um, crass to look severe", "I think these scratches look bad", "sentence")],
+        ),
+        # The old forms a model can drift back to, curly quotes and all.
+        (
+            "Oh, you went there? [Small fix: “I went”, not “I goed”.]",
+            "Yesterday I goed there.",
+            [_fix("I goed", "I went")],
+        ),
+        ('Sure! [fix: "she go" -> "she goes"]', "Every day she, go home", [_fix("she, go", "she goes")]),
+        # An unknown kind is still a fix.
+        ('Ok. [fix spelling: "she go" -> "she goes"]', "she go home", [_fix("she go", "she goes")]),
+        # Punctuation only: the transcriber's, not a mistake.
+        ('Nice. [fix grammar: "well I" -> "well, I"]', "Well, I think so", []),
+        # The two sides swapped: the one the learner said is the mistake.
+        (
+            'They aren\'t severe! [fix: "these scratches look severe" -> "this scratches, crass, crass to look severe"]',
+            "Also, I think this scratches, crass, crass to look severe.",
+            [_fix("this scratches, crass, crass to look severe", "these scratches look severe")],
+        ),
+        # A fix for an earlier message, repeated: not about this one.
+        (
+            'How about $450? [fix: "this scratches, crass, crass to look severe" -> "these scratches look severe"]',
+            "So, I would like to give you, umm, $400 for this drone.",
+            [],
+        ),
+        # Two fixes over the same words: the first, most important, is kept.
+        (
+            'Ok. [fix sentence: "he go shop yesterday" -> "he went to the shop yesterday"] '
+            '[fix grammar: "he go" -> "he went"]',
+            "Well he go shop yesterday.",
+            [_fix("he go shop yesterday", "he went to the shop yesterday", "sentence")],
+        ),
+        # Paraphrased: kept as given, for the client to show under the message.
+        ('Right. [fix: "he don\'t" -> "he doesn\'t"]', "He do not like it", [_fix("he don't", "he doesn't")]),
+    ],
+)
+def test_the_fix_notes_are_taken_out_of_the_reply(reply, learner, expected):
+    clean, fixes = scenarios.split_corrections(reply, learner)
+    assert "fix" not in clean.lower() and "[" not in clean
+    assert fixes == expected
+
+
+def test_no_more_fixes_than_the_learner_can_take_in():
+    reply = 'Ok. [fix: "a goed" -> "a went"] [fix: "b goed" -> "b went"] [fix: "c goed" -> "c went"] [fix: "d goed" -> "d went"]'
+    learner = "a goed b goed c goed d goed"
+    assert len(scenarios.split_corrections(reply, learner)[1]) == 3
+    assert len(scenarios.split_corrections(reply, learner, scenarios.max_fixes("a2"))[1]) == 1
+
+
+def test_a_reply_without_a_note_is_left_alone():
+    assert scenarios.split_corrections("Market price? Look, it's a great deal.", "500 dollars?") == (
+        "Market price? Look, it's a great deal.",
+        [],
+    )
+
+
+def test_the_fixes_go_on_the_learners_turn_and_are_never_spoken(tmp_path, fake_llm, monkeypatch):
+    conn = _fresh_conn(tmp_path)
+    user_id = _make_user(conn)
+    conn.execute("INSERT INTO user_settings (user_id) VALUES (?) ON CONFLICT(user_id) DO NOTHING", (user_id,))
+    conn.execute("UPDATE user_settings SET conversation_corrections = 'explicit' WHERE user_id = ?", (user_id,))
+    session_id = conversation.start_session(conn, user_id=user_id, scenario="coffee", channel="text")
+    session = conversation.get_session_row(conn, session_id, user_id)
+    monkeypatch.setattr(
+        conversation.llm_chat_engine,
+        "generate_reply",
+        lambda *a, **kw: 'Market price? It\'s a great deal. [fix word: "500 drummer" -> "500 dollars" (money)]',
+    )
+
+    user_turn, ai_turn = conversation.submit_user_turn(
+        conn, session, text="500 drummer, do you know the price?", audio_bytes=None
+    )
+
+    assert ai_turn["text"] == "Market price? It's a great deal."
+    assert json.loads(user_turn["correction"]) == [_fix("500 drummer", "500 dollars", "word", "money")]
+
+
+def test_gentle_mode_keeps_no_fix_even_if_the_model_adds_one(tmp_path, fake_llm, monkeypatch):
+    conn = _fresh_conn(tmp_path)
+    user_id = _make_user(conn)
+    session_id = conversation.start_session(conn, user_id=user_id, scenario="coffee", channel="text")
+    session = conversation.get_session_row(conn, session_id, user_id)
+    monkeypatch.setattr(
+        conversation.llm_chat_engine, "generate_reply", lambda *a, **kw: 'You went? [fix: "I goed" -> "I went"]'
+    )
+
+    user_turn, ai_turn = conversation.submit_user_turn(conn, session, text="I goed", audio_bytes=None)
+
+    assert ai_turn["text"] == "You went?" and user_turn["correction"] is None
+
+
+def test_old_notes_are_neither_shown_spoken_nor_fed_back(tmp_path, fake_llm):
+    conn = _fresh_conn(tmp_path)
+    user_id = _make_user(conn)
+    session_id = conversation.start_session(conn, user_id=user_id, scenario="coffee", channel="voice")
+    session = conversation.get_session_row(conn, session_id, user_id)
+    conn.execute(
+        "UPDATE conversation_turns SET text = ? WHERE session_id = ?",
+        ('Why is it too high?\n\n[Small fix: "500 dollars", not "500 drummer".]', session_id),
+    )
+    opening = conversation.get_turns(conn, session_id)[0]
+    assert conversation.audio_chunk_texts(opening, "voice") == ["Why is it too high?"]
+
+    conversation.submit_user_turn(conn, session, text="Because it is old", audio_bytes=None)
+    system_prompt, history = fake_llm["replies"][-1]
+    assert "Small fix" not in system_prompt + str(history)
+
+
+def test_stored_fixes_are_placed_again_when_shown():
+    # Saved before the checks above, one to a turn: one backwards, one about
+    # an earlier message.
+    backwards = {"wrong": "these scratches look severe", "right": "this scratches, crass, crass to look severe"}
+    assert scenarios.place_corrections(
+        [backwards], "Also, I think this scratches, crass, crass to look severe."
+    ) == [_fix("this scratches, crass, crass to look severe", "these scratches look severe")]
+    carried_over = {"wrong": "this scratches, crass, crass to look severe", "right": "these scratches look severe"}
+    assert scenarios.place_corrections([carried_over], "So, I would like to give you, umm, $400 for this drone.") == []

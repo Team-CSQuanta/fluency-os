@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { CorrectedText, KIND_LABEL } from './CorrectedText';
 import { SpokenText, type SpeakingState } from './SpokenText';
 import { spokenCount, timeWords } from './spokenTiming';
 import { useMicRecorder } from '@/features/conversation/useMicRecorder';
@@ -605,6 +606,12 @@ export function ConversationLive() {
                           🎧 listen first · click to show
                         </span>
                       </button>
+                    ) : t.text && t.corrections?.length ? (
+                      <CorrectedText
+                        text={t.text}
+                        corrections={t.corrections}
+                        animate={!loadedTurnIds.current?.has(t.id)}
+                      />
                     ) : t.text ? (
                       <SpokenText
                         text={t.text}
@@ -620,6 +627,11 @@ export function ConversationLive() {
                     style={{ justifyContent: isAi ? 'flex-start' : 'flex-end' }}
                   >
                     {isAi ? personaName : t.stt_confidence !== null ? `confidence ${Math.round(t.stt_confidence * 100)}%` : ''}
+                    {!isAi && !!t.corrections?.length && (
+                      <span className="text-acc" title="Hover a fix to see why">
+                        fixed · {[...new Set(t.corrections.map((c) => KIND_LABEL[c.kind]))].join(' · ')}
+                      </span>
+                    )}
                     {t.audio_url && (
                       <button onClick={() => void playTurnAudio(t.id, t.audio_chunks)} className="hover:text-acc">
                         ▶ play

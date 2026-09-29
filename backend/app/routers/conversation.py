@@ -43,13 +43,23 @@ def _turn_out(
         id=row["id"],
         turn_index=row["turn_index"],
         speaker=row["speaker"],
-        text=row["text"],
+        text=scenarios.strip_fix_notes(row["text"]) if row["speaker"] == "ai" else row["text"],
         audio_url=f"/conversation/turns/{row['id']}/audio" if has_audio else None,
         audio_chunk_count=chunks,
         audio_chunks=chunk_texts,
         stt_confidence=row["stt_confidence"],
+        corrections=_stored_corrections(row),
         created_at=row["created_at"],
     )
+
+
+def _stored_corrections(row: sqlite3.Row) -> list[dict]:
+    if row["speaker"] != "user" or not row["correction"]:
+        return []
+    stored = json.loads(row["correction"])
+    # The first of these were stored one to a turn, as a bare object.
+    fixes = stored if isinstance(stored, list) else [stored]
+    return scenarios.place_corrections(fixes, row["text"], limit=len(fixes))
 
 
 def _target_words_out(conn: sqlite3.Connection, session: sqlite3.Row) -> list[TargetWordOut]:

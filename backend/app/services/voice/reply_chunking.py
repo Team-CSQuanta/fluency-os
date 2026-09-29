@@ -28,21 +28,56 @@ _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 # and it delays the remainder without meaningfully advancing the first sound.
 _MIN_CHUNK_CHARS = 12
 
+# How much slower than measured to assume synthesis runs when planning pieces.
+_GROWTH_MARGIN = 1.35
 
-def split_for_streaming(text: str) -> list[str]:
-    """At most two pieces: the opening sentence, then everything else.
 
-    Exactly one split, not more. Each additional chunk buys nothing but its
-    own fixed cost — on Kokoro, splitting a reply four ways measured ~2.7s
-    slower overall. One split is worth paying for: it gets the first sentence
-    audible far sooner, and the remainder is synthesized while it plays."""
+def split_for_streaming(text: str, synth_ratio: float | None = None) -> list[str]:
+    """The reply in the pieces it is synthesized and played in.
+
+    Without `synth_ratio` — an engine slower than real time, Kokoro here —
+    at most two pieces: the opening sentence, then everything else. Each
+    additional chunk buys nothing but its own fixed cost — on Kokoro,
+    splitting a reply four ways measured ~2.7s slower overall. One split is
+    worth paying for: it gets the first sentence audible far sooner, and the
+    remainder is synthesized while it plays.
+
+    With it — seconds of synthesis per second of audio, for an engine faster
+    than real time — pieces that grow. The player asks for piece N+1 as
+    piece N starts playing, so N+1 has exactly N's playing time to be
+    synthesized in. Two pieces broke that whenever the opener was short: "They
+    aren't severe!" plays for 1.4s, the 4.6s remainder took 2.4s to make, and
+    the learner heard a second of dead air after the exclamation mark. Each
+    piece here is kept small enough to be ready before the one before it ends,
+    so the first sound comes as soon as before and nothing stops after it."""
     clean = (text or "").strip()
     if not clean:
         return []
     sentences = [p.strip() for p in _SENTENCE_END.split(clean) if p.strip()]
     if len(sentences) <= 1:
         return sentences
-    head, rest = sentences[0], " ".join(sentences[1:])
-    if len(head) < _MIN_CHUNK_CHARS:
-        return [f"{head} {rest}"]
-    return [head, rest]
+    if synth_ratio is None or synth_ratio >= 1:
+        head, rest = sentences[0], " ".join(sentences[1:])
+        if len(head) < _MIN_CHUNK_CHARS:
+            return [f"{head} {rest}"]
+        return [head, rest]
+
+    head, rest = sentences[0], sentences[1:]
+    while len(head) < _MIN_CHUNK_CHARS and rest:
+        head = f"{head} {rest.pop(0)}"
+    if not rest:
+        return [head]
+
+    # Characters stand in for seconds: speech length follows text length
+    # closely enough, and the margin covers the rest — the request, the
+    # fixed cost of a call, and a CPU also busy with the rest of the app.
+    growth = 1 / (synth_ratio * _GROWTH_MARGIN)
+    pieces, current = [head], ""
+    for sentence in rest:
+        joined = f"{current} {sentence}".strip()
+        if current and len(joined) > growth * len(pieces[-1]):
+            pieces.append(current)
+            joined = sentence
+        current = joined
+    pieces.append(current)
+    return pieces

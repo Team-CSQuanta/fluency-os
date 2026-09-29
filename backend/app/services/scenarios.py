@@ -17,6 +17,7 @@ The learner can also write their own (`custom_scenario`), which goes through
 the same builder.
 """
 
+import re
 from dataclasses import dataclass, field
 
 
@@ -726,15 +727,141 @@ _LENGTH_RULE = {
 _CORRECTION_RULE = {
     "recast": 'Do not correct mistakes directly. Recast instead: use the correct form naturally in your reply ("I goed there" → "Oh, you went there? …"). Correct explicitly only if they ask.',
     "explicit": (
-        'Reply naturally first. Then, if the learner made a clear mistake, add ONE short correction at the very end '
-        'in square brackets — only the most useful one, e.g. [Small fix: "I went", not "I goed".]. '
-        "No note when there is no real mistake; never correct style or accent."
+        "Reply naturally, never mentioning mistakes in what you say. Then look at the learner's LAST message only "
+        "(earlier ones have already been dealt with — never repeat a fix) and, after your reply, add up to {max} "
+        "fix(es) for it, most important first, each in exactly this form:\n"
+        '  [fix KIND: "their words" -> "better words" (why, in a few words)]\n'
+        "  KIND is one of:\n"
+        "  - grammar: a grammar mistake — tense, agreement, articles, prepositions, word order.\n"
+        "  - word: a wrong word, or one a fluent speaker would clearly replace in this context. Keep their meaning.\n"
+        "  - sentence: the whole sentence is too broken to fix word by word — give the whole sentence back as a "
+        "fluent speaker would say it, keeping their meaning.\n"
+        '  e.g. [fix grammar: "I goed" -> "I went" (past of go)] [fix word: "price is expensive" -> "price is high" '
+        '(prices are high, not expensive)]\n'
+        "  Copy their words exactly as they said them, and keep each fix to the words that change (sentence: the "
+        "whole sentence). The fixes are shown on their message, never spoken. "
+        "No fix when the message is already natural English. Never change what they meant, and never fix accent, "
+        "spelling, punctuation, or fillers like um."
     ),
 }
 
-#: Tokens per reply for each length; a correction note needs a little more.
+#: How many fixes one message can get. A beginner shown three at once is
+#: shown a wall of red; one at a time is what they can take in.
+MAX_FIXES = {"A1": 1, "A2": 1}
+MAX_FIXES_DEFAULT = 3
+FIX_KINDS = ("grammar", "word", "sentence")
+
+# The explicit mode's note. Older sessions were taught `[Small fix: "right",
+# not "wrong".]` or `[fix: …]` without a kind, and a model can drift back to
+# either, so all are recognised.
+_FIX_NOTE = re.compile(
+    r"\s*\[\s*(?:small\s+)?fix(?:\s+(?P<kind>[a-z]+))?\s*:(?P<body>[^\]]*)\]", re.IGNORECASE
+)
+_QUOTED = r"[\"“”]([^\"“”]+)[\"“”]"
+_WHY = r"(?:\(\s*(?P<why>[^)]*?)\s*\))?"
+_ARROW_FORM = re.compile(rf"^\s*{_QUOTED}\s*(?:->|→|=>)\s*{_QUOTED}\s*{_WHY}\s*\.?\s*$")
+_NOT_FORM = re.compile(rf"^\s*{_QUOTED}\s*,?\s*not\s*{_QUOTED}\s*\.?\s*$", re.IGNORECASE)
+# What the transcriber writes down but a learner is not corrected on, and so
+# what may sit between the words of a fix without stopping it being found.
+_FILLER = r"(?:u+m+|u+h+|e+r+m*|h+m+)"
+_GAP = rf"(?:[\s,.;:!?\"-]+{_FILLER}(?=[\s,.;:!?\"-]))*[\s,.;:!?\"-]+"
+
+
+def split_corrections(reply: str, learner_text: str, limit: int = MAX_FIXES_DEFAULT) -> tuple[str, list[dict]]:
+    """Take the fix notes out of a reply.
+
+    The notes are for the learner's eyes, on their own message; left in the
+    reply they were read aloud as part of what the partner says. They are
+    removed whether or not they parse, and returned (see place_corrections)
+    only when they do."""
+    fixes = []
+    for note in _FIX_NOTE.finditer(reply):
+        body = note.group("body")
+        if m := _ARROW_FORM.match(body):
+            wrong, right, why = m.group(1), m.group(2), m.group("why")
+        elif m := _NOT_FORM.match(body):
+            right, wrong, why = m.group(1), m.group(2), None
+        else:
+            continue
+        fixes.append({"wrong": wrong, "right": right, "kind": note.group("kind"), "why": why})
+    return strip_fix_notes(reply), place_corrections(fixes, learner_text, limit)
+
+
+def place_corrections(fixes: list[dict], learner_text: str, limit: int = MAX_FIXES_DEFAULT) -> list[dict]:
+    """Each fix as {wrong, right, kind, why} for this message, keeping only
+    fixes that are about it and do not overlap one kept before them.
+
+    `wrong` is given back as it appears in `learner_text` when it can be
+    found there, so the client strikes out exactly those words. Also used on
+    stored fixes when they are shown, so ones saved before a check here
+    existed are shown the way a new one would be."""
+    placed: list[dict] = []
+    taken: list[tuple[int, int]] = []
+    for fix in fixes:
+        wrong, right = (fix.get("wrong") or "").strip(), (fix.get("right") or "").strip()
+        # Case and punctuation are the transcriber's, not the learner's: a
+        # "fix" that changes only those is not one.
+        if not _words(wrong) or not _words(right) or _words(wrong) == _words(right):
+            continue
+        said_wrong, said_right = _find(wrong, learner_text), _find(right, learner_text)
+        # Models swap the two sides — the old note put the right form first.
+        # Whichever side the learner actually said is the mistake.
+        if said_right and not said_wrong:
+            wrong, right, said_wrong = right, wrong, said_right
+        if said_wrong:
+            span = said_wrong.span()
+            if any(span[0] < end and start < span[1] for start, end in taken):
+                continue
+            taken.append(span)
+            wrong = said_wrong.group(0)
+        else:
+            # Not in the message as written. A paraphrase of it still shares
+            # most of its words; a fix carried over from an earlier message
+            # does not.
+            have = set(_words(learner_text))
+            if sum(w in have for w in _words(wrong)) / len(_words(wrong)) < 0.5:
+                continue
+        kind = (fix.get("kind") or "").lower()
+        why = (fix.get("why") or "").strip() or None
+        placed.append({"wrong": wrong, "right": right, "kind": kind if kind in FIX_KINDS else "grammar", "why": why})
+        if len(placed) == limit:
+            break
+    return placed
+
+
+def strip_fix_notes(text: str) -> str:
+    """An AI turn without any fix note. Turns stored before notes were taken
+    out still carry one, and it should be neither shown, spoken, nor fed
+    back to the model as an example of what to say."""
+    return _FIX_NOTE.sub("", text).strip()
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[\w']+", text.lower())
+
+
+def _find(phrase: str, learner_text: str) -> re.Match | None:
+    """Where `phrase` is in what the learner said. The model may change its
+    case, drop a comma, or leave out an "um" between the words; the
+    learner's own text is what gets struck through."""
+    words = re.findall(r"[\w']+", phrase)
+    pattern = r"(?<![\w'])" + _GAP.join(map(re.escape, words)) + r"(?![\w'])"
+    return re.search(pattern, learner_text, re.IGNORECASE)
+
+
+#: Tokens per reply for each length; the fixes need room of their own — a
+#: whole-sentence one is a sentence, and there can be three.
 REPLY_TOKENS = {"short": 70, "normal": 120, "long": 220}
-CORRECTION_TOKENS = 40
+CORRECTION_TOKENS = 130
+
+
+def _correction_rule(corrections: str, level: str) -> str:
+    rule = _CORRECTION_RULE.get(corrections, _CORRECTION_RULE["recast"])
+    return rule.replace("{max}", str(max_fixes(level)))
+
+
+def max_fixes(level: str) -> int:
+    return MAX_FIXES.get(level.upper(), MAX_FIXES_DEFAULT)
 
 
 def build_system_prompt(
@@ -783,7 +910,7 @@ How it should unfold, one step at a time, following the learner's lead within it
 - {_LEVEL_GUIDE[level]}
 - {_LENGTH_RULE.get(reply_length, _LENGTH_RULE["normal"])}
 - Usually end your turn with a question or a clear prompt, so the learner always knows it is their turn.
-- {_CORRECTION_RULE.get(corrections, _CORRECTION_RULE["recast"])}
+- {_correction_rule(corrections, level)}
 - If a reply is very short or confused, make it easier: simplify, offer two options, or give a hint inside the scene.""",
         f"""# Target words
 The learner is trying to use these words naturally:
@@ -794,7 +921,7 @@ The learner is trying to use these words naturally:
         f"""# Ending
 When the goal is reached, close the scene naturally in character in a sentence or two, then ask if they would like to keep talking.""",
         f"""# Output
-Reply only with what {p.name} says out loud: no stage directions, no actions in asterisks, no emoji, no lists, no name labels, no quotation marks around the reply.{" The one exception is the short correction note in square brackets described above." if corrections == "explicit" else ""}""",
+Reply only with what {p.name} says out loud: no stage directions, no actions in asterisks, no emoji, no lists, no name labels, no quotation marks around the reply.{" The one exception is the [fix …] notes described above." if corrections == "explicit" else ""}""",
     ]
     prompt = "\n\n".join(sections)
     if opening:

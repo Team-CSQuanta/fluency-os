@@ -227,3 +227,63 @@ body {
 .fos-text-layer ::-moz-selection {
   background: #b9d4ff;
 }
+
+/* A learner's mistakes and the partner's fixes, written onto their message
+ * (CorrectedText). The strike is a background line rather than
+ * text-decoration so it can be drawn across, left to right; on a phrase that
+ * wraps, `clone` draws it on each line. A new turn plays it once: a beat to
+ * read what they said, then for each fix in turn the line through it and the
+ * fix. A better word is a suggestion, not an error, and is struck in amber. */
+.fos-fix-wrong {
+  --fix-strike: #d9695f;
+  text-decoration: none;
+  color: var(--tx3);
+  background: linear-gradient(var(--fix-strike), var(--fix-strike)) no-repeat 0 58% / 100% 1.5px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+[data-kind='word'] > .fos-fix-wrong {
+  --fix-strike: #d6a24a;
+}
+.fos-fix-right {
+  text-decoration: none;
+  color: var(--acc);
+  font-weight: 500;
+  border-radius: 3px;
+}
+.fos-fix-animate .fos-fix-wrong {
+  animation: fos-fix-strike 380ms ease-out calc(var(--fix-delay, 0ms) + 600ms) both;
+}
+.fos-fix-animate .fos-fix-right {
+  animation: fos-fix-in 520ms ease-out calc(var(--fix-delay, 0ms) + 1050ms) both;
+}
+@keyframes fos-fix-strike {
+  from {
+    background-size: 0% 1.5px;
+    color: var(--tx);
+  }
+  to {
+    background-size: 100% 1.5px;
+    color: var(--tx3);
+  }
+}
+@keyframes fos-fix-in {
+  from {
+    opacity: 0;
+    filter: blur(3px);
+    background: var(--accLine);
+  }
+  60% {
+    opacity: 1;
+    filter: blur(0);
+  }
+  to {
+    background: transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fos-fix-animate .fos-fix-wrong,
+  .fos-fix-animate .fos-fix-right {
+    animation: none;
+  }
+}

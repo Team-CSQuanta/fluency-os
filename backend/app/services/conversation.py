@@ -24,6 +24,7 @@ from app.services.voice import (
     llm_chat_engine,
     model_catalog,
     model_manager,
+    pauses,
     stt_engine,
     tts,
     voices,
@@ -604,6 +605,7 @@ def _insert_turn(
     stt_confidence: float | None = None,
     speech_seconds: float | None = None,
     response_delay_seconds: float | None = None,
+    corrections: list[dict] | None = None,
 ) -> sqlite3.Row:
     turn_id = uuid7()
     # Deliberately no synthesis here. Kokoro runs slower than real time on this
@@ -616,8 +618,8 @@ def _insert_turn(
         """
         INSERT INTO conversation_turns
             (id, session_id, turn_index, speaker, text, audio_path, stt_confidence, speech_seconds,
-             response_delay_seconds, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             response_delay_seconds, correction, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             turn_id,
@@ -629,11 +631,16 @@ def _insert_turn(
             stt_confidence,
             speech_seconds,
             response_delay_seconds,
+            json.dumps(corrections) if corrections else None,
             iso8601_utc_now(),
         ),
     )
     conn.commit()
     return conn.execute("SELECT * FROM conversation_turns WHERE id = ?", (turn_id,)).fetchone()
+
+
+#: Bumped whenever the split (reply_chunking) or the clean-up (pauses) changes.
+AUDIO_VERSION = "v2"
 
 
 def audio_chunk_path(turn_id: str, index: int, engine: str = tts.DEFAULT_ENGINE, voice: str | None = None) -> Path:
@@ -642,9 +649,12 @@ def audio_chunk_path(turn_id: str, index: int, engine: str = tts.DEFAULT_ENGINE,
     previous voice had already cached for a turn, so the change would appear
     to do nothing on every reply already on screen. It also leaves the two
     engines free to split replies differently without one's chunk 0 being
-    served as the other's."""
+    served as the other's.
+
+    The version is how a reply is split and cleaned up (AUDIO_VERSION): a
+    change to either means a cached chunk N is no longer this chunk N."""
     name = tts.normalise(engine)
-    return _audio_dir() / f"{turn_id}.{name}.{voices.normalise(name, voice)}.{index}.wav"
+    return _audio_dir() / f"{turn_id}.{name}.{voices.normalise(name, voice)}.{AUDIO_VERSION}.{index}.wav"
 
 
 def ensure_audio_chunk(
@@ -660,7 +670,7 @@ def ensure_audio_chunk(
         raise IndexError(f"chunk {index} out of range for {len(chunks)} chunks")
     path = audio_chunk_path(turn_id, index, name, speaker)
     if not path.exists():
-        audio = tts.engine_for(name).synthesize(chunks[index], voice=speaker)
+        audio = pauses.tighten(tts.engine_for(name).synthesize(chunks[index], voice=speaker))
         # Written to a private temp file and moved into place, never straight
         # to `path`. The player fetches chunk N+1 while N is still audible, so
         # two requests for the same chunk really can overlap (a replay, a
@@ -686,7 +696,7 @@ def audio_chunk_texts(turn: sqlite3.Row, channel: str, engine: str = tts.DEFAULT
     text rather than only a count is what makes the two agree."""
     if channel != "voice" or turn["speaker"] != "ai":
         return []
-    return tts.engine_for(engine).split_for_streaming(turn["text"])
+    return tts.engine_for(engine).split_for_streaming(scenarios.strip_fix_notes(turn["text"]))
 
 
 def audio_chunk_count(turn: sqlite3.Row, channel: str, engine: str = tts.DEFAULT_ENGINE) -> int:
@@ -754,16 +764,20 @@ def submit_user_turn(
         json.loads(session["target_word_ids"]),
     ).fetchall() if json.loads(session["target_word_ids"]) else []
 
-    pairs = [("assistant" if t["speaker"] == "ai" else "user", t["text"]) for t in turns]
+    pairs = [
+        ("assistant", scenarios.strip_fix_notes(t["text"])) if t["speaker"] == "ai" else ("user", t["text"])
+        for t in turns
+    ]
     pairs.append(("user", text))
     opening, history = normalise_for_chat(pairs)
     prefs = reply_prefs(conn, session["user_id"])
+    level = learner_level(conn, session["user_id"])
     system_prompt = _system_prompt(
         session["scenario"],
         target_words,
         opening,
         detail=session_detail(session),
-        level=learner_level(conn, session["user_id"]),
+        level=level,
         prefs=prefs,
     )
 
@@ -774,6 +788,14 @@ def submit_user_turn(
     # about the original failure. Nothing is persisted unless there is a
     # reply to persist alongside it.
     reply = _generate_reply(target, system_prompt, history, max_tokens=reply_tokens(prefs))
+    # The fixes are the learner's to see on their own message, not something
+    # the partner says — out of the reply before it is stored, and so before
+    # it can be spoken. Stripped in either mode: a model can add one unasked.
+    reply, corrections = scenarios.split_corrections(reply, text, scenarios.max_fixes(level))
+    if not reply:
+        raise EngineUnavailable("The AI returned an empty reply — try sending that again.")
+    if prefs.get("corrections") != "explicit":
+        corrections = []
 
     if response_delay_seconds is not None:
         # Anything outside this is a clock problem, not a learner.
@@ -788,6 +810,7 @@ def submit_user_turn(
         stt_confidence,
         speech_seconds,
         response_delay_seconds,
+        corrections,
     )
     ai_turn = _insert_turn(conn, session["id"], next_index + 1, "ai", reply, channel)
 

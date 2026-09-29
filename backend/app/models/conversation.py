@@ -72,6 +72,13 @@ class ScenarioCatalogOut(BaseModel):
     custom: list[CustomScenarioOut]
 
 
+class TurnCorrectionOut(BaseModel):
+    wrong: str  # as the learner said it, when it could be found in their text
+    right: str
+    kind: Literal["grammar", "word", "sentence"] = "grammar"
+    why: str | None = None  # a few words on the rule, shown on hover
+
+
 class ConversationTurnOut(BaseModel):
     id: str
     turn_index: int
@@ -89,6 +96,9 @@ class ConversationTurnOut(BaseModel):
     # reproduce. Empty for turns that are never spoken aloud.
     audio_chunks: list[str] = []
     stt_confidence: float | None
+    # Learner turns only: the mistakes the partner fixed, shown on the
+    # message, most important first.
+    corrections: list[TurnCorrectionOut] = []
     created_at: str
 
 

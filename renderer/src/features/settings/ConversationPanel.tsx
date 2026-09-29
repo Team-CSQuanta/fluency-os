@@ -53,7 +53,7 @@ const LENGTH: Array<{ value: ReplyLength; label: string; title: string }> = [
 
 const CORRECTIONS: Array<{ value: Corrections; label: string; title: string }> = [
   { value: 'recast', label: 'gentle', title: 'The partner says it back correctly, without pointing it out' },
-  { value: 'explicit', label: 'point them out', title: 'Plus a short [Small fix: …] note after its reply' },
+  { value: 'explicit', label: 'point them out', title: 'Plus grammar, word and sentence fixes written onto your message' },
 ];
 
 const SPEEDS = [0.75, 0.9, 1, 1.1, 1.25].map((v) => ({ value: v, label: `${v}×` }));
@@ -136,7 +136,7 @@ export function ConversationPanel() {
           sub={
             settings.conversation_corrections === 'recast'
               ? 'Your mistakes are said back correctly in the reply ("I goed" → "Oh, you went?"), without breaking the flow.'
-              : 'As well as saying it back correctly, the partner adds one short note for the most useful fix: [Small fix: "I went", not "I goed".]'
+              : 'Fixes are also written onto your own message — grammar ("I goed" → "I went"), a better word for the context, or a whole sentence rephrased — up to three at a time (one at A1–A2). Hover one to see why. The partner never says them aloud.'
           }
           control={
             <Segmented

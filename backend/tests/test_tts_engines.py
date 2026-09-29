@@ -7,13 +7,14 @@ is not split at all. Everything here is about that difference being handled
 consistently rather than assumed away — the real models are never loaded.
 """
 
+import numpy as np
 import pytest
 
 from app.config import settings
 from app.db import get_connection
 from app.migrations.runner import run_migrations
 from app.services import conversation
-from app.services.voice import model_catalog, pocket_tts_engine, tts, tts_engine
+from app.services.voice import model_catalog, pauses, pocket_tts_engine, tts, tts_engine
 
 
 def _fresh_conn(tmp_path, name="tts_test.db"):
@@ -438,3 +439,63 @@ def test_a_failed_synthesis_leaves_no_partial_file(tmp_path, monkeypatch):
 
     assert not conversation.audio_chunk_path("turn-y", 0, "kokoro").exists()
     assert not list(conversation.audio_chunk_path("turn-y", 0, "kokoro").parent.glob("*.part"))
+
+
+def test_pocket_pieces_grow_so_each_is_ready_before_the_last_one_ends():
+    """The player asks for piece N+1 as N starts, so N+1 has N's playing time
+    to be made in. Two pieces after a short "!" opener left a second of dead
+    air: 1.4s of audio to cover a 2.4s synthesis."""
+    reply = "They aren't severe! It's just a bit of wear. Look, I want to sell this today. What price are you thinking?"
+    pieces = pocket_tts_engine.split_for_streaming(reply)
+    assert pieces == [
+        "They aren't severe!",
+        "It's just a bit of wear.",
+        "Look, I want to sell this today.",
+        "What price are you thinking?",
+    ]
+    assert " ".join(pieces) == reply
+    # Kokoro, slower than real time, gains nothing from more pieces.
+    assert tts_engine.split_for_streaming(reply) == [
+        "They aren't severe!",
+        "It's just a bit of wear. Look, I want to sell this today. What price are you thinking?",
+    ]
+
+
+def test_pocket_pieces_join_sentences_that_fit_and_keep_openers_whole():
+    assert pocket_tts_engine.split_for_streaming("Bye! Take care.") == ["Bye! Take care."]
+    pieces = pocket_tts_engine.split_for_streaming(
+        "Got it! I see the notification. Here is the drone kit and all the gear. "
+        "Enjoy your flights! Would you like to keep talking?"
+    )
+    assert pieces == [
+        "Got it! I see the notification.",
+        "Here is the drone kit and all the gear.",
+        "Enjoy your flights! Would you like to keep talking?",
+    ]
+
+
+def _tone(seconds, rate=24000):
+    t = np.arange(int(seconds * rate)) / rate
+    return (np.sin(2 * np.pi * 220 * t) * 12000).astype(np.int16)
+
+
+def _silence(seconds, rate=24000):
+    return np.zeros(int(seconds * rate), dtype=np.int16)
+
+
+def test_long_pauses_are_capped_and_the_speech_is_kept():
+    rate = 24000
+    clip = np.concatenate([_silence(0.4), _tone(0.8), _silence(1.0), _tone(0.6), _silence(0.35)])
+    out = pauses.tighten_samples(clip, rate)
+    speech = 1.4
+    expected = speech + pauses.LEAD_S + pauses.MAX_PAUSE_S + pauses.TRAIL_S
+    assert abs(len(out) / rate - expected) < 0.03
+    # Every loud sample survives.
+    assert np.count_nonzero(np.abs(out) > 1000) >= np.count_nonzero(np.abs(clip) > 1000) - rate * 0.02
+
+
+def test_short_pauses_and_unreadable_audio_are_left_alone():
+    rate = 24000
+    clip = np.concatenate([_silence(0.02), _tone(0.5), _silence(0.25), _tone(0.5)])
+    assert pauses.tighten_samples(clip, rate) is clip
+    assert pauses.tighten(b"not a wav") == b"not a wav"
