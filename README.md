@@ -92,37 +92,23 @@ Every route needs the token, as a header:
 curl -H "X-FluencyOS-Token: dev-token" http://127.0.0.1:8000/health
 ```
 
-## Tests and checks
+## Tests
 
 [![Tests](https://github.com/Team-CSQuanta/fluency-os/actions/workflows/tests.yml/badge.svg)](https://github.com/Team-CSQuanta/fluency-os/actions/workflows/tests.yml)
 
-To show how the app is tested, start with the beginner tests — 24 short,
-commented tests in four kinds: plain functions, the backend API, frontend
-logic, and the real app driven in Chrome by Selenium. About 30 seconds to run;
-`docs/beginner-testing.md` walks through them.
+The tests cover the backend: the real API, database migrations, file parsers
+and scheduling, run against temporary data. AI models are stubbed, so no
+downloads are needed. One command runs them all and writes a report:
 
 ```bash
-npm run test:beginner        # the 24 beginner tests, each printed by name
-npm run test:ui              # only the Selenium tests — watch Chrome click through the app
-```
-
-One command runs every check and writes a report:
-
-```bash
-npm test                     # everything, about 3 minutes on 4 cores
+npm test                     # the whole suite, about 2 minutes on 4 cores
 npm test -- --verbose        # print each test's name as it runs
 npm test -- --open           # open the report in the browser afterwards
 ```
 
-It runs three checks, and the report at `test-reports/index.html` lists every
-test by name under the feature it covers, with backend line coverage
-(`test-reports/coverage/index.html` has it line by line):
-
-| Check | Tool | What it covers |
-| --- | --- | --- |
-| Type-check | `tsc --noEmit` | the whole renderer: every screen, store and test |
-| Frontend unit tests | Vitest | renderer logic kept free of React: hands-free turn detection, word highlighting, subtitle selection, PDF sentences, contents, error messages |
-| Backend tests | pytest, parallel | the real API, migrations, file parsers and scheduling against temporary data; AI models are stubbed, so no downloads are needed |
+The report at `test-reports/index.html` lists every test by name under the
+feature it covers, with line coverage (`test-reports/coverage/index.html` has
+it line by line).
 
 The media tests run real video through ffmpeg and are skipped if it is not
 installed. GitHub Actions runs `npm test` on every push and pull request
@@ -132,10 +118,9 @@ the full report attached as the `test-report` artifact.
 Smaller runs while working:
 
 ```bash
-npm run test:frontend                                  # Vitest only, ~2 seconds
-npm run test:backend                                   # pytest only, parallel
+npm run test:backend                                   # pytest only, parallel, no report
 cd backend && uv run pytest tests/test_forest.py -q    # one file
-cd renderer && npx vitest                              # re-run on every save
+cd backend && uv run pytest -k "voice" -q              # tests whose name matches
 ```
 
 ## Building

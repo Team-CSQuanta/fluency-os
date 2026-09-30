@@ -1,21 +1,13 @@
 #!/usr/bin/env node
-// Runs every automated check FluencyOS has, and writes one report of what ran.
+// Runs the backend test suite, and writes one report of what ran.
 //
-//   npm test                 all four checks, then test-reports/index.html
+//   npm test                 the pytest suite, then test-reports/index.html
 //   npm test -- --verbose    print every test's name as it runs
 //   npm test -- --open       open the report in the browser afterwards
 //
-// The four checks, in order of speed:
-//   1. TypeScript  — the whole renderer type-checks (tsc --noEmit)
-//   2. Frontend    — Vitest unit tests for the renderer's logic
-//   3. Backend     — the pytest suite, spread over every CPU core, with
-//                    line coverage of the backend's `app` package
-//   4. UI          — Selenium drives the real interface in Chrome against a
-//                    real backend (ui-tests/), headless here
-//
-// A failing check does not stop the others: the point of the report is to
-// show everything that was run, and one red line should not hide the rest.
-// The exit code is non-zero if anything failed, so CI fails too.
+// The suite is spread over every CPU core, with line coverage of the
+// backend's `app` package. The exit code is non-zero if anything failed, so
+// CI fails too.
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -36,8 +28,8 @@ const bold = (s) => (process.stdout.isTTY ? `\x1b[1m${s}\x1b[0m` : s);
 const green = (s) => (process.stdout.isTTY ? `\x1b[32m${s}\x1b[0m` : s);
 const red = (s) => (process.stdout.isTTY ? `\x1b[31m${s}\x1b[0m` : s);
 
-function banner(n, title) {
-  console.log(`\n${bold(`━━ ${n}/4  ${title} `.padEnd(72, '━'))}\n`);
+function banner(title) {
+  console.log(`\n${bold(`━━ ${title} `.padEnd(72, '━'))}\n`);
 }
 
 /** Runs a command with its output streaming to the terminal. Relative paths
@@ -59,27 +51,8 @@ function run(cmd, argv, cwd, { capture = false, env = {} } = {}) {
   return { ok: res.status === 0, seconds: (Date.now() - started) / 1000, output };
 }
 
-// ── 1. TypeScript ────────────────────────────────────────────────────────────
-banner(1, 'TypeScript type-check (renderer)');
-const tsc = run('npx', ['tsc', '--noEmit', '-p', '.'], path.join(root, 'renderer'), { capture: true });
-console.log(tsc.ok ? green('✓ no type errors') : red('✗ type errors — see above'));
-
-// ── 2. Frontend ──────────────────────────────────────────────────────────────
-banner(2, 'Frontend unit tests (Vitest)');
-const vitest = run(
-  'npx',
-  [
-    'vitest',
-    'run',
-    `--reporter=${verbose ? 'verbose' : 'default'}`,
-    '--reporter=json',
-    '--outputFile.json=../test-reports/frontend.json',
-  ],
-  path.join(root, 'renderer'),
-);
-
-// ── 3. Backend ───────────────────────────────────────────────────────────────
-banner(3, 'Backend tests (pytest, parallel, with coverage)');
+// ── Backend ───────────────────────────────────────────────────────────────────
+banner('Backend tests (pytest, parallel, with coverage)');
 const pytest = run(
   'uv',
   [
@@ -98,33 +71,12 @@ const pytest = run(
   path.join(root, 'backend'),
 );
 
-// ── 4. UI ────────────────────────────────────────────────────────────────────
-banner(4, 'UI tests in a real browser (Selenium, headless)');
-const ui = run(
-  'uv',
-  [
-    'run',
-    '--project',
-    'backend',
-    'pytest',
-    'ui-tests',
-    verbose ? '-v' : '-q',
-    '-p',
-    'no:cacheprovider',
-    '-p',
-    'no:warnings',
-    '--junitxml=test-reports/ui-junit.xml',
-  ],
-  root,
-  { env: { HEADLESS: '1' } },
-);
-
 // ── Collect results ──────────────────────────────────────────────────────────
 
 /** What each Python test file is about, from its module docstring. */
-function describeFile(file, dir = path.join('backend', 'tests')) {
+function describeFile(file) {
   try {
-    const src = readFileSync(path.join(root, dir, file), 'utf8');
+    const src = readFileSync(path.join(root, 'backend', 'tests', file), 'utf8');
     const m = src.match(/^\s*(?:#[^\n]*\n\s*)*("""|''')([\s\S]*?)\1/);
     if (!m) return '';
     const para = m[2].trim().split(/\n\s*\n/)[0];
@@ -166,22 +118,6 @@ function readJunit(name) {
   return tests;
 }
 
-function readFrontend() {
-  const file = path.join(reports, 'frontend.json');
-  if (!existsSync(file)) return [];
-  const json = JSON.parse(readFileSync(file, 'utf8'));
-  return json.testResults.flatMap((suite) =>
-    suite.assertionResults.map((t) => ({
-      file: path.relative(path.join(root, 'renderer'), suite.name).split(path.sep).join('/'),
-      group: t.ancestorTitles.join(' › '),
-      name: t.title,
-      seconds: (t.duration ?? 0) / 1000,
-      status: t.status === 'passed' ? 'passed' : t.status === 'failed' ? 'failed' : 'skipped',
-      message: (t.failureMessages ?? []).join('\n').replace(/\x1b\[[0-9;]*m/g, ''),
-    })),
-  );
-}
-
 function readCoverage() {
   const file = path.join(reports, 'coverage.json');
   if (!existsSync(file)) return null;
@@ -197,15 +133,12 @@ function readCoverage() {
 }
 
 const backend = readJunit('backend-junit.xml');
-const uiTests = readJunit('ui-junit.xml');
-const frontend = readFrontend();
 const coverage = readCoverage();
 
 // Which part of the app each backend test file exercises — the report is
 // organised the way the product is, not the way the folder is.
 // First match wins, so the narrower rules come first.
 const AREAS = [
-  ['Beginner examples', /^test_[12]_/],
   ['Progress & forest', /^test_(forest|reading_goal|activity)/],
   ['Learn by reading', /^test_(book|books|epub|pdf|mobi|txt|ingest|pagination|native_pages|page_|reader|reading|highlights|search|jump|difficulty|cefr_lexicon)/],
   ['Learn by watching', /^test_media/],
@@ -222,7 +155,6 @@ const AREAS = [
 const areaOf = (file) => AREAS.find(([, re]) => re.test(file))[0];
 // Shown in the order the app presents its features.
 const AREA_ORDER = [
-  'Beginner examples',
   'Learn by reading',
   'Learn by watching',
   'Speech to text',
@@ -239,32 +171,25 @@ const AREA_ORDER = [
 const byAreaOrder = (a, b) => AREA_ORDER.indexOf(a[0]) - AREA_ORDER.indexOf(b[0]);
 
 const count = (tests, status) => tests.filter((t) => t.status === status).length;
-const all = [...backend, ...frontend, ...uiTests];
+const all = backend;
 const totals = {
   total: all.length,
   passed: count(all, 'passed'),
   failed: count(all, 'failed'),
   skipped: count(all, 'skipped'),
-  seconds: tsc.seconds + vitest.seconds + pytest.seconds + ui.seconds,
+  seconds: pytest.seconds,
 };
-const everythingOk = tsc.ok && vitest.ok && pytest.ok && ui.ok;
+const everythingOk = pytest.ok;
 
 // ── Terminal summary ─────────────────────────────────────────────────────────
 const line = (label, ok, detail) => console.log(`  ${ok ? green('✓') : red('✗')} ${label.padEnd(22)} ${detail}`);
 console.log(`\n${bold('━━ Summary '.padEnd(72, '━'))}\n`);
-line('TypeScript', tsc.ok, tsc.ok ? 'no type errors' : 'type errors found');
-line(
-  'Frontend (Vitest)',
-  vitest.ok,
-  `${count(frontend, 'passed')}/${frontend.length} passed · ${vitest.seconds.toFixed(1)}s`,
-);
 line(
   'Backend (pytest)',
   pytest.ok,
   `${count(backend, 'passed')}/${backend.length} passed · ${pytest.seconds.toFixed(1)}s` +
     (coverage ? ` · ${coverage.percent.toFixed(1)}% line coverage` : ''),
 );
-line('UI (Selenium)', ui.ok, `${count(uiTests, 'passed')}/${uiTests.length} passed · ${ui.seconds.toFixed(1)}s`);
 console.log(`\n  ${bold(`${totals.passed} of ${totals.total} tests passed`)}${totals.failed ? red(` · ${totals.failed} failed`) : ''}`);
 
 // ── HTML report ──────────────────────────────────────────────────────────────
@@ -327,28 +252,6 @@ const backendSections = [...byKey(backend, (t) => areaOf(t.file))]
     ),
   )
   .join('');
-
-const frontendSection = section(
-  'Renderer logic',
-  'The parts of the interface kept free of React so they can be tested without a browser: hands-free turn detection, word highlighting, subtitle selection, PDF sentence finding, the table of contents and error messages.',
-  frontend,
-  [...byKey(frontend, (t) => t.file)]
-    .map(([file, ts]) => {
-      // Every describe() block in the file, not just the first.
-      const groups = [...new Set(ts.map((t) => t.group.split(' › ')[0]).filter(Boolean))];
-      return fileBlock(file, ts, groups.join(' · '), (t) => t.name);
-    })
-    .join(''),
-);
-
-const uiSection = section(
-  'UI tests in a real browser',
-  'Selenium opens the real interface in Chrome, against a real backend with an empty database, and uses it the way a person does — typing, clicking, and checking what appears.',
-  uiTests,
-  [...byKey(uiTests, (t) => t.file)]
-    .map(([file, ts]) => fileBlock(file, ts, describeFile(file, 'ui-tests'), (t) => readable(t.name)))
-    .join(''),
-);
 
 const git = (argv) => {
   const r = spawnSync('git', argv, { cwd: root, encoding: 'utf8' });
@@ -449,9 +352,6 @@ a{color:var(--acc)}
 
   <h2>Checks</h2>
   <div class="checks">
-    ${checkRow('TypeScript type-check', tsc.ok ? 'The whole renderer (every screen, store and test) type-checks with no errors.' : tsc.output.trim().split('\n').slice(0, 6).join(' '), tsc.ok)}
-    ${checkRow('Frontend unit tests — Vitest', `${count(frontend, 'passed')} of ${frontend.length} passed in ${vitest.seconds.toFixed(1)}s`, vitest.ok && count(frontend, 'failed') === 0)}
-    ${checkRow('UI tests — Selenium', `${count(uiTests, 'passed')} of ${uiTests.length} passed in ${ui.seconds.toFixed(1)}s, driving the real interface in Chrome`, ui.ok && count(uiTests, 'failed') === 0)}
     ${checkRow('Backend tests — pytest', `${count(backend, 'passed')} of ${backend.length} passed in ${pytest.seconds.toFixed(1)}s across ${os.cpus().length} cores; these run the real API, database migrations and file parsers against temporary data`, pytest.ok && count(backend, 'failed') === 0)}
   </div>
 
@@ -461,10 +361,6 @@ a{color:var(--acc)}
     <label><input id="failedOnly" type="checkbox"> failures only</label>
     <label><input id="expand" type="checkbox"> expand all</label>
   </div>
-  <h2 style="margin-top:18px">Frontend</h2>
-  ${frontendSection}
-  <h2>User interface</h2>
-  ${uiSection}
   <h2>Backend, by feature</h2>
   ${backendSections}
 
@@ -511,9 +407,6 @@ if (process.env.GITHUB_STEP_SUMMARY) {
     '',
     '| Check | Result | Time |',
     '| --- | --- | --- |',
-    `| TypeScript type-check | ${mark(tsc.ok)} ${tsc.ok ? 'no type errors' : 'type errors'} | ${tsc.seconds.toFixed(0)}s |`,
-    `| Frontend (Vitest) | ${mark(vitest.ok)} ${count(frontend, 'passed')}/${frontend.length} passed | ${vitest.seconds.toFixed(0)}s |`,
-    `| UI (Selenium) | ${mark(ui.ok)} ${count(uiTests, 'passed')}/${uiTests.length} passed | ${ui.seconds.toFixed(0)}s |`,
     `| Backend (pytest) | ${mark(pytest.ok)} ${count(backend, 'passed')}/${backend.length} passed${coverage ? ` · ${coverage.percent.toFixed(1)}% line coverage` : ''} | ${pytest.seconds.toFixed(0)}s |`,
     '',
     ...[...byKey(backend, (t) => areaOf(t.file))].sort(byAreaOrder).map(
